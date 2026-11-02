@@ -42,6 +42,8 @@ const check = (cond, msg) => {
 const call = async (method, path, body) => {
   const r = await fetch(wd + path, {
     method,
+    // a hung app or driver must end the run, not the job's whole time limit
+    signal: AbortSignal.timeout(30000),
     headers: { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });

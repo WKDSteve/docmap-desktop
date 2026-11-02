@@ -126,6 +126,28 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("err.traffic.digestDirIgnored", "root.json's digest_dir ({dir}) is not an absolute local path, so it is ignored"),
     ("err.traffic.noDigests", "root.json points to a folder with no digests"),
     ("err.traffic.nothing", "No root.json and no digest folder"),
+    // The rules agent: ai-desktop, the engine's plan, and the run record.
+    ("err.agent.unreachable", "ai-desktop does not answer at {url}. Is it running, and is this the port it listens on?"),
+    ("err.agent.origin", "ai-desktop at {url} refused the request as cross-origin (403). The request must come from the app, not from a page"),
+    ("err.agent.rejected", "ai-desktop did not accept the request (status {status})"),
+    ("err.agent.backend", "ai-desktop's backend failed (status {status})"),
+    ("err.agent.timeout", "ai-desktop gave no answer within {secs} s"),
+    ("err.agent.malformed", "ai-desktop's answer is not the JSON that /ask promises"),
+    ("err.agent.stopped", "The request was stopped"),
+    ("err.agent.url", "The ai-desktop address must be http://localhost, http://127.0.0.1 or http://[::1] with a port, not `{url}`"),
+    ("err.agent.model", "A model is required: its name decides which backend answers"),
+    ("err.agent.localOnly", "{model} would go to {backend}, a cloud backend, and this project allows local models only. Add `{backend}` to agent.backends in .rules.json to allow it"),
+    ("err.agent.notAllowed", "{model} would go to {backend}, which this project does not allow. agent.backends in .rules.json allows: {allowed}"),
+    ("err.agent.title", "A run needs a title, to be found again later"),
+    ("err.agent.selection", "Nothing is selected, or the selection is too long. Name rule ids, families or gate:<name>"),
+    ("err.agent.nothing", "Nothing to ask: no rule of the selection can be sent ({skipped} not sent)"),
+    ("err.agent.engine", "The docmap engine could not plan or check the rules"),
+    ("err.agent.engineOld", "{engine} is a docmap engine without the rules agent. Rebuild it from docmap.nvim, or point at a newer one"),
+    ("err.agent.engineShape", "The docmap engine answered the rules agent with something unexpected"),
+    ("err.agent.noRun", "No such run: {id}"),
+    ("err.agent.running", "Run {id} is already working"),
+    ("err.agent.notResumable", "Run {id} cannot be resumed: it was cancelled or is finished"),
+    ("err.agent.runUnreadable", "{path} is not readable as a run record"),
     // Everything else the window asks for.
     ("err.search.mode", "Unknown search mode: {mode}"),
     ("err.editor.noFile", "No file was named"),
@@ -335,6 +357,14 @@ mod tests {
     /// files; a module added later has to be listed here, which the count
     /// check in `every_module_is_scanned` asks for.
     const SOURCES: &[(&str, &str)] = &[
+        // The rules agent is a folder of modules.
+        ("agent/mod.rs", include_str!("agent/mod.rs")),
+        ("agent/client.rs", include_str!("agent/client.rs")),
+        ("agent/commands.rs", include_str!("agent/commands.rs")),
+        ("agent/engine.rs", include_str!("agent/engine.rs")),
+        ("agent/fake.rs", include_str!("agent/fake.rs")),
+        ("agent/runner.rs", include_str!("agent/runner.rs")),
+        ("agent/store.rs", include_str!("agent/store.rs")),
         ("apperr.rs", include_str!("apperr.rs")),
         ("contract.rs", include_str!("contract.rs")),
         ("deps.rs", include_str!("deps.rs")),
@@ -415,14 +445,24 @@ mod tests {
 
     #[test]
     fn every_module_is_scanned() {
+        // Folders too (`agent/`): a module in one has to be listed as well.
+        fn count(dir: &std::path::Path) -> usize {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .flatten()
+                .map(|e| {
+                    let p = e.path();
+                    if p.is_dir() {
+                        count(&p)
+                    } else {
+                        usize::from(p.extension().is_some_and(|x| x == "rs"))
+                    }
+                })
+                .sum()
+        }
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let on_disk = std::fs::read_dir(dir)
-            .unwrap()
-            .flatten()
-            .filter(|e| e.path().extension().is_some_and(|x| x == "rs"))
-            .count();
         assert_eq!(
-            on_disk,
+            count(&dir),
             SOURCES.len(),
             "a new module must be added to SOURCES"
         );

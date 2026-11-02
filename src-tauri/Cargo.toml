@@ -32,6 +32,18 @@ tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The blocking HTTP client for ai-desktop's `/ask` and `/health` (agent.rs). The
+# webview cannot make that call (ai-desktop refuses any request that carries a
+# foreign `Origin`, which a browser always sends), and spawning `curl` would
+# depend on a binary a Windows user may not have on `PATH` (decision 3 of
+# 2026-09-21, RULES_AGENT_CONCEPT.md). Every default feature is off: ai-desktop
+# listens on loopback, so there is no TLS, no gzip, no proxy and no cookies to
+# pay for; what is left is `ureq-proto`, `base64`, `log` and `utf8-zero`.
+ureq = { version = "3", default-features = false }
+# The key under which a model's answer is kept (agent.rs): the same SHA-256 the
+# Neovim side uses for its answer cache. Already in the tree through Tauri, so
+# naming it adds no crate.
+sha2 = "0.10"
 
 [dev-dependencies]
 # `tauri::test::mock_app()` — a real AppHandle without a real window, so

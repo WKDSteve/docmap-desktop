@@ -9,6 +9,7 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
 mod apperr;
 mod contract;
 mod deps;
@@ -383,6 +384,10 @@ struct Workspace {
     /// double-clicking the file in a file manager would do.
     #[serde(default)]
     editor: Option<String>,
+    /// Where ai-desktop listens, for the rules agent (`agent/`). `None` is its
+    /// default port; only an address on this machine is ever stored.
+    #[serde(default)]
+    ai_desktop_url: Option<String>,
     /// Which named workspace is loaded.
     ///
     /// Lives beside the settings rather than inside a workspace, because
@@ -574,6 +579,7 @@ fn write_workspace(app: &tauri::AppHandle, ws: &Workspace) -> Result<(), AppErro
     settings.traffic_dir = ws.traffic_dir.clone();
     settings.traffic_asked_dir = ws.traffic_asked_dir.clone();
     settings.editor = ws.editor.clone();
+    settings.ai_desktop_url = ws.ai_desktop_url.clone();
 
     let path = workspace_path(app)?;
     let body = serde_json::to_string_pretty(&settings)
@@ -4054,6 +4060,9 @@ fn main() {
         // against the catalog both ways. The page host's `/api/*` answers
         // (`server.rs`) use the same shape under `api.*` keys, which belong to
         // the generated page's catalog, not to this window's.
+        // The runs of the rules agent live here, not in a window: closing the
+        // window does not stop one, quitting the app pauses it (see below).
+        .manage(agent::runner::Runner::default())
         .invoke_handler(tauri::generate_handler![
             list_projects,
             add_project,
@@ -4111,10 +4120,29 @@ fn main() {
             traffic_ask_neovim,
             traffic_set_hidden,
             traffic_refresh,
-            save_text
+            save_text,
+            agent::commands::agent_url,
+            agent::commands::agent_health,
+            agent::commands::agent_preview,
+            agent::commands::agent_start,
+            agent::commands::agent_resume,
+            agent::commands::agent_cancel,
+            agent::commands::agent_list,
+            agent::commands::agent_status,
+            agent::commands::agent_running,
+            agent::commands::agent_freshness,
+            agent::commands::agent_ignore
         ])
-        .run(tauri::generate_context!())
-        .expect("docmap-desktop failed to start");
+        .build(tauri::generate_context!())
+        .expect("docmap-desktop failed to start")
+        .run(|app, event| {
+            // A run that outlives the app would spend money with nobody
+            // watching: on exit every live run is written as paused instead.
+            if let tauri::RunEvent::Exit = event {
+                app.state::<agent::runner::Runner>()
+                    .pause_all(std::time::Duration::from_secs(3));
+            }
+        });
 }
 
 #[cfg(test)]

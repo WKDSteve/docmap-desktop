@@ -210,14 +210,14 @@ fn respond_json_error(stream: &mut TcpStream, code: u16, error: &AppError) {
 }
 
 #[cfg(windows)]
-fn no_window(cmd: &mut std::process::Command) {
+pub(crate) fn no_window(cmd: &mut std::process::Command) {
     use std::os::windows::process::CommandExt;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     cmd.creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(not(windows))]
-fn no_window(_cmd: &mut std::process::Command) {}
+pub(crate) fn no_window(_cmd: &mut std::process::Command) {}
 
 /// Does this engine understand `--api=`?
 ///

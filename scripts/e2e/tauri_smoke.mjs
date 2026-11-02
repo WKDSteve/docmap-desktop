@@ -30,7 +30,7 @@ if (!existsSync(app)) skip(`app binary missing: ${app} (cargo tauri build)`);
 if (!driver) skip('tauri-driver not found (cargo install tauri-driver --locked)');
 if (!native) skip('msedgedriver not found (version of the installed WebView2)');
 
-const outDir = resolve(process.env.DOCMAP_E2E_OUT ?? resolve(root, 'target/e2e'));
+const outDir = resolve(process.env.DOCMAP_E2E_OUT ?? resolve(root, 'src-tauri/target/e2e'));
 const port = 4500 + Math.floor(Math.random() * 400);
 const wd = `http://127.0.0.1:${port}`;
 const proc = spawn(driver, ['--port', String(port), '--native-driver', native], { stdio: 'ignore' });

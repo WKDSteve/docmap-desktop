@@ -1,3 +1,5 @@
+![docmap-desktop](assets/icons/docmap-desktop/png/docmap-desktop-128.png)
+
 ```
      _                                    _           _    _
   __| |___  __ _ __  __ _ _ __   _____ __| |___  ___ | |__| |_ ___ _ __

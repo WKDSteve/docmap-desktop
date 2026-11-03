@@ -203,6 +203,11 @@ body.sb-auto #sidebar.peek::after {
   letter-spacing: 0.02em;
 }
 
+#sidebar h1 img {
+  margin-right: 6px;
+  vertical-align: -4px;
+}
+
 /* The motto, and the only line under the name. Not italic and not smaller
    than the rest of the sidebar's secondary text: a motto set in small
    italics reads as a caption apologising for itself, and this one is meant

@@ -1,5 +1,5 @@
 # The one place that names the version of appkit-ui (https://github.com/WKDSteve/appkit, folder ui-kit) this
-# window takes its design tokens from: the same tag as tasks-desktop and rules-desktop, so the three look alike.
+# window takes its design tokens from. The colours of its icon come on top of them from src/palette.css.
 #
 # src/appkit-tokens.css is ui-kit/src/tokens.css at this tag, byte for byte, and src/appkit-tokens-fallback.css is
 # generated from it. tools/check-appkit-tokens.py checks both, and that the tag still names this commit (a moved
@@ -8,5 +8,5 @@
 #     python tools/check-appkit-tokens.py --write
 #
 # and look at the window in both themes.
-tag = v0.4.2
-commit = 2f053e6164d1171ecb8db0a1ee4da544c00b2654
+tag = v0.35.0
+commit = 95dbb084a454e4e7f7a7d8430184c60525a57d0f

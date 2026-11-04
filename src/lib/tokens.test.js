@@ -11,13 +11,23 @@ const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8").replac
 const HTML = read("../index.html");
 const CSS = read("../style.css");
 const KIT = read("../appkit-tokens.css");
+const PALETTE = read("../palette.css");
 const CI = read("../../.github/workflows/ci.yml");
 
 const stripComments = (css) => css.replace(/\/\*[\s\S]*?\*\//g, "");
 
-test("index.html loads the tokens, then their fallback, then the window's rules", () => {
+test("index.html loads the tokens, the palette, their fallback, then the window's rules", () => {
   const links = [...HTML.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(links, ["appkit-tokens.css", "appkit-tokens-fallback.css", "style.css"]);
+  assert.deepEqual(links, ["appkit-tokens.css", "palette.css", "appkit-tokens-fallback.css", "style.css"]);
+});
+
+test("the palette sets only tokens of the kit, so a name in it never goes unread", () => {
+  // palette.css is generated from the colours of the icon by palettes.mjs, the tool of the app icons.
+  const names = (css) => new Set([...stripComments(css).matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]));
+  const kit = names(KIT);
+  const set = [...names(PALETTE)];
+  assert.ok(set.includes("--accent") && set.includes("--accent-hover"), "the palette sets the accent");
+  assert.deepEqual(set.filter((n) => !kit.has(n)), []);
 });
 
 test("style.css keeps no palette of its own: its names are aliases of the kit's", () => {

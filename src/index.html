@@ -4,9 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>docmap — know your project</title>
-    <!-- The kit's tokens first (appkit-ui, pinned in tools/appkit-ui.pin),
-         then their plain-colour fallback, then this window's own rules. -->
+    <!-- The kit's tokens first (appkit-ui, pinned in tools/appkit-ui.pin), then the palette of this window's
+         icon (generated, see tools/check-appkit-tokens.py), then the plain-colour fallback of both, then this
+         window's own rules. -->
     <link rel="stylesheet" href="appkit-tokens.css" />
+    <link rel="stylesheet" href="palette.css" />
     <link rel="stylesheet" href="appkit-tokens-fallback.css" />
     <link rel="stylesheet" href="style.css" />
   </head>

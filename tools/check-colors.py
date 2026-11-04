@@ -18,7 +18,7 @@ import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 ROOTS = ["src"]
-ALLOWED = {"src/appkit-tokens.css", "src/appkit-tokens-fallback.css"}
+ALLOWED = {"src/appkit-tokens.css", "src/palette.css", "src/appkit-tokens-fallback.css"}
 
 
 def kit_check():

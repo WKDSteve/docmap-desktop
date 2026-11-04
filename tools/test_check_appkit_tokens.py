@@ -98,12 +98,34 @@ class Fallback(unittest.TestCase):
             self.assertNotIn("#f7f7f5", block)
         self.assertIn("appkit v9.9.9", css)
 
+    def test_the_palette_wins_and_adds_its_own_tokens(self):
+        palette = ":root {\n  --bg: light-dark(#f6f6f9, #131317);\n  --chart-2: light-dark(#111111, #eeeeee);\n}\n"
+        css = tokens.fallback(KIT, "v9.9.9", palette)
+        self.assertIn("--bg:      #f6f6f9;", css)
+        self.assertIn("--bg:      #131317;", css)
+        self.assertNotIn("#f7f7f5", css)
+        self.assertIn("--text:    #1b1d20;", css)
+        self.assertIn("--chart-2: #111111;", css)
+        self.assertLess(css.index("--text:"), css.index("--chart-2:"))
+        self.assertIn("and src/palette.css", css)
+
+    def test_without_a_palette_the_kit_alone(self):
+        css = tokens.fallback(KIT, "v9.9.9")
+        self.assertIn("--bg:   #f7f7f5;", css)
+        self.assertNotIn("palette", css)
+
+    def test_a_palette_the_fallback_cannot_read_is_an_error(self):
+        with self.assertRaisesRegex(ValueError, "src/palette.css"):
+            tokens.fallback(KIT, "v9.9.9", ":root { --bg: #ffffff; }\n")
+
     def test_the_repository_fallback_is_the_generated_one(self):
         # Offline: a hand edit of the fallback is caught here before CI asks GitHub.
         root = HERE.parent
         tag, _ = tokens.read_pin((root / tokens.PIN).read_text(encoding="utf-8"))
         copy = (root / tokens.COPY).read_text(encoding="utf-8")
-        self.assertEqual(tokens.drift(tokens.FALLBACK, tokens.fallback(copy, tag), (root / tokens.FALLBACK).read_text(encoding="utf-8")), [])
+        palette = tokens.read(root / tokens.PALETTE)
+        want = tokens.fallback(copy, tag, palette)
+        self.assertEqual(tokens.drift(tokens.FALLBACK, want, (root / tokens.FALLBACK).read_text(encoding="utf-8")), [])
 
 
 class EndToEnd(unittest.TestCase):
@@ -138,6 +160,13 @@ class EndToEnd(unittest.TestCase):
 
     def test_in_step(self):
         self.assertEqual(self.run_check(), 0)
+
+    def test_a_new_palette_is_drift_until_written(self):
+        (self.app / tokens.PALETTE).write_text(":root {\n  --bg: light-dark(#010101, #020202);\n}\n", encoding="utf-8")
+        self.assertEqual(self.run_check(), 1)
+        self.assertEqual(self.run_check("--write"), 0)
+        self.assertEqual(self.run_check(), 0)
+        self.assertIn("#010101", (self.app / tokens.FALLBACK).read_text(encoding="utf-8"))
 
     def test_crlf_in_the_working_copy_is_no_drift(self):
         path = self.app / tokens.COPY

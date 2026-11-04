@@ -1,6 +1,7 @@
 /* The design tokens of every app of appkit, in ten groups. Variables only, so a page that shares nothing else
    (docmap-desktop) can load this file alone; the rules that use them are in base.css. Every colour of a page comes
-   from here: tools/check-color-literals.py refuses a hex or rgb literal anywhere else.
+   from here: tools/check-color-literals.py refuses a hex colour or a colour function wherever the CSS of a page
+   states a colour outside this file (declarations, style attributes and directives, SVG paint attributes).
 
    Theme: `light-dark()` and `color-scheme` follow the system; `data-theme` on the root element overrides it
    (`light`, `dark`; no attribute means the system's choice). */
@@ -24,6 +25,32 @@
   --accent: light-dark(#1f5fbf, #7fb0ff);
   --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
   --focus: light-dark(#0a4fd0, #9ec3ff);
+
+  /* 3b. The palette of an app: the fill of an accent button under the pointer, two colours to set beside the accent
+     (`--secondary` next to it on the colour wheel, `--tertiary` across from it), six series of a chart and a scale
+     of the accent from light (50) to dark (900). An app loads its own palette after this file (`palette.css`,
+     generated from the colours of its icon by palettes.mjs, the tool of the app icons); it sets these and
+     the colours above. The values here are those of the palette of the blue above, so an app without a palette
+     keeps its look. */
+  --accent-hover: color-mix(in oklab, var(--accent) 85%, var(--text));
+  --secondary: light-dark(#6b4ab6, #acaaeb);
+  --tertiary: light-dark(#835b00, #d8a870);
+  --chart-1: var(--accent);
+  --chart-2: light-dark(#9156a1, #ca99ef);
+  --chart-3: light-dark(#b14d53, #f78c9e);
+  --chart-4: light-dark(#956801, #e5a14b);
+  --chart-5: light-dark(#468333, #95c166);
+  --chart-6: light-dark(#088186, #0ccbc3);
+  --accent-50: #f0f6fe;
+  --accent-100: #dbe9ff;
+  --accent-200: #bcd6fe;
+  --accent-300: #8cb9fe;
+  --accent-400: #5a97f7;
+  --accent-500: #3877d9;
+  --accent-600: #1b5bbb;
+  --accent-700: #064295;
+  --accent-800: #002e70;
+  --accent-900: #001c4a;
 
   /* 4. Meaning: never the only sign of it (a word or a symbol goes with the colour). An app may leave them
      unused. */

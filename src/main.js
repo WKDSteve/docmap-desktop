@@ -19,6 +19,7 @@
 // Both side-effect-free, so hoisting them above the `window.__TAURI__`
 // guard below changes nothing about what that guard catches.
 import { withBusyButton } from "./lib/busy-button.js";
+import { nvimImportSummary } from "./lib/nvim-import.js";
 import { lastKey, migrateLastKey } from "./lib/last-selection.js";
 import { mapStatus, invalidate } from "./lib/status-cache.js";
 import { row as overviewRow, sortRows, summarize, RANK } from "./lib/overview.js";
@@ -2391,19 +2392,37 @@ document.getElementById("pick-folder").addEventListener("click", async () => {
   renderFolderScan();
 });
 
-document.getElementById("run-nvim-import").addEventListener("click", () =>
-  closeThen(async () => {
-    say("Reading the Neovim config…");
-    const res = await invoke("import_from_nvim_config");
-    await refresh();
-    say(
-      res.added.length +
-        " of " +
-        res.found +
-        " project(s) were added."
+// The import keeps the dialog open until the project list actually grew: the
+// result (or the reason there is none) is written into the tab itself, where
+// the reader is looking, and to the status line. Closing first and reporting
+// only in the status line is what made this tab look like it did nothing.
+const nvimImportBtn = document.getElementById("run-nvim-import");
+const nvimImportResult = document.getElementById("nvim-import-result");
+nvimImportBtn.addEventListener("click", async () => {
+  const show = (text) => {
+    nvimImportResult.textContent = text;
+    nvimImportResult.hidden = false;
+    say(text);
+  };
+  nvimImportResult.hidden = true;
+  try {
+    const res = await withBusyButton(nvimImportBtn, t("add.nvim.reading"), () =>
+      invoke("import_from_nvim_config")
     );
-  })
-);
+    const summary = nvimImportSummary(res);
+    show(summary.text);
+    if (summary.changed) {
+      // Same as the folder checklist's bulk add: no automatic generate for
+      // a batch, the projects are in the list and each one generates on its
+      // own button (or "Generate all").
+      addbox.el.close();
+      await refresh();
+      say(summary.text);
+    }
+  } catch (e) {
+    show(errorText(e));
+  }
+});
 
 /** Clone whatever the URL field holds. Shared by the button and the list. */
 async function cloneUrl(url) {

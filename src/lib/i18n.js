@@ -84,10 +84,15 @@ const CATALOGS = {
     "add.folder.scan.empty": "No subdirectories found in that folder.",
     "add.folder.scan.done": "{added} of {found} project(s) were added.",
     "add.nvim.lead":
-      "Reads the <strong>plugin specs your Neovim config declares</strong> and adds every plugin as its own project, cloning the ones you do not have yet. It reads nothing else about your config, and changes nothing in it.",
+      "Adds the <strong>Neovim config itself</strong> and every <strong>personal plugin it declares</strong> that is checked out on this machine, each as its own project. Plugins that are not on this machine are skipped, not cloned. It changes nothing in the config.",
     "add.nvim.note":
       "Which <code>nvim</code> and which config directory it uses is what the sidebar's <strong>Neovim</strong> panel shows — open it if this fails.",
     "add.nvim.go": "Read the config…",
+    "add.nvim.reading": "Reading the Neovim config… (Neovim starts headless, this takes a few seconds)",
+    "add.nvim.none": "The Neovim config lists no project that is checked out on this machine.",
+    "add.nvim.allPresent": "Nothing new: all {found} project(s) from the Neovim config are already in the list.",
+    "add.nvim.done": "{added} of {found} project(s) from the Neovim config were added ({present} already in the list).",
+    "add.nvim.failed": "{n} could not be added: {names}",
     "add.url.lead":
       "A repository URL. We clone it shallow into this app's own cache and then add it like any folder. Whatever a plain <code>git clone</code> of that URL needs on this machine is what runs here — this app keeps no credentials of its own.",
     "add.url.go": "Clone",
@@ -608,7 +613,7 @@ const CATALOGS = {
     "err.nvim.noConfig": "No Neovim config folder configured, and none found at the default location",
     "err.nvim.noCache": "Neovim could not be asked for its cache folder",
     "err.nvim.timeout": "{program} gave no answer within {secs} s — does the Neovim configuration wait for input?",
-    "err.nvim.noScript": "{script} does not exist. It ships with the nvim config's own plugins.personal.export — see that repository's docs/HANDOVER.md",
+    "err.nvim.noExport": "The Neovim config in {dir} has no plugins.personal.core.export module, so there is no plugin list to read. Add the config itself with the Folder tab",
     "err.nvim.exit": "nvim exited with code {code}",
     "err.nvim.notJson": "nvim's output is not the JSON list this import reads",
     "err.telemetry.failed": "Neovim could not switch telemetry for {namespace}",
@@ -702,10 +707,15 @@ const CATALOGS = {
     "add.folder.scan.empty": "In diesem Ordner wurden keine Unterordner gefunden.",
     "add.folder.scan.done": "{added} von {found} Projekt(en) hinzugefügt.",
     "add.nvim.lead":
-      "Liest die <strong>Plugin-Specs, die deine Neovim-Config deklariert</strong>, und legt jedes Plugin als eigenes Projekt an; was du noch nicht hast, wird geklont. Sonst wird nichts aus deiner Config gelesen und nichts daran verändert.",
+      "Fügt die <strong>Neovim-Config selbst</strong> und jedes <strong>eigene Plugin, das sie deklariert</strong> und das auf diesem Rechner ausgecheckt ist, als eigenes Projekt hinzu. Plugins, die hier nicht liegen, werden übersprungen, nicht geklont. An der Config wird nichts verändert.",
     "add.nvim.note":
       "Welches <code>nvim</code> und welches Config-Verzeichnis dabei benutzt werden, zeigt das <strong>Neovim</strong>-Panel in der Seitenleiste — öffne es, wenn das hier scheitert.",
     "add.nvim.go": "Config lesen…",
+    "add.nvim.reading": "Neovim-Config wird gelesen… (Neovim startet headless, das dauert ein paar Sekunden)",
+    "add.nvim.none": "Die Neovim-Config nennt kein Projekt, das auf diesem Rechner ausgecheckt ist.",
+    "add.nvim.allPresent": "Nichts Neues: alle {found} Projekt(e) aus der Neovim-Config sind schon in der Liste.",
+    "add.nvim.done": "{added} von {found} Projekt(en) aus der Neovim-Config hinzugefügt ({present} schon in der Liste).",
+    "add.nvim.failed": "{n} ließen sich nicht hinzufügen: {names}",
     "add.url.lead":
       "Eine Repository-URL. Wir klonen sie flach in den Zwischenspeicher der App und legen sie dann an wie jeden Ordner. Was ein einfaches <code>git clone</code> dieser URL auf deinem Rechner braucht, läuft auch hier — eigene Zugangsdaten hält diese App nicht.",
     "add.url.go": "Klonen",
@@ -1177,7 +1187,7 @@ const CATALOGS = {
     "err.nvim.noConfig": "Kein Neovim-Konfigurationsordner eingerichtet, und am üblichen Ort ist keiner",
     "err.nvim.noCache": "Neovim ließ sich nicht nach seinem Cache-Ordner fragen",
     "err.nvim.timeout": "{program} hat innerhalb von {secs} s nicht geantwortet — wartet die Neovim-Konfiguration auf eine Eingabe?",
-    "err.nvim.noScript": "{script} gibt es nicht. Es kommt mit plugins.personal.export der nvim-Konfiguration — siehe docs/HANDOVER.md dieses Repositorys",
+    "err.nvim.noExport": "Die Neovim-Config in {dir} hat kein Modul plugins.personal.core.export, es gibt also keine Plugin-Liste zu lesen. Die Config selbst fügt der Tab Ordner hinzu",
     "err.nvim.exit": "nvim hat mit Code {code} beendet",
     "err.nvim.notJson": "Die Ausgabe von nvim ist nicht die JSON-Liste, die dieser Import liest",
     "err.telemetry.failed": "Neovim konnte die Telemetrie für {namespace} nicht umschalten",

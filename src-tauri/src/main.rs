@@ -2168,18 +2168,96 @@ struct ImportFailure {
     error: AppError,
 }
 
-/// Import every enabled, locally-checked-out personal plugin from the
-/// user's Neovim configuration.
+/// The Lua chunk `import_from_nvim_config` runs inside a fully started,
+/// headless Neovim: the JSON of `plugins.personal.core.export.projects()`
+/// (the nvim config's own interface, see its `lua/plugins/personal/README.md`)
+/// on stdout, one line.
 ///
-/// Delegates entirely to `plugins.personal.export.projects()` (nvim config,
-/// `lua/plugins/personal/export.lua`) via the headless entry point
-/// `scripts/docmap_projects.lua` — this program never parses
-/// `source.lua`'s own policy table itself, which would be brittle in a way
-/// neither side should have to maintain. Must invoke with `-c "luafile
-/// ..." -c "qa"`, not `-l`: measured, not assumed — `-l` is a bare
-/// Lua-script runner that skips `init.lua` and lazy.nvim's bootstrap
-/// entirely, so it cannot see this config's real, fully-resolved plugin
-/// policy. See that script's own header for the full story.
+/// It used to be a file in the config, `scripts/docmap_projects.lua`; that file
+/// was deleted in a cleanup there and the import failed on every machine with
+/// a missing-script error the reader never connected to the tab. The chunk is
+/// four lines, so it lives here, where nothing outside this repository can
+/// remove it. `plugins.personal.export` is the module's older path and is
+/// still tried. Exit 3 means neither module exists (a config that is not this
+/// one), exit 1 that the module reported an error; both say why on stderr.
+///
+/// Single quotes only: the chunk is one argument of `-c`, and on Windows a
+/// double quote inside it would have to survive two layers of quoting.
+const NVIM_EXPORT_LUA: &str = "lua \
+local ok, m = pcall(require, 'plugins.personal.core.export') \
+if not ok then ok, m = pcall(require, 'plugins.personal.export') end \
+if not ok then io.stderr:write('docmap-desktop: no plugins.personal.core.export in this config\n') os.exit(3) end \
+local p, e = m.projects() \
+if e then io.stderr:write('docmap-desktop: ' .. tostring(e) .. '\n') os.exit(1) end \
+io.stdout:write(vim.json.encode(p) .. '\n') os.exit(0)";
+
+/// The `nvim` command line of the import. `-c`, not `-l`: measured, not
+/// assumed - `-l` is a bare Lua-script runner that skips `init.lua` and
+/// lazy.nvim's bootstrap entirely, so it cannot see this config's real,
+/// fully-resolved plugin policy. The `qa` after it never runs (the chunk
+/// exits), it is there so a chunk that somehow returns does not leave a
+/// headless Neovim waiting for input until the timeout.
+fn nvim_export_command(nvim: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(nvim);
+    cmd.args(["--headless", "-c", NVIM_EXPORT_LUA, "-c", "qa"]);
+    cmd
+}
+
+/// The export's stdout as entries. Banner text before the JSON (a plugin
+/// that prints on startup) is skipped by starting at the first `[`.
+fn parse_nvim_export(stdout: &str) -> Result<Vec<NvimProjectEntry>, AppError> {
+    let trimmed = stdout.trim();
+    let json = trimmed.find('[').map_or(trimmed, |i| &trimmed[i..]);
+    serde_json::from_str(json)
+        .map_err(|e| AppError::new("err.nvim.notJson").detail(format!("{e}\n{stdout}")))
+}
+
+/// Add the config directory itself and then every entry, counting each
+/// outcome. The config comes first: it is the project the tab is named after,
+/// and reading "the Neovim config" and finding everything but the config in
+/// the list was the second half of why the tab looked like it did nothing.
+fn import_entries(
+    ws: &mut Workspace,
+    config_dir: Option<&str>,
+    entries: &[NvimProjectEntry],
+) -> ImportResult {
+    let mut added = Vec::new();
+    let mut already_present = 0usize;
+    let mut errors = Vec::new();
+    let config = config_dir.map(|dir| NvimProjectEntry {
+        name: Path::new(dir)
+            .file_name()
+            .map_or_else(|| dir.to_string(), |n| n.to_string_lossy().to_string()),
+        repo: String::new(),
+        dir: dir.to_string(),
+    });
+    let all: Vec<&NvimProjectEntry> = config.iter().chain(entries.iter()).collect();
+    for entry in &all {
+        match add_one(ws, &entry.dir) {
+            Ok(Some(project)) => added.push(project),
+            Ok(None) => already_present += 1,
+            Err(error) => errors.push(ImportFailure {
+                name: entry.name.clone(),
+                error,
+            }),
+        }
+    }
+    ws.projects.sort_by_key(|p| p.name.to_lowercase());
+    ImportResult {
+        found: all.len(),
+        added,
+        already_present,
+        errors,
+    }
+}
+
+/// Import the Neovim config itself and every enabled, locally-checked-out
+/// personal plugin it declares.
+///
+/// Delegates the plugin list entirely to the config's own
+/// `plugins.personal.core.export.projects()` (see [`NVIM_EXPORT_LUA`]) - this
+/// program never parses `source.lua`'s policy table itself, which would be
+/// brittle in a way neither side should have to maintain.
 ///
 /// `async` + `spawn_blocking`, same reasoning as `generate`: a real Neovim
 /// startup takes real time, and a command that blocks freezes the window
@@ -2192,17 +2270,8 @@ async fn import_from_nvim_config(app: tauri::AppHandle) -> Result<ImportResult, 
         .config_dir
         .ok_or_else(|| AppError::new("err.nvim.noConfig"))?;
 
-    // Absolute path to the script rather than a relative one plus a
-    // matching cwd: one fewer thing that can silently point at the wrong
-    // directory.
-    let script = format!("{config_dir}/scripts/docmap_projects.lua");
-    if !Path::new(&script).is_file() {
-        return Err(AppError::new("err.nvim.noScript").with("script", &script));
-    }
-
     let out = tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new(&nvim_path);
-        cmd.args(["--headless", "-c", &format!("luafile {script}"), "-c", "qa"]);
+        let mut cmd = nvim_export_command(&nvim_path);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -2214,41 +2283,19 @@ async fn import_from_nvim_config(app: tauri::AppHandle) -> Result<ImportResult, 
     .await
     .map_err(AppError::task)??;
 
+    if out.status.code() == Some(3) {
+        return Err(AppError::new("err.nvim.noExport")
+            .with("dir", &config_dir)
+            .detail(String::from_utf8_lossy(&out.stderr)));
+    }
     if !out.status.success() {
         return Err(AppError::new("err.nvim.exit")
             .with("code", out.status.code().unwrap_or(-1))
             .detail(String::from_utf8_lossy(&out.stderr)));
     }
 
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let found: Vec<NvimProjectEntry> = serde_json::from_str(stdout.trim())
-        .map_err(|e| AppError::new("err.nvim.notJson").detail(format!("{e}\n{stdout}")))?;
-
-    let mut added = Vec::new();
-    let mut already_present = 0usize;
-    let mut errors = Vec::new();
-
-    with_workspace(&app, |ws| {
-        for entry in &found {
-            match add_one(ws, &entry.dir) {
-                Ok(Some(project)) => added.push(project),
-                Ok(None) => already_present += 1,
-                Err(error) => errors.push(ImportFailure {
-                    name: entry.name.clone(),
-                    error,
-                }),
-            }
-        }
-        ws.projects.sort_by_key(|p| p.name.to_lowercase());
-        Ok(())
-    })?;
-
-    Ok(ImportResult {
-        found: found.len(),
-        added,
-        already_present,
-        errors,
-    })
+    let found = parse_nvim_export(&String::from_utf8_lossy(&out.stdout))?;
+    with_workspace(&app, |ws| Ok(import_entries(ws, Some(&config_dir), &found)))
 }
 
 /// The engine command line of one **Generate**.
@@ -5774,6 +5821,114 @@ mod tests {
         assert_eq!(already_present, 1, "the repeat of the first");
         assert_eq!(errors, 1, "the directory that does not exist");
         assert_eq!(ws.projects.len(), 2, "no duplicate rows from the repeat");
+    }
+
+    fn nvim_entry(name: &str, dir: &Path) -> NvimProjectEntry {
+        NvimProjectEntry {
+            name: name.to_string(),
+            repo: format!("owner/{name}"),
+            dir: dir.to_string_lossy().to_string(),
+        }
+    }
+
+    #[test]
+    fn nvim_import_adds_the_config_itself_and_its_plugins() {
+        let config = scratch("nvim-import-config");
+        let plugin = scratch("nvim-import-plugin");
+        let mut ws = Workspace::default();
+
+        let res = import_entries(
+            &mut ws,
+            Some(&config.to_string_lossy()),
+            &[nvim_entry("plugin.nvim", &plugin)],
+        );
+
+        assert_eq!(res.found, 2, "the config counts as one of what was found");
+        assert_eq!(res.added.len(), 2);
+        assert_eq!(res.already_present, 0);
+        assert!(res.errors.is_empty());
+        assert_eq!(ws.projects.len(), 2);
+    }
+
+    #[test]
+    fn nvim_import_with_nothing_found_still_adds_the_config() {
+        // An export that lists no checkout (`{}, nil` in the config's
+        // contract) is an answer, not a failure - and the config is still a
+        // project of its own.
+        let config = scratch("nvim-import-empty");
+        let mut ws = Workspace::default();
+
+        let res = import_entries(&mut ws, Some(&config.to_string_lossy()), &[]);
+        assert_eq!((res.found, res.added.len()), (1, 1));
+
+        let mut empty = Workspace::default();
+        let none = import_entries(&mut empty, None, &[]);
+        assert_eq!(
+            (none.found, none.added.len(), none.already_present),
+            (0, 0, 0)
+        );
+        assert!(empty.projects.is_empty());
+    }
+
+    #[test]
+    fn nvim_import_twice_counts_everything_as_already_present() {
+        let config = scratch("nvim-import-twice-config");
+        let plugin = scratch("nvim-import-twice-plugin");
+        let missing = scratch("nvim-import-twice-missing");
+        fs::remove_dir_all(&missing).unwrap();
+        let entries = [
+            nvim_entry("plugin.nvim", &plugin),
+            nvim_entry("missing.nvim", &missing),
+        ];
+        let mut ws = Workspace::default();
+        let config = config.to_string_lossy().to_string();
+
+        let first = import_entries(&mut ws, Some(&config), &entries);
+        assert_eq!(first.added.len(), 2);
+        assert_eq!(first.errors.len(), 1);
+        assert_eq!(first.errors[0].name, "missing.nvim");
+
+        let second = import_entries(&mut ws, Some(&config), &entries);
+        assert!(second.added.is_empty(), "nothing is added twice");
+        assert_eq!(second.already_present, 2);
+        assert_eq!(
+            second.errors.len(),
+            1,
+            "the missing one still fails, by name"
+        );
+        assert_eq!(ws.projects.len(), 2);
+    }
+
+    #[test]
+    fn nvim_export_output_parses_with_and_without_a_banner() {
+        let json = r#"[{"repo":"o/a.nvim","name":"a.nvim","dir":"E:/repos/a.nvim"}]"#;
+        let plain = parse_nvim_export(&format!("{json}\n")).unwrap();
+        assert_eq!(plain.len(), 1);
+        assert_eq!(plain[0].dir, "E:/repos/a.nvim");
+
+        let banner = parse_nvim_export(&format!("lazy: 3 updates\n{json}\n")).unwrap();
+        assert_eq!(banner[0].name, "a.nvim");
+
+        assert!(parse_nvim_export("[]").unwrap().is_empty());
+        let err = parse_nvim_export("not json").unwrap_err();
+        assert_eq!(err.key(), "err.nvim.notJson");
+    }
+
+    #[test]
+    fn nvim_export_needs_no_script_file_in_the_config() {
+        // The import broke once because the script it ran lived in the nvim
+        // config and was deleted there. The chunk is now this program's own.
+        let cmd = nvim_export_command("nvim");
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(args[0], "--headless");
+        assert!(args.iter().all(|a| !a.contains("luafile")));
+        assert!(args[2].starts_with("lua "));
+        assert!(args[2].contains("plugins.personal.core.export"));
+        assert!(!args[2].contains('"'), "one -c argument, no double quotes");
+        assert_eq!(args.last().map(String::as_str), Some("qa"));
     }
 
     #[test]

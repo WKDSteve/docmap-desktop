@@ -106,7 +106,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("err.nvim.noConfig", "No Neovim config folder configured, and none found at the default location"),
     ("err.nvim.noCache", "Neovim could not be asked for its cache folder"),
     ("err.nvim.timeout", "{program} gave no answer within {secs} s — does the Neovim configuration wait for input?"),
-    ("err.nvim.noScript", "{script} does not exist. It ships with the nvim config's own plugins.personal.export — see that repository's docs/HANDOVER.md"),
+    ("err.nvim.noExport", "The Neovim config in {dir} has no plugins.personal.core.export module, so there is no plugin list to read. Add the config itself with the Folder tab"),
     ("err.nvim.exit", "nvim exited with code {code}"),
     ("err.nvim.notJson", "nvim's output is not the JSON list this import reads"),
     ("err.telemetry.failed", "Neovim could not switch telemetry for {namespace}"),

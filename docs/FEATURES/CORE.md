@@ -8,8 +8,11 @@ itself.
 
 Three ways in, all landing on the same thing — a directory on disk plus the
 map directory that belongs to it. A local path, a GitHub URL (cloned into the
-app's own `repos/`), or the Neovim tab, which reads the plugin list out of a
-Neovim config rather than making you name each one.
+app's own `repos/`), or the Neovim tab, which adds the Neovim config itself
+and reads its plugin list rather than making you name each one. The Lua that
+asks the config for that list (`NVIM_EXPORT_LUA`) ships with this app: it used
+to be a script inside the config, and when that was deleted there the tab
+failed on every machine with an error nobody connected to it.
 
 Nothing is stored inside the project you add. Everything the app knows lives
 in its own config directory, so adding a repository never writes to it.

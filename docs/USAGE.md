@@ -76,26 +76,32 @@ pre-ticked; **Select all** / **Select none** cover the rest, including a
 plain folder with no `.git` — not everything worth mapping is a checkout.
 **Add selected** adds them the same way the single-folder path does, one at
 a time so that one bad entry does not fail the rest, and reports how many of
-how many were added. Unlike the Neovim tab, added projects are **not**
+how many were added. Like the Neovim tab, added projects are **not**
 auto-generated in bulk — thirty-two sequential engine runs would block the
 window for no reason when [Generate the out-of-date
 ones](#generate-generate-all-generate-the-out-of-date-ones) already covers
 exactly this case afterwards.
 
-**Neovim** — the plugin specs your personal Neovim config declares, added in
-one step instead of one folder picker per plugin. The tab is named for what
-it reads: it runs your config headless and asks it which
-`docmap.nvim`-mappable plugins are enabled and checked out locally,
-then adds each one exactly as the Folder tab would. It reads the same
-`plugins.personal.export.projects()` list `:MyPlugins` and the statusline
-already use — the real, currently-active list, not a guess at a policy
-table. Nothing else about the config is read, and nothing is changed.
-It waits at most 60 seconds: a configuration that stops to ask something ends in
-an error saying so, and the dialog is usable again.
+**Neovim** — the Neovim config itself plus every personal plugin it
+declares, added in one step instead of one folder picker per plugin. It runs
+your config headless and asks it which plugins are enabled and checked out on
+this machine — the same `plugins.personal.core.export.projects()` list
+`:MyPlugins` and `:DocMapAll` read, the real, currently-active list rather than
+a guess at a policy table — then adds the config directory and each plugin
+exactly as the Folder tab would. Plugins that are not checked out here are
+skipped, not cloned. Nothing else about the config is read, and nothing is
+changed. The Lua it runs is part of this app, so the config needs no script
+of its own; a config without that module gets an error that says so. It waits
+at most 60 seconds: a configuration that stops to ask something ends in an
+error saying so, and the dialog is usable again.
 
-Afterwards the status line reports what happened: how many were found, how
-many newly added, how many were already in the list, and how many failed —
-with the reason per project. Already present is not a failure.
+The result is written into the tab itself, not only the status line: how
+many were found, how many newly added, how many were already in the list, and
+which failed, with the reason per project. "Nothing found" and "everything is
+already in the list" are sentences of their own, and the dialog stays open
+for them (and for an error); it closes only when the list grew. Already
+present is not a failure. Like the folder checklist, the added projects are
+not generated in bulk.
 
 This tab needs two things resolved, shown in the **Neovim** section of
 Settings: the `nvim` binary (found on `PATH`, or **Locate nvim…**) and the

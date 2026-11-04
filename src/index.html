@@ -390,10 +390,10 @@
 
       <section id="pane-nvim" class="addbox-pane" role="tabpanel">
         <p class="addbox-lead" data-i18n="add.nvim.lead">
-          Reads the <strong>plugin specs your Neovim config declares</strong>
-          and adds every plugin as its own project, cloning the ones that are
-          not on this machine yet. It does not read anything else about the
-          config, and it changes nothing in it.
+          Adds the <strong>Neovim config itself</strong> and every
+          <strong>personal plugin it declares</strong> that is checked out on
+          this machine, each as its own project. Plugins that are not on this
+          machine are skipped, not cloned. It changes nothing in the config.
         </p>
         <p class="addbox-note" data-i18n="add.nvim.note">
           Which <code>nvim</code> and which config directory it uses is what
@@ -401,6 +401,7 @@
           fails.
         </p>
         <button id="run-nvim-import" class="addbox-go" type="button" data-i18n="add.nvim.go">Read the config…</button>
+        <p id="nvim-import-result" class="addbox-note" role="status" aria-live="polite" hidden></p>
       </section>
 
       <section id="pane-url" class="addbox-pane" role="tabpanel">

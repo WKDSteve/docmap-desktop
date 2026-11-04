@@ -2414,7 +2414,9 @@ nvimImportBtn.addEventListener("click", async () => {
     if (summary.changed) {
       // Same as the folder checklist's bulk add: no automatic generate for
       // a batch, the projects are in the list and each one generates on its
-      // own button (or "Generate all").
+      // own button (or "Generate all"). The line in the tab goes with the
+      // dialog, or the next opening would greet the reader with this result.
+      nvimImportResult.hidden = true;
       addbox.el.close();
       await refresh();
       say(summary.text);

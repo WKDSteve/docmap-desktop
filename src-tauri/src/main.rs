@@ -2150,7 +2150,8 @@ struct NvimProjectEntry {
 
 #[derive(Debug, Serialize)]
 struct ImportResult {
-    /// How many entries the Neovim export returned, before dedup.
+    /// How many entries the import tried: the config directory itself plus
+    /// every entry the Neovim export returned, before dedup.
     found: usize,
     /// Newly added projects only — not ones that were already present.
     added: Vec<Project>,
@@ -2203,11 +2204,17 @@ fn nvim_export_command(nvim: &str) -> std::process::Command {
     cmd
 }
 
-/// The export's stdout as entries. Banner text before the JSON (a plugin
-/// that prints on startup) is skipped by starting at the first `[`.
+/// The export's stdout as entries. The chunk writes the JSON as one line and
+/// exits, so it is the last non-empty line; anything a plugin printed during
+/// startup comes before it and is skipped. Not "from the first `[`": a banner
+/// like `[lazy] 3 updates` starts with one too.
 fn parse_nvim_export(stdout: &str) -> Result<Vec<NvimProjectEntry>, AppError> {
-    let trimmed = stdout.trim();
-    let json = trimmed.find('[').map_or(trimmed, |i| &trimmed[i..]);
+    let json = stdout
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
     serde_json::from_str(json)
         .map_err(|e| AppError::new("err.nvim.notJson").detail(format!("{e}\n{stdout}")))
 }
@@ -5908,6 +5915,9 @@ mod tests {
 
         let banner = parse_nvim_export(&format!("lazy: 3 updates\n{json}\n")).unwrap();
         assert_eq!(banner[0].name, "a.nvim");
+        // A banner that itself starts with `[` must not be taken for the JSON.
+        let bracket = parse_nvim_export(&format!("[lazy] 3 updates\r\n{json}\r\n\r\n")).unwrap();
+        assert_eq!(bracket[0].name, "a.nvim");
 
         assert!(parse_nvim_export("[]").unwrap().is_empty());
         let err = parse_nvim_export("not json").unwrap_err();

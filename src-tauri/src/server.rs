@@ -47,12 +47,12 @@
 //! 5. **A client cannot hold it up.** The head of a request has a size and a
 //!    time limit, and the connections at one time have a number.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::apperr::AppError;
 
@@ -312,6 +312,24 @@ const IO_TIMEOUT: Duration = Duration::from_secs(10);
 /// The most connections at one time. A page asks a handful of things at once.
 const MAX_CONNECTIONS: usize = 32;
 
+/// A socket with one deadline for everything read from it: a read timeout alone starts anew with every byte, so one byte
+/// every few seconds would hold a connection for hours.
+struct UntilDeadline {
+    stream: TcpStream,
+    end: Instant,
+}
+
+impl Read for UntilDeadline {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let left = self.end.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        self.stream.read(buf)
+    }
+}
+
 /// The lines of a request head, without the blank line that ends it. `None`: it is
 /// over [`MAX_HEAD`], not text, or ended before the blank line.
 fn read_head(reader: impl BufRead) -> Option<Vec<String>> {
@@ -365,15 +383,28 @@ fn asked_by_own_page(head: &[String], port: u16) -> bool {
     }
 }
 
+/// Whether the page's own fetches are asking. Loading the page itself comes from the window, another origin; but a route
+/// of the API costs engine processes, and a page elsewhere must not be able to start them with an `<img>` (such a request
+/// sends no `Origin`). A client that sends no `Sec-Fetch-Site` is no browser.
+fn api_asked_by_own_page(head: &[String]) -> bool {
+    matches!(
+        one_header(head, "sec-fetch-site"),
+        Ok(None | Some("same-origin"))
+    )
+}
+
 fn handle(cfg: &ServeConfig, port: u16, stream: &mut TcpStream) {
     if stream.set_read_timeout(Some(IO_TIMEOUT)).is_err()
         || stream.set_write_timeout(Some(IO_TIMEOUT)).is_err()
     {
         return;
     }
-    let reader = BufReader::new(match stream.try_clone() {
-        Ok(s) => s,
-        Err(_) => return,
+    let reader = BufReader::new(UntilDeadline {
+        stream: match stream.try_clone() {
+            Ok(s) => s,
+            Err(_) => return,
+        },
+        end: Instant::now() + IO_TIMEOUT,
     });
     let Some(head) = read_head(reader) else {
         return respond_json_error(stream, 400, &AppError::new("api.badRequest"));
@@ -408,6 +439,9 @@ fn handle(cfg: &ServeConfig, port: u16, stream: &mut TcpStream) {
     }
 
     if let Some(name) = path.strip_prefix("/api/") {
+        if !api_asked_by_own_page(&head) {
+            return respond_json_error(stream, 403, &AppError::new("api.foreign"));
+        }
         // `commit/<sha>` first, same reason `core.api.answer` checks it
         // before its own fixed route table: the sha varies, so it cannot
         // be a `ROUTES` entry, and it needs its own validation rather than
@@ -551,7 +585,10 @@ pub fn url(port: u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{asked_by_own_page, lock_servers, read_head, safe_sha, servable_file, MAX_HEAD};
+    use super::{
+        api_asked_by_own_page, asked_by_own_page, lock_servers, read_head, safe_sha, servable_file,
+        UntilDeadline, MAX_HEAD,
+    };
     use std::fs;
     use std::sync::Mutex;
 
@@ -614,6 +651,55 @@ mod tests {
         ] {
             assert!(!asked_by_own_page(&bad, 5000), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn the_api_is_for_the_pages_own_fetches() {
+        let get = "GET /api/commits HTTP/1.1";
+        assert!(api_asked_by_own_page(&head(&[get])));
+        assert!(api_asked_by_own_page(&head(&[
+            get,
+            "Sec-Fetch-Site: same-origin"
+        ])));
+        assert!(!api_asked_by_own_page(&head(&[
+            get,
+            "Sec-Fetch-Site: cross-site"
+        ])));
+        assert!(!api_asked_by_own_page(&head(&[
+            get,
+            "Sec-Fetch-Site: same-site"
+        ])));
+    }
+
+    #[test]
+    fn a_client_that_drips_bytes_meets_one_deadline() {
+        use std::io::{BufReader, Write};
+        use std::time::{Duration, Instant};
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let addr = listener.local_addr().unwrap();
+        // A byte every 100 ms: each read alone would be well within any timeout.
+        let client = std::thread::spawn(move || {
+            let mut out = std::net::TcpStream::connect(addr).unwrap();
+            for _ in 0..30 {
+                if out.write_all(b"x").is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let (stream, _) = listener.accept().unwrap();
+        let started = Instant::now();
+        let reader = BufReader::new(UntilDeadline {
+            stream,
+            end: started + Duration::from_millis(500),
+        });
+        assert!(read_head(reader).is_none());
+        assert!(
+            started.elapsed() < Duration::from_millis(1500),
+            "{:?}",
+            started.elapsed()
+        );
+        client.join().unwrap();
     }
 
     #[test]

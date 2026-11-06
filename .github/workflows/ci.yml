@@ -106,7 +106,9 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+      # Only on the self-hosted runner, which has both tools; a hosted runner of a pull request has neither.
       - name: cargo deny and cargo audit
+        if: github.event_name == 'push'
         working-directory: src-tauri
         run: |
           cargo deny check

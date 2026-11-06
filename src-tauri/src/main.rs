@@ -2524,7 +2524,14 @@ fn serve_project(app: tauri::AppHandle, id: String) -> Result<String, AppError> 
     let info = engine_info(app.clone())?;
 
     // The window falls back to the asset protocol when the server cannot start.
-    allow_asset(&app, &Path::new(&project.map_dir).join("index.html"));
+    // Only what `map_file` lets through: the scope canonicalises a path, which would follow a link to another machine.
+    if let Some(index) = map_file(
+        Path::new(&project.root),
+        Path::new(&project.map_dir),
+        "index.html",
+    ) {
+        allow_asset(&app, &index);
+    }
     let port = server::start(server::ServeConfig {
         root: project.root.clone(),
         map_dir: project.map_dir.clone(),

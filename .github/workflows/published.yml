@@ -44,7 +44,7 @@ jobs:
           Set-Content -Path $sums -Value "$('0' * 64)  $env:ASSET"
           $script = [scriptblock]::Create((Invoke-RestMethod -Uri "$env:BASE/install.ps1"))
           $refused = $false
-          try { & $script -File $file -Sums $sums -AllowElevated } catch { $refused = $true; Write-Host "refused: $_" }
+          try { & $script -File $file -Sums $sums -AllowElevated } catch { if ("$_" -notmatch 'does not match') { throw }; $refused = $true; Write-Host "refused: $_" }
           if (-not $refused) { throw 'a wrong checksum did not stop the install' }
           $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
             Where-Object { (Get-ItemProperty $_.PSPath).DisplayName -like '*docmap*' }

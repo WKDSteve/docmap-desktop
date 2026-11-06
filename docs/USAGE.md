@@ -724,6 +724,8 @@ to its folder. Empty means `docs/map`. It is refused on saving when the
 engine would refuse it: a path outside the project (`..`, an absolute path or
 a drive), a name with anything but letters, digits, `-`, `_` and `.` in it (a
 space or an umlaut, say), a `.` name, or on Windows a name ending in a dot.
+An older value that breaks this (say `../maps`) is named when the dialog opens,
+and no map is read from there until it is changed.
 Change it and **this window follows
 the map to its new home** — the picker, the freshness mark and the overview
 row all read the new location immediately. That mattered enough to name:

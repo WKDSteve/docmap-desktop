@@ -2,7 +2,7 @@
 # installs from and clicks through before publishing it (docs/RELEASING.md). Nothing here publishes.
 #
 # What it makes:
-#   an installer per platform         the Windows `-setup.exe` and `.msi` (the engine is bundled), the Linux
+#   an installer per platform         the Windows `-setup.exe` (the engine is bundled), the Linux
 #                                     `.deb`, `.rpm` and `.AppImage` (the engine is bundled), the macOS `.dmg`
 #                                     and `.app.tar.gz` for both architectures (no bundled engine)
 #   install.ps1, install.sh           install exactly this release for the current user, without a browser
@@ -112,12 +112,12 @@ jobs:
       - name: Build the installers
         run: npx --yes @tauri-apps/cli@2.12.4 build
 
-      # What Tauri made is for Tauri to decide (`bundle.targets` is "all"); what is published is the
-      # installers, not the signatures and updater archives next to them: the NSIS setup and the MSI.
+      # What Tauri makes is `bundle.targets`: the NSIS setup, installed per user. No MSI: it would install under
+      # Program Files, with a second path to look after and no one who needs it.
       - name: Collect the installers
         run: |
           mkdir -p dist
-          for file in src-tauri/target/release/bundle/nsis/*-setup.exe src-tauri/target/release/bundle/msi/*.msi; do
+          for file in src-tauri/target/release/bundle/nsis/*-setup.exe; do
             [ -e "$file" ] || continue
             name="$(basename "$file")"
             if [ -e "dist/$name" ]; then
@@ -137,8 +137,8 @@ jobs:
           retention-days: 3
 
   # The draft (made here when there is none), the installers, the install scripts stamped for this tag and
-  # the checksums of all of them. Two files, which is the number to expect (the NSIS setup and the `.msi`
-  # of Windows); a build that made fewer leaves the number short and nothing is published.
+  # the checksums of all of them. One file, which is the number to expect (the NSIS setup of Windows); a
+  # build that made none leaves the number short and nothing is published.
   publish:
     needs: [check, build]
     runs-on: [self-hosted, windows]
@@ -160,7 +160,7 @@ jobs:
           tag: ${{ github.ref_name }}
           title: docmap-desktop ${{ github.ref_name }}
           files: dist
-          expect: 2
+          expect: 1
           app: docmap-desktop
           windows-kind: nsis
           windows-release-asset: docmap-desktop_{version}_x64-setup.exe

@@ -39,7 +39,7 @@ for that project.
 
 ## Get the app
 
-Releases carry **Windows installers only** (`.msi` and `-setup.exe`, no Rust toolchain required); there is no
+Releases carry **a Windows installer only** (`-setup.exe`, installed per user, no Rust toolchain required); there is no
 macOS or Linux package. Built by [`.github/workflows/release.yml`](.github/workflows/release.yml) from a
 pushed `vX.Y.Z` tag on the self-hosted Windows runner of the author, by choice (pull requests are checked on
 GitHub-hosted runners); see [Build](#build) below to build one yourself

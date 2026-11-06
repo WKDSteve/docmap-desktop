@@ -137,10 +137,10 @@ installers on it, and adds the install script, stamped for this tag, and `SHA256
 
 | Platform | Produces | Engine bundled |
 |---|---|---|
-| Windows | `_x64_en-US.msi`, `_x64-setup.exe` | yes |
+| Windows | `_x64-setup.exe` | yes |
 
-Two files, which is the number to expect. Listed from the real run rather than from the workflow, because Tauri
-decides which bundles it makes (`bundle.targets`). `publish` expects exactly two (`expect: 2`): a build that
+One file, which is the number to expect (no MSI: `bundle.targets` is NSIS only, installed per user). Listed from the real run rather than from the workflow, because Tauri
+decides which bundles it makes (`bundle.targets`). `publish` expects exactly one (`expect: 1`): a build that
 made fewer leaves the number short and nothing is published. On top come `install.ps1` and `SHA256SUMS`. (The
 first releases also carried Linux packages (`.deb`, `.rpm`, `.AppImage`) and macOS images (`.dmg`,
 `.app.tar.gz`), nine files in all; they were built on hosted runners and are gone with them.)
@@ -211,7 +211,7 @@ yet.
 Download the installer for the platform you are on:
 
 ```bash
-gh release download v0.2.0 --pattern "*.msi" --dir .
+gh release download v0.2.0 --pattern "*-setup.exe" --dir .
 ```
 
 The install scripts cannot fetch a draft by themselves (the files of a draft download only for people who may

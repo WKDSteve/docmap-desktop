@@ -1,0 +1,74 @@
+# What a user does, on what was just published: install.ps1 of `latest`, the way `irm | iex` does it, then the installed
+# app has to start and stay up, and its uninstaller has to take it away. A wrong checksum has to stop the install.
+#
+# On windows-latest, a throwaway VM, on purpose: the self-hosted runner is the maintainer's machine, and the silent setup
+# would replace the app installed there. Windows PowerShell 5.1 is the shell, the one a person has by default.
+
+name: published
+
+on:
+  workflow_run:
+    workflows: [rolling]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: published
+  cancel-in-progress: true
+
+env:
+  BASE: https://github.com/${{ github.repository }}/releases/download/latest
+  ASSET: docmap-desktop-windows-x86_64-setup.exe
+
+jobs:
+  published:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - name: A wrong checksum stops the install
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'wrong'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $file = Join-Path $dir $env:ASSET
+          Invoke-WebRequest -UseBasicParsing -Uri "$env:BASE/$env:ASSET" -OutFile $file
+          $sums = Join-Path $dir 'SHA256SUMS'
+          Set-Content -Path $sums -Value "$('0' * 64)  $env:ASSET"
+          $script = [scriptblock]::Create((Invoke-RestMethod -Uri "$env:BASE/install.ps1"))
+          $refused = $false
+          try { & $script -File $file -Sums $sums -AllowElevated } catch { $refused = $true; Write-Host "refused: $_" }
+          if (-not $refused) { throw 'a wrong checksum did not stop the install' }
+          $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' -ErrorAction SilentlyContinue |
+            Where-Object { (Get-ItemProperty $_.PSPath).DisplayName -like '*docmap*' }
+          if ($entry) { throw 'the app was installed all the same' }
+
+      - name: Install from latest, start, uninstall
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & ([scriptblock]::Create((Invoke-RestMethod -Uri "$env:BASE/install.ps1"))) -AllowElevated
+          $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' |
+            ForEach-Object { Get-ItemProperty $_.PSPath } |
+            Where-Object { $_.DisplayName -like '*docmap*' } | Select-Object -First 1
+          if (-not $entry) { throw 'no uninstall entry after the install' }
+          $folder = $entry.InstallLocation
+          if (-not $folder) { $folder = Split-Path -Parent ($entry.UninstallString -replace '"', '' -replace ' /.*$', '') }
+          $app = Get-ChildItem -Path $folder -Filter 'docmap-desktop.exe' -Recurse | Select-Object -First 1
+          if (-not $app) { throw "no docmap-desktop.exe in $folder" }
+          # No window to look at on this VM: alive after a while is the claim, a start that fails ends the process.
+          $process = Start-Process -FilePath $app.FullName -PassThru
+          Start-Sleep -Seconds 15
+          if ($process.HasExited) { throw "the app ended by itself, exit code $($process.ExitCode)" }
+          Stop-Process -Id $process.Id -Force
+          $uninstaller = $entry.UninstallString -replace '"', '' -replace ' /.*$', ''
+          Start-Process -FilePath $uninstaller -ArgumentList '/S' -Wait
+          $deadline = [DateTime]::UtcNow.AddSeconds(60)
+          while ([DateTime]::UtcNow -lt $deadline -and (Test-Path $app.FullName)) { Start-Sleep -Seconds 1 }
+          if (Test-Path $app.FullName) { throw "the uninstall left $($app.FullName)" }

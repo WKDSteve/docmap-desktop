@@ -58,7 +58,8 @@ jobs:
             ForEach-Object { Get-ItemProperty $_.PSPath } |
             Where-Object { $_.DisplayName -like '*docmap*' } | Select-Object -First 1
           if (-not $entry) { throw 'no uninstall entry after the install' }
-          $folder = $entry.InstallLocation
+          # The setup of NSIS writes this value in quotes.
+          $folder = $entry.InstallLocation -replace '"', ''
           if (-not $folder) { $folder = Split-Path -Parent ($entry.UninstallString -replace '"', '' -replace ' /.*$', '') }
           $app = Get-ChildItem -Path $folder -Filter 'docmap-desktop.exe' -Recurse | Select-Object -First 1
           if (-not $app) { throw "no docmap-desktop.exe in $folder" }

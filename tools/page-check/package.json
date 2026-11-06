@@ -1,0 +1,12 @@
+{
+  "name": "docmap-page-check",
+  "version": "0.0.0",
+  "private": true,
+  "description": "What tools/page-check.mjs needs. docmap-desktop itself has no package manager dependency: nothing it builds or ships reads this folder.",
+  "packageManager": "pnpm@10.29.2",
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.64.1",
+    "playwright-core": "1.64.1"
+  }
+}

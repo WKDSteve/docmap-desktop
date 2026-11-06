@@ -160,6 +160,13 @@ jobs:
       - name: the token copy matches the pinned appkit tag
         run: python tools/check-appkit-tokens.py
 
+      # axe on the window, light and dark, with a hover, a focus and the dialogs open: Chrome and pnpm of the runner.
+      - name: axe on the window
+        if: github.event_name == 'push'
+        run: |
+          pnpm --dir tools/page-check install --frozen-lockfile
+          node tools/page-check.mjs tools/page-check/node_modules
+
       - name: the release-kit actions are the pinned commit
         run: python tools/check-release-kit-pin.py
 

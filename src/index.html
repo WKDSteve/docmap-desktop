@@ -334,6 +334,8 @@
         </header>
         <div id="run-report-body" class="run-report-body" tabindex="0"></div>
       </section>
+      <!-- In main: a popup outside every landmark is a finding of axe (tools/page-check.mjs). Fixed, so main does not place it. -->
+      <div id="help" class="help" role="tooltip" hidden></div>
     </main>
 
     <!-- One help bubble, reused by every control that carries `data-help`.
@@ -432,7 +434,6 @@
       </section>
     </dialog>
 
-    <div id="help" class="help" role="tooltip" hidden></div>
 
 
     <!-- Feedback. Deliberately not a Send button: this builds a prefilled
@@ -798,11 +799,11 @@
       </section>
 
       <section class="prefs-section">
-        <h3 data-i18n="scope.exclude">Excluded paths</h3>
+        <h3 id="scope-exclude-title" data-i18n="scope.exclude">Excluded paths</h3>
         <p class="addbox-note" data-i18n="scope.exclude.note">
           One path per line, relative to the project root.
         </p>
-        <textarea id="scope-exclude" class="fb-field scope-exclude" rows="5"
+        <textarea id="scope-exclude" class="fb-field scope-exclude" rows="5" aria-labelledby="scope-exclude-title"
                   spellcheck="false" autocomplete="off"
                   data-i18n-placeholder="scope.exclude.placeholder"></textarea>
         <div class="prefs-buttons">

@@ -13,6 +13,7 @@
 
 # Node (only used by the Tauri CLI, never at runtime)
 /node_modules/
+/tools/page-check/node_modules/
 
 # Editor / OS
 .DS_Store

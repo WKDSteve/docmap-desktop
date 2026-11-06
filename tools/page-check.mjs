@@ -23,6 +23,18 @@ const { AxeBuilder } = require('@axe-core/playwright');
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const python = process.platform === 'win32' ? 'python' : 'python3';
+// A preview of another session on this port would be checked in place of this one, and green.
+const taken = await new Promise((resolve) => {
+  const probe = connect(8731, 'localhost', () => {
+    probe.destroy();
+    resolve(true);
+  });
+  probe.on('error', () => resolve(false));
+});
+if (taken) {
+  console.error('page-check: port 8731 is in use, by another preview: stop it first');
+  process.exit(2);
+}
 const server = spawn(python, ['tools/preview/preview.py'], { cwd: root, stdio: 'ignore' });
 const URL = 'http://localhost:8731/tools/preview/preview.html';
 

@@ -2523,6 +2523,8 @@ fn serve_project(app: tauri::AppHandle, id: String) -> Result<String, AppError> 
     // fidelity the sidebar says has since changed.
     let info = engine_info(app.clone())?;
 
+    // The window falls back to the asset protocol when the server cannot start.
+    allow_asset(&app, &Path::new(&project.map_dir).join("index.html"));
     let port = server::start(server::ServeConfig {
         root: project.root.clone(),
         map_dir: project.map_dir.clone(),
@@ -3696,7 +3698,19 @@ fn project_icon(app: tauri::AppHandle, id: String) -> Result<Option<String>, App
         .iter()
         .find(|p| p.id == id)
         .ok_or_else(|| AppError::no_project(&id))?;
-    Ok(icon::find(Path::new(&project.root)).map(|p| portable(&p)))
+    let found = icon::find(Path::new(&project.root));
+    if let Some(path) = &found {
+        allow_asset(&app, path);
+    }
+    Ok(found.map(|p| portable(&p)))
+}
+
+/// Let the webview load this one file through the asset protocol. The static scope is empty: a page in the window could
+/// otherwise read any file of the user, and only the icon of a project and the fallback of its map are ever shown so.
+fn allow_asset(app: &tauri::AppHandle, path: &Path) {
+    if let Err(e) = app.asset_protocol_scope().allow_file(path) {
+        eprintln!("the asset scope refused a file: {e}");
+    }
 }
 
 /// Whether a project's map has fallen behind its sources.
@@ -4784,6 +4798,27 @@ mod tests {
         fs::remove_dir_all(root.join("docs")).unwrap();
         assert!(dir_link(&root.join("docs"), &root.join("real")));
         assert!(!map_dir_is_plain(&root, &root.join("docs/map")));
+    }
+
+    #[test]
+    fn the_window_allows_no_inline_script_and_no_file_by_default() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let security = &conf["app"]["security"];
+        let csp = security["csp"].as_str().expect("a policy");
+        let scripts = csp
+            .split(';')
+            .find(|d| d.trim().starts_with("script-src"))
+            .unwrap();
+        assert_eq!(scripts.trim(), "script-src 'self'");
+        for needed in [
+            "object-src 'none'",
+            "base-uri 'none'",
+            "frame-src http://127.0.0.1:*",
+        ] {
+            assert!(csp.contains(needed), "{needed}");
+        }
+        assert_eq!(security["assetProtocol"]["scope"], serde_json::json!([]));
     }
 
     #[test]

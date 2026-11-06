@@ -1,0 +1,37 @@
+# What the app may depend on. Run from src-tauri/: cargo deny check
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+
+[licenses]
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+    # Permissive, a notice only (through tauri and wry).
+    "BSD-3-Clause",
+    "Zlib",
+    # File-level copyleft of crates used unchanged (cssparser, selectors and friends, through tauri): no effect on this app's code.
+    "MPL-2.0",
+]
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[advisories]
+yanked = "deny"
+ignore = [
+    # unic-*: unmaintained, pulled in by tauri through urlpattern, no replacement this app can choose. Text only, no
+    # known hole. Look again when tauri moves.
+    "RUSTSEC-2025-0075",
+    "RUSTSEC-2025-0080",
+    "RUSTSEC-2025-0081",
+    "RUSTSEC-2025-0098",
+    "RUSTSEC-2025-0100",
+]

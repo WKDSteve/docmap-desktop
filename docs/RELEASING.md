@@ -15,6 +15,7 @@ that ought to work.
 - [A draft ages, and it ages fast](#a-draft-ages-and-it-ages-fast)
 - [If something is wrong](#if-something-is-wrong)
 - [Two things worth knowing before you publish](#two-things-worth-knowing-before-you-publish)
+- [Security decisions](#security-decisions)
 
 ---
 
@@ -340,3 +341,12 @@ moving tag in `docmap.nvim`. Two installers of this app built a month
 apart therefore bundle different engines, and that is by design — which is
 exactly why About reports the engine's own commit rather than assuming the
 app's version implies it.
+
+## Security decisions
+
+- **No updater.** The hub (hub-desktop) updates the apps, with the checksums of the release; a second way to update would be a second key to look after.
+- **No code signing.** The installers are unsigned: this is private use, and a certificate costs money every year. Windows may warn on first start.
+- **Logging.** The app writes no log file. Messages go to the console of a debug run, and they name no file contents. Keep it that way: paths and contents of a project are private data.
+- **macOS and Linux** are not published (see the table above); the code keeps building for them, nothing promises they run.
+
+Enforced in code and CI: the window's CSP allows no inline script, the asset protocol allows no file until the app names it (`tauri.conf.json`), the server of a map only answers its own page, and `cargo deny` and `cargo audit` run in CI.

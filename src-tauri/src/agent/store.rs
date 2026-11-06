@@ -131,7 +131,7 @@ pub enum BatchState {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BatchRec {
-    pub id: i64,
+    pub id: String,
     pub rules: Vec<String>,
     pub files: usize,
     pub bytes: u64,
@@ -151,7 +151,7 @@ pub struct BatchRec {
 impl Default for BatchRec {
     fn default() -> Self {
         BatchRec {
-            id: 0,
+            id: String::new(),
             rules: Vec::new(),
             files: 0,
             bytes: 0,
@@ -173,7 +173,7 @@ impl Default for BatchRec {
 #[serde(rename_all = "camelCase", default)]
 pub struct ProposalRec {
     pub rule_id: String,
-    pub batch: i64,
+    pub batch: String,
     pub key: String,
     pub rule_hash: Option<String>,
     /// `violation`, `compliant` or `unclear` (the engine's word), or `error`
@@ -193,6 +193,8 @@ pub struct Run {
     pub root: String,
     /// The selection as `rules/plan` got it: frozen, so a repeat uses the same.
     pub selection: String,
+    /// Asked again even where the answer is cached, also after a resume.
+    pub refresh: bool,
     pub backend: Backend,
     pub model: String,
     pub local: bool,
@@ -216,6 +218,7 @@ impl Default for Run {
             notes: String::new(),
             root: String::new(),
             selection: String::new(),
+            refresh: false,
             backend: Backend::Ollama,
             model: String::new(),
             local: true,
@@ -394,6 +397,50 @@ impl Store {
         Ok(base)
     }
 
+    /// A folder below the base, made if needed, and checked like the base: a link at `cache` or at a run's folder
+    /// would lead just as far out.
+    fn ensure_below(&self, name: &str) -> Result<PathBuf, AppError> {
+        self.ensure_base()?;
+        let dir = self.base().join(name);
+        fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;
+        crate::resolve_inside(&self.root, &format!("{DIR}/{name}"))?;
+        Ok(dir)
+    }
+
+    /// Hold the run `id` for this thread until the file is dropped: `None` when another process has it. An app that
+    /// is started twice must not see the other's live run as cut off, or ask its batches a second time.
+    pub fn hold(&self, id: &str) -> Result<Option<fs::File>, AppError> {
+        if !valid_id(id) {
+            return Err(AppError::new("err.agent.noRun").with("id", id));
+        }
+        let path = self.ensure_below(id)?.join("run.lock");
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|e| path_err("err.path.write", &path, e))?;
+        match file.try_lock() {
+            Ok(()) => Ok(Some(file)),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(e)) => Err(path_err("err.path.write", &path, e)),
+        }
+    }
+
+    /// Whether a thread holds the run `id` right now, here or in another process.
+    pub fn held(&self, id: &str) -> bool {
+        let Ok(dir) = self.run_dir(id) else {
+            return false;
+        };
+        let Ok(file) = fs::OpenOptions::new()
+            .write(true)
+            .open(dir.join("run.lock"))
+        else {
+            return false;
+        };
+        matches!(file.try_lock(), Err(fs::TryLockError::WouldBlock))
+    }
+
     fn run_dir(&self, id: &str) -> Result<PathBuf, AppError> {
         if !valid_id(id) {
             return Err(AppError::new("err.agent.noRun").with("id", id));
@@ -413,16 +460,14 @@ impl Store {
     }
 
     pub fn save(&self, run: &Run) -> Result<(), AppError> {
-        self.ensure_base()?;
-        let dir = self.run_dir(&run.id)?;
-        fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;
+        self.run_dir(&run.id)?;
+        let dir = self.ensure_below(&run.id)?;
         self.write_json(&dir.join("run.json"), run)
     }
 
     pub fn save_plan(&self, id: &str, plan: &Plan) -> Result<(), AppError> {
-        self.ensure_base()?;
-        let dir = self.run_dir(id)?;
-        fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;
+        self.run_dir(id)?;
+        let dir = self.ensure_below(id)?;
         self.write_json(&dir.join("plan.json"), plan)
     }
 
@@ -470,11 +515,8 @@ impl Store {
         let Some(path) = self.cache_path(key) else {
             return;
         };
-        if self.ensure_base().is_err() {
+        if self.ensure_below("cache").is_err() {
             return;
-        }
-        if let Some(dir) = path.parent() {
-            let _ = fs::create_dir_all(dir);
         }
         let _ = self.write_json(&path, entry);
     }
@@ -515,6 +557,9 @@ pub fn ignore_add(root: &Path) -> Result<IgnoreState, AppError> {
         return Ok(ignore_state(root));
     }
     let path = root.join(".gitignore");
+    if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(AppError::new("err.path.notInside").with("path", ".gitignore"));
+    }
     let mut text = match fs::read_to_string(&path) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -583,7 +628,7 @@ mod tests {
     fn plan_with(prompt: String) -> Plan {
         Plan {
             batches: vec![PlanBatch {
-                id: 1,
+                id: "b1".into(),
                 system: "SYS".into(),
                 prompt,
                 rules: ["A-1", "B-2"]
@@ -665,7 +710,7 @@ mod tests {
             ..Default::default()
         };
         old.batches.push(BatchRec {
-            id: 4,
+            id: "b4".into(),
             ..Default::default()
         });
         let new = Run {
@@ -775,5 +820,89 @@ mod tests {
             assert!(is_ignore_line(line), "{line}");
         }
         assert!(!is_ignore_line("# .rules-proposals/"));
+    }
+
+    /// A link at `at` to `to`; false where this system does not let the test make one.
+    fn link_dir(to: &Path, at: &Path) -> bool {
+        #[cfg(windows)]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(at)
+                .arg(to)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        }
+        #[cfg(not(windows))]
+        {
+            std::os::unix::fs::symlink(to, at).is_ok()
+        }
+    }
+
+    #[test]
+    fn a_link_below_the_base_leads_nothing_out_of_the_project() {
+        let root = fresh_dir("docmap-agent-links");
+        let outside = fresh_dir("docmap-agent-links-out");
+        let store = Store::new(&root);
+        fs::create_dir_all(root.join(DIR)).unwrap();
+        if !link_dir(&outside, &root.join(DIR).join("cache")) {
+            return;
+        }
+        store.cache_put(
+            "abc",
+            &CacheEntry {
+                text: "t".into(),
+                provider: "p".into(),
+                model: None,
+                date: "d".into(),
+            },
+        );
+        assert_eq!(
+            fs::read_dir(&outside).unwrap().count(),
+            0,
+            "no answer outside"
+        );
+
+        assert!(link_dir(&outside, &root.join(DIR).join("r1")));
+        let run = Run {
+            id: "r1".into(),
+            ..Default::default()
+        };
+        assert!(store.save(&run).is_err());
+        assert_eq!(
+            fs::read_dir(&outside).unwrap().count(),
+            0,
+            "no record outside"
+        );
+    }
+
+    #[test]
+    fn a_gitignore_that_is_a_link_is_not_read_into_the_project() {
+        let root = fresh_dir("docmap-agent-ignore-link");
+        let outside = fresh_dir("docmap-agent-ignore-out");
+        let secret = outside.join("secret");
+        fs::write(&secret, "SECRET\n").unwrap();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&secret, root.join(".gitignore")).is_ok();
+        #[cfg(not(windows))]
+        let made = std::os::unix::fs::symlink(&secret, root.join(".gitignore")).is_ok();
+        if !made {
+            return;
+        }
+        assert!(ignore_add(&root).is_err());
+        assert_eq!(fs::read_to_string(&secret).unwrap(), "SECRET\n");
+    }
+
+    #[test]
+    fn a_run_is_held_by_one_at_a_time() {
+        let root = fresh_dir("docmap-agent-hold");
+        let store = Store::new(&root);
+        assert!(!store.held("r1"));
+        let first = store.hold("r1").unwrap().unwrap();
+        assert!(store.held("r1"));
+        assert!(store.hold("r1").unwrap().is_none());
+        drop(first);
+        assert!(!store.held("r1"));
+        assert!(store.hold("r1").unwrap().is_some());
     }
 }

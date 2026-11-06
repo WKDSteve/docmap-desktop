@@ -53,7 +53,8 @@ pub struct PlanRule {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlanBatch {
-    pub id: i64,
+    /// The engine's name of the batch (`b1`): a word, not a number.
+    pub id: String,
     pub system: String,
     pub prompt: String,
     #[serde(deserialize_with = "lenient")]
@@ -257,7 +258,7 @@ mod tests {
         let v = json!({
             "available": true,
             "batches": [{
-                "id": 3, "system": "S", "prompt": "P", "files": {}, "bytes": 10, "tokens": 5,
+                "id": "b3", "system": "S", "prompt": "P", "files": {}, "bytes": 10, "tokens": 5,
                 "rules": [{"id": "A-1", "severity": "error", "title": "t", "source": "rule", "truncated": null}],
                 "unreadable": {}
             }],
@@ -269,7 +270,7 @@ mod tests {
         });
         let p = Plan::from_engine(&v).unwrap();
         assert_eq!(p.batches.len(), 1);
-        assert_eq!(p.batches[0].id, 3);
+        assert_eq!(p.batches[0].id, "b3");
         assert!(p.batches[0].files.is_empty());
         assert_eq!(p.batches[0].rules[0].id, "A-1");
         assert!(p.skipped.is_empty());

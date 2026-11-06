@@ -147,6 +147,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("err.agent.noRun", "No such run: {id}"),
     ("err.agent.running", "Run {id} is already working"),
     ("err.agent.notResumable", "Run {id} cannot be resumed: it was cancelled or is finished"),
+    ("err.agent.planChanged", "This run cannot be resumed: {file} is no longer sent. Start a new run"),
     ("err.agent.runUnreadable", "{path} is not readable as a run record"),
     // Everything else the window asks for.
     ("err.search.mode", "Unknown search mode: {mode}"),

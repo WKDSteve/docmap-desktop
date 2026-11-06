@@ -257,10 +257,12 @@ impl AskError {
     /// An error after which the next batch would fail the same way, so the run
     /// stops and keeps its queue instead of working through it.
     pub fn is_fatal(&self) -> bool {
-        matches!(
-            self,
-            AskError::Unreachable(_) | AskError::Forbidden(_) | AskError::Rejected { .. }
-        )
+        match self {
+            // This request is too large: the next one may well fit.
+            AskError::Rejected { status: 413, .. } => false,
+            AskError::Unreachable(_) | AskError::Forbidden(_) | AskError::Rejected { .. } => true,
+            _ => false,
+        }
     }
 }
 
@@ -318,7 +320,7 @@ impl Client {
         let url = format!("{}/health", self.base);
         let mut resp = agent.get(&url).call().map_err(map_err(HEALTH_TIMEOUT))?;
         let status = resp.status().as_u16();
-        let body = read_body(&mut resp)?;
+        let body = read_body(&mut resp, HEALTH_TIMEOUT.as_millis() as u64)?;
         let value = ok_json(status, &body)?;
         let mut backends = BTreeMap::new();
         if let Some(map) = value.get("backends").and_then(Value::as_object) {
@@ -364,7 +366,7 @@ impl Client {
                     .send(body)
                     .map_err(map_err_ms(timeout_ms))?;
                 let status = resp.status().as_u16();
-                let body = read_body(&mut resp)?;
+                let body = read_body(&mut resp, timeout_ms)?;
                 Ok((status, body))
             })();
             // The receiver is gone when the caller stopped: nobody wants it.
@@ -411,13 +413,16 @@ fn map_err_ms(ms: u64) -> impl Fn(ureq::Error) -> AskError {
     }
 }
 
-fn read_body(resp: &mut ureq::http::Response<ureq::Body>) -> Result<String, AskError> {
+fn read_body(
+    resp: &mut ureq::http::Response<ureq::Body>,
+    limit_ms: u64,
+) -> Result<String, AskError> {
     resp.body_mut()
         .with_config()
         .limit(MAX_BODY)
         .read_to_string()
         .map_err(|e| match e {
-            ureq::Error::Timeout(_) => AskError::Timeout(0),
+            ureq::Error::Timeout(_) => AskError::Timeout(limit_ms),
             other => AskError::Malformed(format!("the answer could not be read: {other}")),
         })
 }

@@ -492,12 +492,31 @@ fn workspace_path(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
 /// `fs::write` truncates first. A command on another thread that read the
 /// workspace in that moment saw an empty or partial list and failed on it -
 /// or, where it treats a failed read as "nothing known", acted on that.
+///
+/// The temp file is this write's own: two writers of one file do not meet in it, and it is made new
+/// (`create_new`), so a link a repository left at that name is not followed. It is on the disk before the rename,
+/// so that a power loss leaves the old file or the new one, and never an empty one.
 fn write_atomic(path: &Path, body: impl AsRef<[u8]>) -> std::io::Result<()> {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(
+        ".{}-{}.tmp",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
     let tmp = PathBuf::from(tmp);
-    fs::write(&tmp, body)?;
-    fs::rename(&tmp, path).inspect_err(|_| {
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .and_then(|mut file| {
+            file.write_all(body.as_ref())?;
+            file.sync_all()
+        })
+        .and_then(|()| fs::rename(&tmp, path));
+    written.inspect_err(|_| {
         let _ = fs::remove_file(&tmp);
     })
 }
@@ -4224,6 +4243,43 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_write_does_not_follow_what_lies_at_the_old_temp_name() {
+        let dir = crate::testutil::fresh_dir("docmap-write-atomic-tmp");
+        let target = dir.join("a.json");
+        let tmp = dir.join("a.json.tmp");
+        fs::write(&tmp, "someone else's").unwrap();
+        write_atomic(&target, "mine").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "mine");
+        assert_eq!(fs::read_to_string(&tmp).unwrap(), "someone else's");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 2, "no temp file stays");
+    }
+
+    #[test]
+    fn two_writers_of_one_file_do_not_meet() {
+        let dir = crate::testutil::fresh_dir("docmap-write-atomic-two");
+        let target = dir.join("a.json");
+        let threads: Vec<_> = (0..2)
+            .map(|n| {
+                let target = target.clone();
+                std::thread::spawn(move || {
+                    let body = vec![b'a' + n; 50_000];
+                    (0..100)
+                        .filter(|_| write_atomic(&target, &body).is_err())
+                        .count()
+                })
+            })
+            .collect();
+        let failed: usize = threads.into_iter().map(|t| t.join().unwrap()).sum();
+        assert_eq!(failed, 0);
+        let body = fs::read(&target).unwrap();
+        assert_eq!(body.len(), 50_000);
+        assert!(
+            body.iter().all(|b| *b == body[0]),
+            "one writer's whole text"
+        );
+    }
 
     #[test]
     fn a_url_that_git_would_read_as_an_option_or_a_helper_is_refused() {

@@ -13,9 +13,11 @@
 //!   it (a crash) is reported as `paused` as well, never as running.
 //! - **Running runs are listed** ([`Runner::running`]): a run that outlives its
 //!   window spends money.
-//! - **The destination is decided before anything is sent**: resolved once by
+//! - **The destination is decided before anything is sent**: resolved by
 //!   [`client::destination`], refused when the project's `agent.backends`
-//!   does not allow it (local only when that is empty).
+//!   does not allow it (local only when that is empty). A resume decides again:
+//!   what the project allows now counts, and the record is not believed about
+//!   where its model goes.
 //! - **An answer is only ever a proposal.** Each rule of a batch goes through
 //!   `rules/validate`; the stored object is forced to `proposed = true` and
 //!   `verified = false` whatever came back; nothing here writes
@@ -30,6 +32,7 @@
 //! disagree with it.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -57,6 +60,8 @@ const CANCEL_WAIT: Duration = Duration::from_secs(3);
 /// The selection is a comma list of ids, families and gates; the engine
 /// refuses more than 64 KiB, and this refuses it first.
 const MAX_SELECTION: usize = 60_000;
+/// The engine reads an answer up to this size; a longer one is an error every time.
+const MAX_CACHED_ANSWER: usize = 1024 * 1024;
 
 /// What the dialog supplies to start a run.
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -77,7 +82,7 @@ pub struct StartArgs {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewBatch {
-    pub id: i64,
+    pub id: String,
     pub rules: Vec<PlanRule>,
     pub files: Vec<String>,
     pub bytes: u64,
@@ -122,7 +127,7 @@ pub fn preview(
             .batches
             .iter()
             .map(|b| PreviewBatch {
-                id: b.id,
+                id: b.id.clone(),
                 rules: b.rules.clone(),
                 files: b.files.clone(),
                 bytes: b.bytes,
@@ -215,7 +220,7 @@ impl Runner {
             .batches
             .iter()
             .map(|b| BatchRec {
-                id: b.id,
+                id: b.id.clone(),
                 rules: b.rules.iter().map(|r| r.id.clone()).collect(),
                 files: b.files.len(),
                 bytes: b.bytes,
@@ -230,6 +235,7 @@ impl Runner {
             notes: args.notes,
             root: crate::portable(root),
             selection,
+            refresh: args.refresh,
             backend: dest.backend,
             model: dest.model,
             local: dest.local,
@@ -243,17 +249,26 @@ impl Runner {
         let store = Store::new(root);
         store.save_plan(&run.id, &plan)?;
         store.save(&run)?;
+        let held = store
+            .hold(&run.id)?
+            .ok_or_else(|| AppError::new("err.agent.running").with("id", &run.id))?;
         let ctx = Ctx {
             engine,
             client,
             root: root.to_path_buf(),
         };
-        self.launch(ctx, run.clone(), plan, args.refresh)?;
+        self.launch(ctx, run.clone(), plan, held)?;
         Ok(run)
     }
 
     /// Continue a paused (or failed) run from its frozen plan: only the
     /// batches not done are asked, and a batch that failed is tried again.
+    ///
+    /// The run is claimed first, in one step with the look at the list: two
+    /// resumes at once are one run and one refusal. What the project allows is
+    /// asked again, because the plan was frozen earlier and the text of its files
+    /// is in it: a backend that is no longer allowed, or a file that is no longer
+    /// sent (`agent.deny`), ends the resume before anything goes out.
     pub fn resume(
         &self,
         root: &Path,
@@ -261,10 +276,31 @@ impl Runner {
         engine: Arc<dyn Engine>,
         client: Client,
     ) -> Result<Run, AppError> {
-        if self.lock()?.contains_key(id) {
-            return Err(AppError::new("err.agent.running").with("id", id));
+        let seen = Store::new(root).load(id)?;
+        {
+            let mut map = self.lock()?;
+            if map.contains_key(id) {
+                return Err(AppError::new("err.agent.running").with("id", id));
+            }
+            map.insert(id.to_string(), Self::active_of(root, &seen));
         }
+        let resumed = self.resume_claimed(root, id, engine, client);
+        if resumed.is_err() {
+            self.lock()?.remove(id);
+        }
+        resumed
+    }
+
+    fn resume_claimed(
+        &self,
+        root: &Path,
+        id: &str,
+        engine: Arc<dyn Engine>,
+        client: Client,
+    ) -> Result<Run, AppError> {
         let store = Store::new(root);
+        let held = hold_soon(&store, id)?
+            .ok_or_else(|| AppError::new("err.agent.running").with("id", id))?;
         let mut run = store.load(id)?;
         let resumable = match run.state {
             RunState::Running | RunState::Paused | RunState::Failed => true,
@@ -276,6 +312,25 @@ impl Runner {
             return Err(AppError::new("err.agent.notResumable").with("id", id));
         }
         let plan = store.load_plan(id)?;
+        let now = engine.plan(root, &run.selection)?;
+        let dest = destination(&run.model, &now.agent.backends)?;
+        // The record is a file in the project: where a model goes is worked out, not read.
+        run.backend = dest.backend;
+        run.local = dest.local;
+        run.model = dest.model;
+        let sent_now: std::collections::HashSet<&str> = now
+            .batches
+            .iter()
+            .flat_map(|b| b.files.iter().map(String::as_str))
+            .collect();
+        for rec in run.batches.iter().filter(|b| b.state != BatchState::Done) {
+            let frozen = plan.batches.iter().find(|b| b.id == rec.id);
+            for file in frozen.iter().flat_map(|b| &b.files) {
+                if !sent_now.contains(file.as_str()) {
+                    return Err(AppError::new("err.agent.planChanged").with("file", file));
+                }
+            }
+        }
         for b in &mut run.batches {
             if matches!(b.state, BatchState::Failed | BatchState::Asking) {
                 b.state = BatchState::Queued;
@@ -292,30 +347,39 @@ impl Runner {
             client,
             root: root.to_path_buf(),
         };
-        self.launch(ctx, run.clone(), plan, false)?;
+        self.launch(ctx, run.clone(), plan, held)?;
         Ok(run)
     }
 
-    fn launch(&self, ctx: Ctx, run: Run, plan: Plan, refresh: bool) -> Result<(), AppError> {
-        let stop = Arc::new(Stop::default());
+    fn active_of(root: &Path, run: &Run) -> Active {
+        Active {
+            stop: Arc::new(Stop::default()),
+            root: root.to_path_buf(),
+            title: run.title.clone(),
+            backend: run.backend,
+            model: run.model.clone(),
+            started_ms: now_ms(),
+            handle: None,
+        }
+    }
+
+    /// Start the thread. A resume has its entry already, and a cancel may have come in since: that stop counts.
+    fn launch(&self, ctx: Ctx, run: Run, plan: Plan, held: fs::File) -> Result<(), AppError> {
         let id = run.id.clone();
-        self.lock()?.insert(
-            id.clone(),
-            Active {
-                stop: stop.clone(),
-                root: ctx.root.clone(),
-                title: run.title.clone(),
-                backend: run.backend,
-                model: run.model.clone(),
-                started_ms: now_ms(),
-                handle: None,
-            },
-        );
+        let refresh = run.refresh;
+        let stop = self
+            .lock()?
+            .entry(id.clone())
+            .or_insert_with(|| Self::active_of(&ctx.root, &run))
+            .stop
+            .clone();
         let map = self.active.clone();
         let thread_id = id.clone();
         let spawned = std::thread::Builder::new()
             .name("agent-run".into())
             .spawn(move || {
+                // Until the record says what became of the run, and the thread is off the list.
+                let _held = held;
                 execute(&ctx, run, &plan, &stop, refresh);
                 // Off the list of live runs only after the record says what
                 // became of it.
@@ -340,18 +404,32 @@ impl Runner {
     /// Stop a run: the queue ends and the request in flight is abandoned; what
     /// returned is kept. A run with no thread (paused, or found after a
     /// restart) is closed on disk. Cancelling a finished run changes nothing.
+    ///
+    /// The answer says cancelled, and so does the record: a thread that is still
+    /// checking an answer ends later, but the run is final from here on, also if
+    /// the app quits in between.
     pub fn cancel(&self, root: &Path, id: &str) -> Result<Run, AppError> {
         let store = Store::new(root);
-        let live = {
-            let mut map = self.lock()?;
-            map.get_mut(id).map(|a| (a.stop.clone(), a.handle.take()))
-        };
-        if let Some((stop, handle)) = live {
+        let live = self.lock()?.get(id).map(|a| a.stop.clone());
+        if let Some(stop) = live {
             stop.request(StopKind::Cancel);
-            if let Some(h) = handle {
-                wait_for(&[h], CANCEL_WAIT);
+            let deadline = Instant::now() + CANCEL_WAIT;
+            while self.lock()?.contains_key(id) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
             }
-            return store.load(id);
+            let mut run = store.load(id)?;
+            if run.state == RunState::Running {
+                // Written over by the thread only with the same word (see `persist`).
+                run.state = RunState::Cancelled;
+                run.finished_ms = Some(now_ms());
+                run.updated_ms = now_ms();
+                store.save(&run)?;
+            }
+            return Ok(run);
+        }
+        // Another process has it: its thread would write over what is said here.
+        if store.held(id) {
+            return Err(AppError::new("err.agent.running").with("id", id));
         }
         let mut run = store.load(id)?;
         if run.state.is_open() {
@@ -374,22 +452,22 @@ impl Runner {
         Store::new(root)
             .list()
             .iter()
-            .map(|r| Summary::of(&self.as_seen(r.clone())))
+            .map(|r| Summary::of(&self.as_seen(root, r.clone())))
             .collect()
     }
 
     /// One run in full.
     pub fn status(&self, root: &Path, id: &str) -> Result<Run, AppError> {
-        Ok(self.as_seen(Store::new(root).load(id)?))
+        Ok(self.as_seen(root, Store::new(root).load(id)?))
     }
 
-    fn as_seen(&self, mut run: Run) -> Run {
+    fn as_seen(&self, root: &Path, mut run: Run) -> Run {
         let live = self
             .active
             .lock()
             .map(|m| m.contains_key(&run.id))
             .unwrap_or(false);
-        if run.state == RunState::Running && !live {
+        if run.state == RunState::Running && !live && !Store::new(root).held(&run.id) {
             run.state = RunState::Paused;
             for b in &mut run.batches {
                 if b.state == BatchState::Asking {
@@ -398,6 +476,12 @@ impl Runner {
             }
         }
         run
+    }
+
+    /// The project of a live run: it is listed in every workspace, so it must be
+    /// possible to stop it from any of them.
+    pub fn live_root(&self, id: &str) -> Option<PathBuf> {
+        self.active.lock().ok()?.get(id).map(|a| a.root.clone())
     }
 
     /// Every run with a thread, in every project: what is spending money now.
@@ -429,6 +513,7 @@ impl Runner {
             Ok(mut map) => map
                 .values_mut()
                 .filter_map(|a| {
+                    // A run that was cancelled stays that: the first request wins.
                     a.stop.request(StopKind::Pause);
                     a.handle.take()
                 })
@@ -452,6 +537,28 @@ impl Runner {
     }
 }
 
+/// The lock of a run, with a moment for a thread that just wrote its last record
+/// and is about to let go.
+fn hold_soon(store: &Store, id: &str) -> Result<Option<fs::File>, AppError> {
+    for _ in 0..25 {
+        if let Some(file) = store.hold(id)? {
+            return Ok(Some(file));
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(None)
+}
+
+/// Whether an answer is not worth keeping: it was cut off, or says nothing. Asked
+/// again next time instead of giving the same poor proposals for free for good.
+fn keep_answer(reply: &super::client::Reply) -> bool {
+    let cut_off = reply
+        .stop_reason
+        .as_deref()
+        .is_some_and(|r| matches!(r.to_ascii_lowercase().as_str(), "max_tokens" | "length"));
+    !cut_off && !reply.text.trim().is_empty() && reply.text.len() <= MAX_CACHED_ANSWER
+}
+
 /// Wait for threads to end, up to `limit`.
 fn wait_for(handles: &[JoinHandle<()>], limit: Duration) {
     let deadline = Instant::now() + limit;
@@ -462,7 +569,11 @@ fn wait_for(handles: &[JoinHandle<()>], limit: Duration) {
 
 /// Write the record; a failure ends the run, since going on without a record
 /// would spend money on answers that cannot be kept.
-fn persist(store: &Store, run: &mut Run) -> bool {
+fn persist(store: &Store, run: &mut Run, stop: &Stop) -> bool {
+    // A cancel is final from the moment it was asked for, in every record written after it.
+    if stop.requested() == Some(StopKind::Cancel) {
+        run.state = RunState::Cancelled;
+    }
     run.updated_ms = now_ms();
     match store.save(run) {
         Ok(()) => true,
@@ -508,13 +619,13 @@ fn ask_batch(
 fn proposal_of(
     outcome: Result<Value, AppError>,
     rule: &str,
-    batch: i64,
+    batch: &str,
     key: &str,
     rule_hash: Option<String>,
 ) -> ProposalRec {
     let mut rec = ProposalRec {
         rule_id: rule.to_string(),
-        batch,
+        batch: batch.to_string(),
         key: key.to_string(),
         rule_hash,
         created_ms: now_ms(),
@@ -554,7 +665,7 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
         if stop.requested().is_some() {
             break;
         }
-        let batch_id = run.batches[i].id;
+        let batch_id = run.batches[i].id.clone();
         let Some(pb) = plan.batches.iter().find(|b| b.id == batch_id) else {
             run.batches[i].state = BatchState::Failed;
             run.batches[i].error = Some(wire(&AppError::new("err.agent.engineShape")));
@@ -563,7 +674,7 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
         let key = run.batches[i].key.clone();
         run.batches[i].state = BatchState::Asking;
         run.batches[i].started_ms = Some(now_ms());
-        if !persist(&store, &mut run) {
+        if !persist(&store, &mut run, stop) {
             fatal = true;
             break;
         }
@@ -573,15 +684,17 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
             Some(c) => (c.text, Usage::default(), true),
             None => match ask_batch(ctx, &run, &pb.system, &pb.prompt, stop) {
                 Ok(reply) => {
-                    store.cache_put(
-                        &key,
-                        &CacheEntry {
-                            text: reply.text.clone(),
-                            provider: run.backend.name().to_string(),
-                            model: Some(run.model.clone()),
-                            date: date_of(now_ms()),
-                        },
-                    );
+                    if keep_answer(&reply) {
+                        store.cache_put(
+                            &key,
+                            &CacheEntry {
+                                text: reply.text.clone(),
+                                provider: run.backend.name().to_string(),
+                                model: Some(run.model.clone()),
+                                date: date_of(now_ms()),
+                            },
+                        );
+                    }
                     (reply.text, reply.usage, false)
                 }
                 // Abandoned in flight: the batch is still to do.
@@ -600,7 +713,7 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
                         run.error = Some(wire(&app));
                         fatal = true;
                     }
-                    if !persist(&store, &mut run) {
+                    if !persist(&store, &mut run, stop) {
                         fatal = true;
                     }
                     if fatal {
@@ -611,6 +724,17 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
             },
         };
 
+        // Paid for from here on, and said so before the checks, which can take
+        // minutes: a quit in between must not count this batch as free.
+        if !from_cache {
+            run.batches[i].usage = usage;
+            run.usage.add(usage);
+            if !persist(&store, &mut run, stop) {
+                fatal = true;
+                break;
+            }
+        }
+
         // The request is answered (and paid for): it is kept even if a stop
         // came in meanwhile, so its rules are checked before the queue ends.
         let ids: Vec<String> = pb.rules.iter().map(|r| r.id.clone()).collect();
@@ -620,18 +744,17 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
             run.set_proposal(proposal_of(
                 outcome,
                 id,
-                batch_id,
+                &batch_id,
                 &key,
                 hashes.get(id).cloned(),
             ));
         }
         let b = &mut run.batches[i];
         b.state = BatchState::Done;
-        b.from_cache = from_cache;
-        b.usage = usage;
+        // Found in the cache after a quit, but paid for by this run: not free.
+        b.from_cache = from_cache && b.usage == Usage::default();
         b.finished_ms = Some(now_ms());
-        run.usage.add(usage);
-        if !persist(&store, &mut run) {
+        if !persist(&store, &mut run, stop) {
             fatal = true;
             break;
         }
@@ -652,7 +775,13 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
     if run.state != RunState::Paused {
         run.finished_ms = Some(now_ms());
     }
-    let _ = persist(&store, &mut run);
+    if !persist(&store, &mut run, stop) {
+        // The disk is full or gone, and there is no other place for this: the record stays as it last was.
+        eprintln!(
+            "agent run {}: the last record could not be written: {:?}",
+            run.id, run.error
+        );
+    }
 }
 
 #[cfg(test)]
@@ -668,7 +797,7 @@ mod tests {
         Plan {
             batches: (1..=n)
                 .map(|i| PlanBatch {
-                    id: i,
+                    id: format!("b{i}"),
                     system: "SYSTEM".into(),
                     prompt: format!(
                         "Rules to check:\n\n### R{i}-1 (error)\nQuestion: q\nfirst rule {i}\n\n### R{i}-2 (warn)\nQuestion: q\nsecond rule {i}\n\nFiles:\n\n=== f{i}.lua ===\n1: code {i}"
@@ -989,7 +1118,7 @@ mod tests {
             [BatchState::Done, BatchState::Queued, BatchState::Queued]
         );
         assert_eq!(cancelled.proposals.len(), 2, "batch 1 is kept");
-        assert!(cancelled.proposals.iter().all(|p| p.batch == 1));
+        assert!(cancelled.proposals.iter().all(|p| p.batch == "b1"));
 
         wait_idle(&runner);
         std::thread::sleep(Duration::from_millis(200));
@@ -1362,5 +1491,282 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(e.key(), "err.agent.title");
+    }
+
+    /// `validate` takes this long, and says when it was entered.
+    struct SlowEngine {
+        inner: Arc<FakeEngine>,
+        ms: u64,
+        entered: AtomicBool,
+    }
+
+    impl Engine for SlowEngine {
+        fn plan(&self, root: &Path, select: &str) -> Result<Plan, AppError> {
+            self.inner.plan(root, select)
+        }
+        fn validate(&self, root: &Path, rule: &str, answer: &str) -> Result<Value, AppError> {
+            self.entered.store(true, Ordering::SeqCst);
+            std::thread::sleep(Duration::from_millis(self.ms));
+            self.inner.validate(root, rule, answer)
+        }
+    }
+
+    /// A paused run of a plan: the first answer comes, the app quits, and it is
+    /// to be resumed by another runner.
+    fn paused_run(name: &str, plan: Plan, model: &str) -> (PathBuf, Fake, Arc<FakeEngine>, Run) {
+        let root = fresh_dir(name);
+        let fake = Fake::start(|s| ok_reply(&prompt_of(s)).after(200));
+        let engine = FakeEngine::new(plan);
+        let runner = Runner::default();
+        let run = runner
+            .start(&root, start_args(model), engine.clone(), client_of(&fake))
+            .unwrap();
+        wait_asks(&fake, 1);
+        runner.pause_all(Duration::from_secs(10));
+        wait_idle(&runner);
+        assert_eq!(
+            runner.status(&root, &run.id).unwrap().state,
+            RunState::Paused
+        );
+        (root, fake, engine, run)
+    }
+
+    #[test]
+    fn two_resumes_at_once_are_one_run() {
+        let (root, fake, engine, run) = paused_run("docmap-agent-double", plan_of(3, &[]), "qwen");
+        let asks_before = fake.asks();
+        let runner = Arc::new(Runner::default());
+        let threads: Vec<_> = (0..2)
+            .map(|_| {
+                let (runner, root, id, engine, client) = (
+                    runner.clone(),
+                    root.clone(),
+                    run.id.clone(),
+                    engine.clone(),
+                    client_of(&fake),
+                );
+                std::thread::spawn(move || runner.resume(&root, &id, engine, client).is_ok())
+            })
+            .collect();
+        let started: Vec<bool> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+        assert_eq!(started.iter().filter(|ok| **ok).count(), 1, "{started:?}");
+        wait_state(&runner, &root, &run.id, RunState::Done);
+        wait_idle(&runner);
+        // Each batch that was still to do is asked once.
+        let done = Store::new(&root).load(&run.id).unwrap();
+        let from_net = done.batches.iter().filter(|b| !b.from_cache).count();
+        assert!(
+            fake.asks() - asks_before <= from_net,
+            "asked {} more",
+            fake.asks() - asks_before
+        );
+    }
+
+    #[test]
+    fn a_resume_asks_what_the_project_allows_now() {
+        let (root, fake, engine, run) = paused_run(
+            "docmap-agent-revoked",
+            plan_of(3, &["anthropic"]),
+            "claude-sonnet-5",
+        );
+        let asks = fake.asks();
+        engine.plan.lock().unwrap().agent.backends.clear();
+        let runner = Runner::default();
+        assert!(runner
+            .resume(&root, &run.id, engine.clone(), client_of(&fake))
+            .is_err());
+        assert_eq!(fake.asks(), asks, "nothing went out");
+        assert!(runner.running().is_empty(), "the claim is given back");
+    }
+
+    #[test]
+    fn a_resume_sends_no_file_that_is_denied_since() {
+        let (root, fake, engine, run) = paused_run("docmap-agent-denied", plan_of(3, &[]), "qwen");
+        let asks = fake.asks();
+        engine.plan.lock().unwrap().batches.retain(|b| b.id != "b3");
+        let runner = Runner::default();
+        let err = runner
+            .resume(&root, &run.id, engine.clone(), client_of(&fake))
+            .unwrap_err();
+        assert_eq!(err.key(), "err.agent.planChanged");
+        assert_eq!(fake.asks(), asks);
+    }
+
+    #[test]
+    fn a_record_is_not_believed_about_where_its_model_goes() {
+        let (root, fake, engine, run) = paused_run("docmap-agent-crafted", plan_of(2, &[]), "qwen");
+        let store = Store::new(&root);
+        let mut crafted = store.load(&run.id).unwrap();
+        crafted.model = "claude-sonnet-5".into();
+        crafted.backend = Backend::Ollama;
+        crafted.local = true;
+        store.save(&crafted).unwrap();
+        // Local only, and the model goes to a cloud: refused, whatever the record says.
+        let runner = Runner::default();
+        assert!(runner
+            .resume(&root, &run.id, engine.clone(), client_of(&fake))
+            .is_err());
+    }
+
+    #[test]
+    fn a_resume_of_a_refresh_still_asks_again() {
+        let root = fresh_dir("docmap-agent-refresh");
+        let fake = Fake::start(|s| ok_reply(&prompt_of(s)).after(200));
+        let engine = FakeEngine::new(plan_of(3, &[]));
+        let runner = Runner::default();
+        let first = runner
+            .start(&root, start_args("qwen"), engine.clone(), client_of(&fake))
+            .unwrap();
+        wait_state(&runner, &root, &first.id, RunState::Done);
+        wait_idle(&runner);
+
+        let mut args = start_args("qwen");
+        args.refresh = true;
+        let second = runner
+            .start(&root, args, engine.clone(), client_of(&fake))
+            .unwrap();
+        wait_asks(&fake, 4);
+        runner.pause_all(Duration::from_secs(10));
+        wait_idle(&runner);
+        let other = Runner::default();
+        other
+            .resume(&root, &second.id, engine.clone(), client_of(&fake))
+            .unwrap();
+        let done = wait_state(&other, &root, &second.id, RunState::Done);
+        assert!(done.refresh);
+        assert!(
+            done.batches.iter().all(|b| !b.from_cache),
+            "{:?}",
+            done.batches
+        );
+    }
+
+    #[test]
+    fn a_cancel_during_a_check_is_final_on_disk_at_once() {
+        let root = fresh_dir("docmap-agent-cancel-check");
+        let fake = Fake::start(|s| ok_reply(&prompt_of(s)));
+        let inner = FakeEngine::new(plan_of(1, &[]));
+        let engine = Arc::new(SlowEngine {
+            inner,
+            ms: 4_000,
+            entered: AtomicBool::new(false),
+        });
+        let runner = Runner::default();
+        let run = runner
+            .start(&root, start_args("qwen"), engine.clone(), client_of(&fake))
+            .unwrap();
+        while !engine.entered.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let said = runner.cancel(&root, &run.id).unwrap();
+        assert_eq!(said.state, RunState::Cancelled);
+        assert_eq!(
+            Store::new(&root).load(&run.id).unwrap().state,
+            RunState::Cancelled
+        );
+        // The thread is still at it: the quit waits for it, it was not handed away.
+        runner.pause_all(Duration::from_secs(20));
+        wait_idle(&runner);
+        let end = Store::new(&root).load(&run.id).unwrap();
+        assert_eq!(end.state, RunState::Cancelled, "a pause does not undo it");
+        assert_eq!(end.proposals.len(), 2, "what was paid for is kept");
+    }
+
+    #[test]
+    fn a_batch_paid_for_before_a_quit_is_not_counted_as_free() {
+        let root = fresh_dir("docmap-agent-paid");
+        let fake = Fake::start(|s| ok_reply(&prompt_of(s)));
+        let engine = Arc::new(SlowEngine {
+            inner: FakeEngine::new(plan_of(1, &[])),
+            ms: 500,
+            entered: AtomicBool::new(false),
+        });
+        let runner = Runner::default();
+        let run = runner
+            .start(&root, start_args("qwen"), engine.clone(), client_of(&fake))
+            .unwrap();
+        while !engine.entered.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // What a quit in the middle of the check leaves behind.
+        let on_disk = Store::new(&root).load(&run.id).unwrap();
+        assert_eq!(on_disk.usage.prompt_tokens, 10);
+        wait_idle(&runner);
+        let done = Store::new(&root).load(&run.id).unwrap();
+        assert_eq!(done.usage.prompt_tokens, 10, "counted once");
+    }
+
+    #[test]
+    fn an_answer_that_was_cut_off_is_not_kept() {
+        let root = fresh_dir("docmap-agent-cut");
+        let fake = Fake::start(|_| {
+            Resp::json(
+                200,
+                &json!({"text": "half an answ", "stop_reason": "max_tokens"}).to_string(),
+            )
+        });
+        let engine = FakeEngine::new(plan_of(1, &[]));
+        let runner = Runner::default();
+        for _ in 0..2 {
+            let run = runner
+                .start(&root, start_args("qwen"), engine.clone(), client_of(&fake))
+                .unwrap();
+            wait_state(&runner, &root, &run.id, RunState::Done);
+            wait_idle(&runner);
+        }
+        assert_eq!(fake.asks(), 2, "asked again, not answered from the cache");
+    }
+
+    #[test]
+    fn a_batch_too_large_for_ai_desktop_does_not_stop_the_queue() {
+        let root = fresh_dir("docmap-agent-413");
+        let fake = Fake::start(|s| {
+            if prompt_of(s).contains("R1-1") {
+                Resp::json(413, "{}")
+            } else {
+                ok_reply(&prompt_of(s))
+            }
+        });
+        let engine = FakeEngine::new(plan_of(3, &[]));
+        let runner = Runner::default();
+        let run = runner
+            .start(&root, start_args("qwen"), engine.clone(), client_of(&fake))
+            .unwrap();
+        let done = wait_state(&runner, &root, &run.id, RunState::Done);
+        let states: Vec<BatchState> = done.batches.iter().map(|b| b.state).collect();
+        assert_eq!(
+            states,
+            [BatchState::Failed, BatchState::Done, BatchState::Done]
+        );
+    }
+
+    #[test]
+    fn a_live_run_knows_its_project_and_a_held_one_is_not_cut_off() {
+        let root = fresh_dir("docmap-agent-held");
+        let fake = Fake::start(|s| ok_reply(&prompt_of(s)).after(800));
+        let engine = FakeEngine::new(plan_of(1, &[]));
+        let runner = Runner::default();
+        let run = runner
+            .start(&root, start_args("qwen"), engine.clone(), client_of(&fake))
+            .unwrap();
+        assert_eq!(runner.live_root(&run.id).as_deref(), Some(root.as_path()));
+        // Another instance of the app: another runner, the same project.
+        let other = Runner::default();
+        assert_eq!(
+            other.status(&root, &run.id).unwrap().state,
+            RunState::Running
+        );
+        assert_eq!(
+            other
+                .resume(&root, &run.id, engine.clone(), client_of(&fake))
+                .unwrap_err()
+                .key(),
+            "err.agent.running"
+        );
+        assert_eq!(
+            other.cancel(&root, &run.id).unwrap_err().key(),
+            "err.agent.running"
+        );
+        wait_state(&runner, &root, &run.id, RunState::Done);
     }
 }

@@ -28,6 +28,20 @@ fn project_root(app: &tauri::AppHandle, id: &str) -> Result<PathBuf, AppError> {
     Ok(PathBuf::from(&p.root))
 }
 
+/// The root of a run: the one the live run knows, because it is listed in every workspace and spends money whichever
+/// is open; else that of its project.
+fn root_of_run(
+    app: &tauri::AppHandle,
+    runner: &Runner,
+    id: &str,
+    run_id: &str,
+) -> Result<PathBuf, AppError> {
+    match runner.live_root(run_id) {
+        Some(root) => Ok(root),
+        None => project_root(app, id),
+    }
+}
+
 /// The engine the app is set up with, checked to speak `rules/plan` and
 /// `rules/validate`.
 fn engine(app: &tauri::AppHandle) -> Result<Arc<dyn Engine>, AppError> {
@@ -131,7 +145,7 @@ pub fn agent_cancel(
     id: String,
     run_id: String,
 ) -> Result<Run, AppError> {
-    let root = project_root(&app, &id)?;
+    let root = root_of_run(&app, &runner, &id, &run_id)?;
     runner.cancel(&root, &run_id)
 }
 
@@ -153,7 +167,7 @@ pub fn agent_status(
     id: String,
     run_id: String,
 ) -> Result<Run, AppError> {
-    runner.status(&project_root(&app, &id)?, &run_id)
+    runner.status(&root_of_run(&app, &runner, &id, &run_id)?, &run_id)
 }
 
 /// Every run that is working right now, in any project.

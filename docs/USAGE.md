@@ -28,6 +28,7 @@ the code, not recalled.
 - [Where things live](#where-things-live)
 - [The menu bar](#the-menu-bar)
 - [Sending feedback](#sending-feedback)
+- [Limits of a rules run through ai-desktop](#limits-of-a-rules-run-through-ai-desktop)
 - [What this app is not documenting](#what-this-app-is-not-documenting)
 
 ---
@@ -986,6 +987,23 @@ a button.
 **Attach version and platform** is ticked by default because almost every
 report needs it and almost nobody remembers, and the exact text is shown
 before anything opens — it is the one part of the report you did not type.
+
+## Limits of a rules run through ai-desktop
+
+A rules run sends file excerpts through ai-desktop on this machine. Two things
+this app cannot promise, whatever it shows:
+
+- **Cancelling stops the waiting, not the provider.** This app drops the call at
+  once and ignores its answer, but ai-desktop may finish it upstream: a closed
+  socket on this machine does not reach a cloud provider. Text already sent has
+  been sent, and the call can still be billed.
+- **The destination shown follows the default prefixes.** `claude-` goes to
+  Anthropic, `gpt-`, `o1-` and `o3-` to OpenAI, `gemini-` to Google, anything else
+  to Ollama. A custom model in ai-desktop's `config.json` or the
+  `AI_DESKTOP_PREFIXES_*` variables can send a model somewhere else, and this app
+  does not see them, so the allow-list (`agent.backends` in `.rules.json`) checks
+  the destination from the prefixes. Do not use a model name that ai-desktop routes
+  differently in a project whose allow-list has to hold.
 
 ## What this app is not documenting
 

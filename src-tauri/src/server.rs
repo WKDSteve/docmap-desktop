@@ -542,14 +542,14 @@ mod tests {
     }
 
     #[test]
-    fn a_map_directory_outside_the_project_is_still_served() {
+    fn a_map_directory_outside_the_project_is_not_served() {
         // `../maps`, as the Map directory field keeps it.
         let outer = tmp("outside");
         let proj = outer.join("proj");
         fs::create_dir_all(&proj).unwrap();
         fs::create_dir_all(outer.join("maps")).unwrap();
         fs::write(outer.join("maps/index.html"), "x").unwrap();
-        assert!(servable_file(&proj, &proj.join("../maps"), "index.html").is_some());
+        assert!(servable_file(&proj, &proj.join("../maps"), "index.html").is_none());
     }
 
     #[cfg(windows)]

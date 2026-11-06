@@ -4829,6 +4829,21 @@ function renderScopeLanguages(chosen) {
 }
 
 /** Open the per-project settings dialog for the selected project. */
+/** A stored Map directory the settings would refuse (an old `../maps`): said when the dialog opens, not only on Generate. */
+async function showStoredMapDirProblem(dir) {
+  if (!dir) return;
+  let refused = false;
+  try {
+    refused = await invoke("map_dir_refused", { dir });
+  } catch (e) {
+    void e;
+  }
+  if (!refused) return;
+  const problem = document.getElementById("scope-problem");
+  problem.textContent = t("err.outDir.stored").replace("{value}", dir);
+  problem.hidden = false;
+}
+
 async function openScope() {
   const p = projects.find((x) => x.id === selectedId);
   if (!p) return;
@@ -4857,6 +4872,7 @@ async function openScope() {
   // somebody meant.
   document.getElementById("scope-source").value = scope.source ?? "";
   document.getElementById("scope-outdir").value = scope.outDir ?? "";
+  await showStoredMapDirProblem(scope.outDir ?? "");
   document.getElementById("scope-repourl").value = scope.repoUrl ?? "";
   document.getElementById("scope-branch").value = scope.branch ?? "";
   document.getElementById("scope-full").checked = Boolean(scope.full);

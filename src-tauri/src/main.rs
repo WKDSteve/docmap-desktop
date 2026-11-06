@@ -982,6 +982,13 @@ fn map_dir_setting(raw: Option<String>) -> Result<Option<String>, AppError> {
     Ok(dir)
 }
 
+/// Whether a stored Map directory is one the settings would refuse: an older value
+/// (`../maps`) or one put into `workspace.json` by hand. The dialog says so when it opens.
+#[tauri::command]
+fn map_dir_refused(dir: String) -> bool {
+    map_dir_setting(Some(dir)).is_err()
+}
+
 /// A free-text setting, trimmed, with empty meaning "unset".
 fn text(raw: Option<String>) -> Option<String> {
     let cleaned = raw?.trim().to_string();
@@ -3016,11 +3023,9 @@ fn reparsed_by_push(name: &std::ffi::OsStr) -> bool {
 /// junction as a link too).
 ///
 /// A map directory that is not under the root (`../maps`, saved in Project
-/// settings before they refused it) is not repository content and is left
-/// alone here; `..` in it is walked as the OS does, and only the part inside
-/// the root is inspected. The engine itself refuses such a value on write and
-/// on `--check`, and so does [`refuse_linked_output`] before Generate and
-/// Check, so this only governs what the app reads.
+/// settings before they refused it) is no: the engine never writes there, so
+/// nothing the app reads should come from there. `..` in it is walked as the OS
+/// does, so one that comes back into the project is the project's own.
 ///
 /// A component that is not there yet is fine - there is nothing to read - but
 /// the walk goes on past it, because a later `..` can lead back to one that is
@@ -3030,7 +3035,7 @@ fn reparsed_by_push(name: &std::ffi::OsStr) -> bool {
 /// through [`map_file`].
 pub(crate) fn map_dir_is_plain(root: &Path, map_dir: &Path) -> bool {
     let Ok(rel) = map_dir.strip_prefix(root) else {
-        return true;
+        return false;
     };
     let Ok(canon_root) = fs::canonicalize(root) else {
         return false;
@@ -3067,7 +3072,7 @@ pub(crate) fn map_dir_is_plain(root: &Path, map_dir: &Path) -> bool {
             Err(_) => return false,
         }
     }
-    true
+    walked.starts_with(&canon_root)
 }
 
 /// Where to read `name` - a file directly in the map directory - or `None`
@@ -3080,15 +3085,12 @@ pub(crate) fn map_dir_is_plain(root: &Path, map_dir: &Path) -> bool {
 /// (a stall of 20 seconds and an NTLM negotiation) before any check on the
 /// *result* could say no. Under the project root the file is therefore
 /// resolved with [`resolve_inside`], which walks its links without following
-/// them; a link that stays in the project still works. A map directory outside
-/// the root is the user's own choice and is taken as it is.
+/// them; a link that stays in the project still works.
 pub(crate) fn map_file(root: &Path, map_dir: &Path, name: &str) -> Option<PathBuf> {
     if !map_dir_is_plain(root, map_dir) {
         return None;
     }
-    let Ok(rel) = map_dir.strip_prefix(root) else {
-        return Some(map_dir.join(name));
-    };
+    let rel = map_dir.strip_prefix(root).ok()?;
     // Collapsed the way `map_dir_is_plain` walks it, on the canonical root: a
     // `..` that climbs out puts the directory outside the project, but one that
     // comes back in (`../<project>/docs/map`) is still the project's own.
@@ -3103,9 +3105,7 @@ pub(crate) fn map_file(root: &Path, map_dir: &Path, name: &str) -> Option<PathBu
             _ => {}
         }
     }
-    let Ok(inside) = walked.strip_prefix(&canon_root) else {
-        return Some(map_dir.join(name));
-    };
+    let inside = walked.strip_prefix(&canon_root).ok()?;
     let mut rel_file = portable(inside);
     if !rel_file.is_empty() {
         rel_file.push('/');
@@ -4118,6 +4118,7 @@ fn main() {
         // window does not stop one, quitting the app pauses it (see below).
         .manage(agent::runner::Runner::default())
         .invoke_handler(tauri::generate_handler![
+            map_dir_refused,
             list_projects,
             add_project,
             inspect_folder,
@@ -4786,7 +4787,7 @@ mod tests {
     }
 
     #[test]
-    fn a_map_directory_outside_the_project_is_the_users_own_choice() {
+    fn a_map_directory_outside_the_project_is_not_read() {
         let outer = fresh_dir("docmap-outside-map");
         let project = outer.join("proj");
         fs::create_dir_all(project.join("docs")).unwrap();
@@ -4798,11 +4799,17 @@ mod tests {
         let root_str = portable(&project);
         let root = PathBuf::from(&root_str);
         let dir = |tail: &str| PathBuf::from(format!("{root_str}/{tail}"));
-        assert!(map_dir_is_plain(&root, &dir("../maps")));
-        assert!(map_dir_is_plain(&root, &dir("../elsewhere/maps")));
-        // Even one that is a link: that link is the user's own.
+        fs::write(outer.join("maps").join("module_map.json"), "{}").unwrap();
+        assert!(!map_dir_is_plain(&root, &dir("../maps")));
+        assert!(!map_dir_is_plain(&root, &dir("../elsewhere/maps")));
+        assert!(map_file(&root, &dir("../maps"), "module_map.json").is_none());
+        // Another path altogether is not the project's either.
+        assert!(!map_dir_is_plain(&root, &outer.join("maps")));
         assert!(dir_link(&outer.join("linked"), &outer.join("maps")));
-        assert!(map_dir_is_plain(&root, &dir("../linked")));
+        assert!(!map_dir_is_plain(&root, &dir("../linked")));
+        // What the dialog says when it opens: an old value is refused, a good one is not.
+        assert!(map_dir_refused("../maps".to_owned()));
+        assert!(!map_dir_refused("docs/map".to_owned()));
 
         // Back into the project by way of `..` it is the project's directory
         // again, and a link there is repository content.
@@ -4870,7 +4877,7 @@ mod tests {
     }
 
     #[test]
-    fn a_map_directory_outside_the_project_is_read_as_it_is() {
+    fn a_file_of_a_map_directory_outside_the_project_is_not_read() {
         let outer = fresh_dir("docmap-map-file-outside");
         let project = outer.join("proj");
         fs::create_dir_all(&project).unwrap();
@@ -4879,10 +4886,7 @@ mod tests {
         let root_str = portable(&project);
         let root = PathBuf::from(&root_str);
         let map = PathBuf::from(format!("{root_str}/../maps"));
-        assert_eq!(
-            map_file(&root, &map, "module_map.json").unwrap(),
-            map.join("module_map.json")
-        );
+        assert!(map_file(&root, &map, "module_map.json").is_none());
     }
 
     #[cfg(windows)]

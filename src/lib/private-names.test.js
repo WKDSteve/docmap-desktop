@@ -27,7 +27,7 @@ const VAULT_NAMES = [
 // in the private rules needs no change here. What is allowed is a short list
 // of real identifiers that look the same (encodings, hashes, licences).
 const ID = /\b([A-Z]{2,5})-\d{1,3}\b/g;
-const ID_ALLOWED = new Set(["UTF", "SHA", "ISO", "GPL", "LGPL", "BSD", "AES"]);
+const ID_ALLOWED = new Set(["UTF", "SHA", "ISO", "GPL", "LGPL", "BSD", "AES", "MPL"]);
 const VAULT_RE = new RegExp(VAULT_NAMES.join("|"), "i");
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -80,7 +80,7 @@ test("privateHits: every id family is caught, real identifiers are not", () => {
   for (const id of ["app-01", "prin-09", "lua-12", "nrel-13", "err-3", "perf-100", "sec-7", "xp-02", "go-5"].map((x) => x.toUpperCase())) {
     assert.deepEqual(privateHits(`// per ${id} here`), [id], id);
   }
-  for (const ok of ["UTF-8", "UTF-16", "SHA-256", "ISO-8859", "GPL-3"]) assert.deepEqual(privateHits(`uses ${ok}`), [], ok);
+  for (const ok of ["UTF-8", "UTF-16", "SHA-256", "ISO-8859", "GPL-3", "MPL-2"]) assert.deepEqual(privateHits(`uses ${ok}`), [], ok);
   assert.equal(privateHits("see " + VAULT_NAMES[0].toUpperCase() + "s").length, 1, "vault names match case-insensitively");
   assert.equal(privateHits("see the " + VAULT_NAMES[1]).length, 1);
   assert.deepEqual(privateHits("an ordinary comment, a-1 and X-1"), []);

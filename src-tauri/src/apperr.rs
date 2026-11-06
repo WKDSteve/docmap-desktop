@@ -163,6 +163,8 @@ pub const ENGLISH: &[(&str, &str)] = &[
     // The page host's `/api/*` answers. The generated page's catalog, not this
     // app's: see the module header.
     ("api.method", "only GET is served"),
+    ("api.badRequest", "not a request this server understands"),
+    ("api.foreign", "only the page of this server may ask"),
     ("api.sha", "not a commit hash"),
     ("api.route", "no such endpoint"),
     ("api.path", "bad path"),

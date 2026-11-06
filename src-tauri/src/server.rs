@@ -41,11 +41,16 @@
 //! 3. **No path parameter can leave the map directory.** Static serving takes
 //!    a bare filename; anything with a separator or a `..` is refused before
 //!    it becomes a path.
+//! 4. **Only this page may ask.** `Host` must name this server and an `Origin`, if
+//!    sent, must be this server too: a page elsewhere that rebinds a DNS name to
+//!    127.0.0.1 is refused (DNS rebinding).
+//! 5. **A client cannot hold it up.** The head of a request has a size and a
+//!    time limit, and the connections at one time have a number.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -300,15 +305,83 @@ fn engine_api(cfg: &ServeConfig, route: &str, param: Option<&str>) -> Result<Str
     Ok(body)
 }
 
-fn handle(cfg: &ServeConfig, stream: &mut TcpStream) {
-    let mut reader = BufReader::new(match stream.try_clone() {
+/// The most bytes of a request head (the request line and the headers).
+const MAX_HEAD: u64 = 16 * 1024;
+/// How long a client has to send its head, and to take an answer.
+const IO_TIMEOUT: Duration = Duration::from_secs(10);
+/// The most connections at one time. A page asks a handful of things at once.
+const MAX_CONNECTIONS: usize = 32;
+
+/// The lines of a request head, without the blank line that ends it. `None`: it is
+/// over [`MAX_HEAD`], not text, or ended before the blank line.
+fn read_head(reader: impl BufRead) -> Option<Vec<String>> {
+    let mut limited = reader.take(MAX_HEAD);
+    let mut lines = Vec::new();
+    loop {
+        let mut line = String::new();
+        let got = limited.read_line(&mut line).ok()?;
+        if got == 0 || !line.ends_with('\n') {
+            return None;
+        }
+        let line = line.trim_end();
+        if line.is_empty() {
+            return Some(lines);
+        }
+        lines.push(line.to_owned());
+    }
+}
+
+/// The one value of a header, by its name in any case; `None` when it is not there,
+/// and when it is there twice nothing can tell which one is meant, so that is `Err`.
+fn one_header<'a>(head: &'a [String], name: &str) -> Result<Option<&'a str>, ()> {
+    let mut found = None;
+    for line in head.iter().skip(1) {
+        if let Some((key, value)) = line.split_once(':') {
+            if key.trim().eq_ignore_ascii_case(name) {
+                if found.is_some() {
+                    return Err(());
+                }
+                found = Some(value.trim());
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Whether the request comes from this server's own page: `Host` names it, and an
+/// `Origin` (a browser sends it on some requests) does too.
+fn asked_by_own_page(head: &[String], port: u16) -> bool {
+    let hosts = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
+    let Ok(Some(host)) = one_header(head, "host") else {
+        return false;
+    };
+    if !hosts.iter().any(|h| h == host) {
+        return false;
+    }
+    match one_header(head, "origin") {
+        Ok(None) => true,
+        Ok(Some(origin)) => hosts.iter().any(|h| origin == format!("http://{h}")),
+        Err(()) => false,
+    }
+}
+
+fn handle(cfg: &ServeConfig, port: u16, stream: &mut TcpStream) {
+    if stream.set_read_timeout(Some(IO_TIMEOUT)).is_err()
+        || stream.set_write_timeout(Some(IO_TIMEOUT)).is_err()
+    {
+        return;
+    }
+    let reader = BufReader::new(match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
     });
-    let mut line = String::new();
-    if reader.read_line(&mut line).is_err() {
-        return;
+    let Some(head) = read_head(reader) else {
+        return respond_json_error(stream, 400, &AppError::new("api.badRequest"));
+    };
+    if !asked_by_own_page(&head, port) {
+        return respond_json_error(stream, 403, &AppError::new("api.foreign"));
     }
+    let line = head.first().map(String::as_str).unwrap_or("");
 
     let mut parts = line.split_whitespace();
     let method = parts.next().unwrap_or("");
@@ -424,6 +497,7 @@ pub fn start(cfg: ServeConfig) -> Result<u16, AppError> {
 
     let stop = Arc::new(AtomicBool::new(false));
     let shared_cfg = Arc::new(cfg.clone());
+    let open = Arc::new(AtomicUsize::new(0));
     let shared_stop = Arc::clone(&stop);
     std::thread::spawn(move || {
         for stream in listener.incoming() {
@@ -439,11 +513,20 @@ pub fn start(cfg: ServeConfig) -> Result<u16, AppError> {
                     if stream.set_nonblocking(false).is_err() {
                         continue;
                     }
+                    if open.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
+                        open.fetch_sub(1, Ordering::SeqCst);
+                        // Closed unanswered: writing could block this loop.
+                        continue;
+                    }
                     let cfg = Arc::clone(&shared_cfg);
+                    let open = Arc::clone(&open);
                     // One thread per connection: `Connection: close`, a handful
                     // of requests per project, and an engine call that takes
                     // real time and must not block the next request behind it.
-                    std::thread::spawn(move || handle(&cfg, &mut stream));
+                    std::thread::spawn(move || {
+                        handle(&cfg, port, &mut stream);
+                        open.fetch_sub(1, Ordering::SeqCst);
+                    });
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(Duration::from_millis(50));
@@ -468,7 +551,7 @@ pub fn url(port: u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{lock_servers, safe_sha, servable_file};
+    use super::{asked_by_own_page, lock_servers, read_head, safe_sha, servable_file, MAX_HEAD};
     use std::fs;
     use std::sync::Mutex;
 
@@ -505,6 +588,82 @@ mod tests {
         let map = root.join("docs/map");
         fs::create_dir_all(&map).unwrap();
         (root, map)
+    }
+
+    fn head(lines: &[&str]) -> Vec<String> {
+        lines.iter().map(|l| (*l).to_owned()).collect()
+    }
+
+    #[test]
+    fn only_this_servers_own_page_may_ask() {
+        let get = "GET /api/ping HTTP/1.1";
+        for ok in [
+            head(&[get, "Host: 127.0.0.1:5000"]),
+            head(&[get, "host: localhost:5000"]),
+            head(&[get, "Host: 127.0.0.1:5000", "Origin: http://127.0.0.1:5000"]),
+        ] {
+            assert!(asked_by_own_page(&ok, 5000), "{ok:?}");
+        }
+        for bad in [
+            head(&[get]),
+            head(&[get, "Host: evil.example:5000"]),
+            head(&[get, "Host: 127.0.0.1:5001"]),
+            head(&[get, "Host: 127.0.0.1:5000", "Host: evil.example"]),
+            head(&[get, "Host: 127.0.0.1:5000", "Origin: https://evil.example"]),
+            head(&[get, "Host: 127.0.0.1:5000", "Origin: null"]),
+        ] {
+            assert!(!asked_by_own_page(&bad, 5000), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_head_has_a_size_and_an_end() {
+        let good = b"GET / HTTP/1.1\r\nHost: x\r\n\r\nbody".as_slice();
+        assert_eq!(read_head(good).unwrap(), ["GET / HTTP/1.1", "Host: x"]);
+        assert!(read_head(b"GET / HTTP/1.1\r\nHost".as_slice()).is_none());
+        let long = "x".repeat(usize::try_from(MAX_HEAD).unwrap() + 1);
+        assert!(read_head(long.as_bytes()).is_none());
+        assert!(read_head(&[0xff, b'\n'][..]).is_none());
+    }
+
+    /// The status of what a real server answers to `request`.
+    fn status_of(port: u16, request: &str) -> String {
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        std::io::Write::write_all(&mut stream, request.as_bytes()).unwrap();
+        let mut answer = String::new();
+        let _ = std::io::Read::read_to_string(&mut stream, &mut answer);
+        answer.lines().next().unwrap_or("").to_owned()
+    }
+
+    #[test]
+    fn a_real_server_answers_its_own_page_and_refuses_another_host() {
+        let (root, map) = project("real-server");
+        let port = super::start(super::ServeConfig {
+            root: root.display().to_string(),
+            map_dir: map.display().to_string(),
+            engine: None,
+            grammars: None,
+        })
+        .unwrap();
+        let own = format!(
+            "GET /api/ping HTTP/1.1
+Host: 127.0.0.1:{port}
+
+"
+        );
+        assert!(status_of(port, &own).contains("200"));
+        let foreign = "GET /api/ping HTTP/1.1
+Host: evil.example
+
+";
+        assert!(status_of(port, foreign).contains("403"));
+        assert!(status_of(
+            port,
+            "nonsense
+
+"
+        )
+        .contains("403"));
     }
 
     #[test]

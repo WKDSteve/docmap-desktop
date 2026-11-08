@@ -21,6 +21,7 @@
 import { withBusyButton } from "./lib/busy-button.js";
 import { nvimImportSummary } from "./lib/nvim-import.js";
 import { lastKey, migrateLastKey } from "./lib/last-selection.js";
+import { createStore } from "./lib/store.js";
 import { mapStatus, invalidate } from "./lib/status-cache.js";
 import { row as overviewRow, sortRows, summarize, RANK } from "./lib/overview.js";
 import { usedBy, summarizeDeps } from "./lib/deps.js";
@@ -142,14 +143,12 @@ const els = {
   help: document.getElementById("help"),
 };
 
-let engine = { path: null, from_path: true, bundled: false, grammars: null };
 
 // What the engine says it can read. `null` until the probe has answered
 // once — distinct from `{ languages: null }`, which is a *completed* probe
 // against an engine too old to have the field. Everything downstream treats
 // the two the same way (say nothing about support), but conflating them
 // here would make "not asked yet" unobservable.
-let engineLangs = null;
 
 /**
  * Whether the selected project has call extraction behind it.
@@ -167,13 +166,8 @@ let engineLangs = null;
 /** What the grammars directory holds, for the diagnosis under the verdict.
     `null` until asked, and asked again after `set_grammars` — pointing at
     a different directory is precisely what changes the answer. */
-let grammarDir = null;
 
-let callsSupport = "unknown";
-let nvim = { path: null, from_path: true, config_dir: null, config_dir_from_default: true };
 
-let projects = [];
-let selectedId = null;
 
 // What the map frame is showing, kept with the other view state because
 // `showPlaceholder` (far above where these used to be declared) has to reset
@@ -184,16 +178,12 @@ let selectedId = null;
 // the page is a separate document at a separate origin, so the `data-theme`
 // this window stamps on itself never crosses -- which is why choosing dark
 // used to leave the map white. It reads `?theme=` instead.
-let mapBase = null;
 
 // The panel the page last reported through its one-way channel. A theme
 // change reloads the frame, and landing back on Tree after having been in
 // Notes would be the fix costing more than the bug.
-let mapTab = null;
 
 // The blank-pane watchdog's timer, and whether the page has proved it ran.
-let mapWatch = null;
-let mapLoaded = false;
 
 /** The last selection for the workspace now open, or `null`.
  *
@@ -221,6 +211,39 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// The view state of the window, in one store (`lib/store.js`). Code reads and
+// assigns `view.<name>`; what has to follow a change subscribes to it below
+// instead of every assigning place calling it by hand.
+//
+//   engine         the docmap engine: path, whether it came from PATH, bundled, grammars
+//   engineLangs    what the engine says it can read (see the note above `probeEngineLanguages`)
+//   grammarDir     what the grammars directory holds, for the diagnosis under the verdict
+//   callsSupport   whether the selected project has call extraction behind it ("yes"|"no"|"unknown")
+//   nvim           Neovim: path, config folder and where each came from
+//   projects       the projects of the open workspace
+//   selectedId     the selected project's id, or null
+//   mapBase        the map frame's URL without the theme, or null when no map is showing
+//   mapTab         the panel the page last reported through its one-way channel
+//   mapWatch       the blank-pane watchdog's timer
+//   mapLoaded      whether the page has proved it ran
+const viewStore = createStore({
+  engine: { path: null, from_path: true, bundled: false, grammars: null },
+  // `null` until the probe has answered once -- distinct from `{ languages: null }`, a *completed* probe against
+  // an engine too old to have the field.
+  engineLangs: null,
+  // `null` until asked, and asked again after `set_grammars`.
+  grammarDir: null,
+  callsSupport: "unknown",
+  nvim: { path: null, from_path: true, config_dir: null, config_dir_from_default: true },
+  projects: [],
+  selectedId: null,
+  mapBase: null,
+  mapTab: null,
+  mapWatch: null,
+  mapLoaded: false,
+});
+const view = viewStore.state;
 
 const statusLine = createLiveStatus(els.status);
 
@@ -263,11 +286,11 @@ function showPlaceholder(title, body) {
   // hid the message, a theme switch loaded the old page into the hidden
   // frame, and the blank-pane watchdog kept guarding a frame nobody meant to
   // show.
-  mapBase = null;
-  mapTab = null;
-  if (mapWatch) {
-    clearTimeout(mapWatch);
-    mapWatch = null;
+  view.mapBase = null;
+  view.mapTab = null;
+  if (view.mapWatch) {
+    clearTimeout(view.mapWatch);
+    view.mapWatch = null;
   }
   // The overview answers the same empty screen. A message about one project
   // shown over a list of all of them is two subjects at once.
@@ -294,7 +317,7 @@ function showPlaceholder(title, body) {
  */
 function showTaskPlaceholder(title, body) {
   showPlaceholder(title, body);
-  if (selectedId && (filesOpen || statsOpen)) setPane("map");
+  if (view.selectedId && (filesOpen || statsOpen)) setPane("map");
 }
 
 // =====================================================================
@@ -530,7 +553,7 @@ try {
  * you cannot build a habit with.
  */
 function sortedProjects() {
-  const list = projects.slice();
+  const list = view.projects.slice();
   if (sortBy === "name") {
     list.sort((a, b) => a.name.localeCompare(b.name));
   } else if (sortBy === "stale") {
@@ -592,7 +615,7 @@ function sortedProjects() {
  * competing for the same disk.
  */
 async function measureAll() {
-  const pending = projects.filter((p) => !freshness.has(p.id));
+  const pending = view.projects.filter((p) => !freshness.has(p.id));
   if (!pending.length) return;
   els.sort.disabled = true;
   try {
@@ -613,11 +636,11 @@ async function measureAll() {
 
 async function render() {
   els.list.innerHTML = "";
-  els.empty.hidden = projects.length > 0;
-  els.list.hidden = projects.length === 0;
+  els.empty.hidden = view.projects.length > 0;
+  els.list.hidden = view.projects.length === 0;
   // Ordering is a question about *many* projects. With one selected there
   // is nothing to order, so the control only exists on the overview.
-  els.sort.hidden = projects.length < 2 || !!selectedId;
+  els.sort.hidden = view.projects.length < 2 || !!view.selectedId;
 
   // Nothing selected is a state a `<select>` cannot express on its own: it
   // always has one option selected, so with no selection the control named
@@ -631,7 +654,7 @@ async function render() {
   // project on the left". That is no longer true: no selection now shows the
   // workspace overview, which is a destination rather than a dead end, so
   // the option is a real row and always present.
-  if (projects.length) {
+  if (view.projects.length) {
     const none = document.createElement("option");
     none.value = "";
     none.textContent = t("picker.overview");
@@ -656,10 +679,10 @@ async function render() {
   // a browser -- the structural test for the empty state passed while this
   // was still wrong, because the option was being added and then overruled
   // one line later.
-  els.list.value = selectedId ?? "";
+  els.list.value = view.selectedId ?? "";
   // The project bar (views and search) belongs to a selected project.
-  document.body.classList.toggle("has-bar", !!selectedId);
-  document.getElementById("projbar").hidden = !selectedId;
+  document.body.classList.toggle("has-bar", !!view.selectedId);
+  document.getElementById("projbar").hidden = !view.selectedId;
   renderDetail();
   renderOverview();
 
@@ -668,11 +691,11 @@ async function render() {
   // is what makes the first screen after launch worth reading: without it
   // the list rendered once, said "checking…" against everything, and never
   // heard back — the measurement only ran when someone chose to sort by it.
-  if (!selectedId && projects.length) {
+  if (!view.selectedId && view.projects.length) {
     measureAll().then(() => {
       // Only if nothing has been opened in the meantime; a walk finishing
       // after the reader picked a project must not redraw over their map.
-      if (!selectedId) renderOverview();
+      if (!view.selectedId) renderOverview();
     });
   }
 }
@@ -735,9 +758,9 @@ const RANK_CLASS = {
 
 /** Build the rows from whatever is known right now. */
 async function overviewRows() {
-  const engineSchema = engineLangs && engineLangs.schema;
+  const engineSchema = view.engineLangs && view.engineLangs.schema;
   const out = [];
-  for (const p of projects) {
+  for (const p of view.projects) {
     let status = null;
     try {
       status = await mapStatus(invoke, p.map_dir);
@@ -785,7 +808,7 @@ async function renderDeps() {
   if (s.edges === 0 && s.outsideNames === 0) return;
 
   const names = {};
-  for (const p of projects) names[p.id] = p.name;
+  for (const p of view.projects) names[p.id] = p.name;
   const rows = usedBy(deps.edges, names);
 
   els.ovDeps.hidden = false;
@@ -869,7 +892,7 @@ const matrixbox = {
 
 function renderMatrix() {
   const names = {};
-  for (const p of projects) names[p.id] = p.name;
+  for (const p of view.projects) names[p.id] = p.name;
 
   const edges = (lastDeps && lastDeps.edges) || [];
   const ids = [...new Set(edges.flatMap((e) => [e.from, e.to]))].sort((a, b) =>
@@ -937,7 +960,7 @@ document.getElementById("ov-deps-matrix").addEventListener("click", () => {
 });
 
 async function renderOverview() {
-  const show = !selectedId && projects.length > 0;
+  const show = !view.selectedId && view.projects.length > 0;
   els.overview.hidden = !show;
   if (!show) return;
 
@@ -970,7 +993,7 @@ async function renderOverview() {
   // exactly as old as its sources and still missing what the engine can
   // do now. Same machinery, different set.
   const behind = rows.filter((r) => r.rank === RANK.BEHIND_SCHEMA).map((r) => r.id);
-  els.ovActions.hidden = behind.length === 0 || !engine.path;
+  els.ovActions.hidden = behind.length === 0 || !view.engine.path;
   els.ovGenBehind.textContent = plural("ov.genBehind", behind.length);
   els.ovGenBehind.onclick = () => generateAll(new Set(behind));
 
@@ -1025,7 +1048,7 @@ function clearLangs() {
 
 /** What the row used to carry, for the selected project only. */
 async function renderDetail() {
-  const p = projects.find((x) => x.id === selectedId);
+  const p = view.projects.find((x) => x.id === view.selectedId);
   els.detail.hidden = !p;
   if (!p) return;
 
@@ -1039,7 +1062,7 @@ async function renderDetail() {
   const status = await mapStatus(invoke, p.map_dir);
   // Commands answer in the order they finish, not the order they were asked:
   // by now another project may be the one on screen.
-  if (p.id !== selectedId) return;
+  if (p.id !== view.selectedId) return;
   renderIcon(p.id);
   renderCounts(status);
 
@@ -1052,14 +1075,14 @@ async function renderDetail() {
   // Not awaited with the above: this walks the project directory, and
   // blocking the sidebar on a filesystem walk would trade a rendered panel
   // for a blank one.
-  callsSupport = "unknown";
+  view.callsSupport = "unknown";
   scanLanguages(invoke, p.root, p.map_dir)
     .then((scan) => {
-      if (p.id !== selectedId) return;
+      if (p.id !== view.selectedId) return;
       // Set before the early return below: a project whose badge is empty
       // (no language clears the threshold) still has a Calls panel, and the
       // note over it is exactly as true.
-      callsSupport = callsSupportFor(scan, engineLangs);
+      view.callsSupport = callsSupportFor(scan, view.engineLangs);
       const text = badgeText(scan);
       // The scan is the one that owns the badge: an empty answer takes it off.
       if (!text) {
@@ -1067,13 +1090,13 @@ async function renderDetail() {
         return;
       }
       els.langs.textContent = text;
-      els.langs.title = summaryText(scan, supportFor(scan, engineLangs));
+      els.langs.title = summaryText(scan, supportFor(scan, view.engineLangs));
       els.langs.dataset.project = p.id;
       els.langs.hidden = false;
     })
     .catch(() => {
       // An unreadable directory costs its language line and nothing else.
-      if (p.id === selectedId) clearLangs();
+      if (p.id === view.selectedId) clearLangs();
     });
 
   refreshFreshness(p.id);
@@ -1108,12 +1131,12 @@ function renderCounts(status) {
  * different kind of program than one that can only ask it questions.
  */
 function gotoMap(state) {
-  if (!mapBase) return;
+  if (!view.mapBase) return;
   const parts = Object.keys(state)
     .filter((k) => state[k])
     .map((k) => k + "=" + encodeURIComponent(state[k]));
-  mapTab = null;
-  const url = mapUrl(mapBase).split("#")[0] + "#" + parts.join("&");
+  view.mapTab = null;
+  const url = mapUrl(view.mapBase).split("#")[0] + "#" + parts.join("&");
   els.frame.src = url;
   // No watchdog here. This changes the fragment of the page that is already
   // loaded: a same-document navigation, so nothing loads and the page posts
@@ -1134,9 +1157,9 @@ async function renderIcon(id) {
   els.icon.removeAttribute("src");
   try {
     const path = await invoke("project_icon", { id });
-    if (!path || id !== selectedId) return;
+    if (!path || id !== view.selectedId) return;
     els.icon.onload = () => {
-      if (id === selectedId) els.icon.hidden = false;
+      if (id === view.selectedId) els.icon.hidden = false;
     };
     els.icon.onerror = () => {
       els.icon.hidden = true;
@@ -1163,7 +1186,7 @@ async function renderIcon(id) {
  * nothing rather than guessing — the comparison needs both sides.
  */
 function schemaNote(status) {
-  const engineSchema = engineLangs && engineLangs.schema;
+  const engineSchema = view.engineLangs && view.engineLangs.schema;
   if (!engineSchema || !status.exists) return null;
   // A map with no schema at all predates the field, which is strictly
   // older than any engine that reports one.
@@ -1179,7 +1202,7 @@ async function refreshFreshness(id) {
   try {
     const f = await invoke("map_freshness", { id });
     freshness.set(id, f);
-    if (id !== selectedId) return;
+    if (id !== view.selectedId) return;
     if (!f.hasMap || !f.stale) return;
     els.stale.textContent = t("detail.stale");
     // The help bubble, not `title`: it also appears on keyboard focus.
@@ -1239,7 +1262,7 @@ els.sort.addEventListener("change", () => applySort(els.sort.value));
  * opened, is not an error and has nothing to report. */
 async function restoreLast() {
   const last = lastSelection();
-  if (last && projects.some((p) => p.id === last)) await select(last);
+  if (last && view.projects.some((p) => p.id === last)) await select(last);
 }
 
 async function select(id) {
@@ -1248,13 +1271,13 @@ async function select(id) {
   // `!selectedId` test in this file keeps meaning one thing.
   // Re-selecting what is already selected (after a generation, say) is a
   // reload, not a switch: the search and the folder being browsed stay.
-  const switched = (id || null) !== selectedId;
-  selectedId = id || null;
+  const switched = (id || null) !== view.selectedId;
+  view.selectedId = id || null;
   // A report belongs to one run of one project. A caller that has one for
   // this selection draws it again after `select` returns (`generateFor`).
   hideRunReport();
   syncMenu();
-  titleFor(projects.find((x) => x.id === id));
+  titleFor(view.projects.find((x) => x.id === id));
   try {
     localStorage.setItem(lastKey(activeWorkspace), id);
   } catch (e) {
@@ -1268,7 +1291,7 @@ async function select(id) {
   // one's map.
   els.contextNote.hidden = true;
 
-  const p = projects.find((x) => x.id === selectedId);
+  const p = view.projects.find((x) => x.id === view.selectedId);
   await render();
   if (switched) resetFinder();
   refreshPanes(!switched);
@@ -1278,7 +1301,7 @@ async function select(id) {
     // overview rendered underneath a map it no longer describes.
     els.frame.hidden = true;
     els.frame.removeAttribute("src");
-    mapBase = null;
+    view.mapBase = null;
     setFiles(false);
     renderOverview();
     say("");
@@ -1288,7 +1311,7 @@ async function select(id) {
   const status = await mapStatus(invoke, p.map_dir);
   // The same as in `renderDetail`: a slower answer for the project the reader
   // has since left must not put its map (or its placeholder) on screen.
-  if (selectedId !== id) return;
+  if (view.selectedId !== id) return;
   if (!status.exists) {
     // What is in this tree, on the one screen whose entire subject is that
     // there is nothing to show yet. Appended rather than replacing the
@@ -1296,15 +1319,15 @@ async function select(id) {
     let langLine = "";
     try {
       const scan = await scanLanguages(invoke, p.root, p.map_dir);
-      langLine = summaryText(scan, supportFor(scan, engineLangs));
+      langLine = summaryText(scan, supportFor(scan, view.engineLangs));
     } catch (e) {
       void e;
     }
-    if (selectedId !== id) return;
+    if (view.selectedId !== id) return;
 
     showPlaceholder(
       t("ph.nomap.title"),
-      (engine.path ? t("ph.nomap.generate") : t("ph.nomap.noengine")) +
+      (view.engine.path ? t("ph.nomap.generate") : t("ph.nomap.noengine")) +
         (langLine ? `<br><span class="detail">${escapeHtml(langLine)}</span>` : "")
     );
     say(p.root);
@@ -1327,10 +1350,10 @@ async function select(id) {
   } catch (e) {
     say(errorText(e));
   }
-  if (selectedId !== id) return;
-  mapBase = served ?? convertFileSrc(status.index_path);
-  mapTab = null;
-  const url = mapUrl(mapBase);
+  if (view.selectedId !== id) return;
+  view.mapBase = served ?? convertFileSrc(status.index_path);
+  view.mapTab = null;
+  const url = mapUrl(view.mapBase);
   els.frame.src = url;
   watchMapLoad(url);
   // The path alone. The module count is already on the project row in the
@@ -1341,7 +1364,7 @@ async function select(id) {
 }
 
 async function refresh(next) {
-  projects = next ?? (await invoke("list_projects"));
+  view.projects = next ?? (await invoke("list_projects"));
   // The traffic order reads numbers that arrive from the backend, so a fresh
   // list needs them again before it can be ordered.
   if (sortBy === "traffic") await measureTraffic();
@@ -1359,7 +1382,7 @@ async function refresh(next) {
 /// added just to look at. That one shows what is already there and leaves
 /// the button to them.
 async function autoGenerate(p) {
-  if (!engine.path) return;
+  if (!view.engine.path) return;
   const status = await mapStatus(invoke, p.map_dir);
   if (status.exists) {
     await select(p.id);
@@ -1375,7 +1398,7 @@ async function autoGenerate(p) {
   // which is the whole argument for putting it at this moment specifically.
   try {
     const scan = await scanLanguages(invoke, p.root, p.map_dir);
-    const line = summaryText(scan, supportFor(scan, engineLangs));
+    const line = summaryText(scan, supportFor(scan, view.engineLangs));
     if (line) say(`${p.name} — ${line}`);
   } catch (e) {
     // Never a reason not to generate: this is context for the result, not a
@@ -1421,9 +1444,9 @@ els.list.addEventListener("keydown", (ev) => {
  * clickable.
  */
 function dropSelection() {
-  selectedId = null;
-  mapBase = null;
-  mapTab = null;
+  view.selectedId = null;
+  view.mapBase = null;
+  view.mapTab = null;
   // The report is about the project that was just dropped.
   hideRunReport();
   closePanes();
@@ -1436,7 +1459,7 @@ function dropSelection() {
 async function removeProject(id) {
   try {
     const list = await invoke("remove_project", { id });
-    if (selectedId === id) {
+    if (view.selectedId === id) {
       dropSelection();
       showPlaceholder(t("ph.none.title"), t("ph.none.body"));
       titleFor(null);
@@ -1469,7 +1492,7 @@ function shortPath(p) {
  * lead follows.
  */
 function renderGrammarDiagnosis() {
-  const diag = grammarDiagnosis(engineLangs, grammarDir);
+  const diag = grammarDiagnosis(view.engineLangs, view.grammarDir);
   const html = diag
     ? fill(
         t(diag.key),
@@ -1556,24 +1579,24 @@ function renderFacts(el, rows) {
 
 /** The rows of the Engine panel (and Settings' copy of it). */
 function engineFacts() {
-  if (!engine.path) {
+  if (!view.engine.path) {
     return [{ label: t("facts.binary"), text: t("facts.engine.missing"), missing: true }];
   }
   const rows = [
     {
       label: t("facts.binary"),
-      path: engine.path,
+      path: view.engine.path,
       tag: {
-        text: engine.bundled ? t("facts.tag.bundled") : engine.from_path ? t("facts.tag.path") : t("facts.tag.chosen"),
-        on: engine.bundled,
+        text: view.engine.bundled ? t("facts.tag.bundled") : view.engine.from_path ? t("facts.tag.path") : t("facts.tag.chosen"),
+        on: view.engine.bundled,
       },
-      title: engine.path,
+      title: view.engine.path,
     },
-    engine.grammars
-      ? { label: t("facts.grammars"), path: engine.grammars, title: engine.grammars }
+    view.engine.grammars
+      ? { label: t("facts.grammars"), path: view.engine.grammars, title: view.engine.grammars }
       : { label: t("facts.grammars"), text: t("facts.grammars.none"), missing: true },
   ];
-  const known = engineLangs?.languages ?? null;
+  const known = view.engineLangs?.languages ?? null;
   if (known && known.length) {
     rows.push({
       label: t("facts.reads"),
@@ -1585,14 +1608,14 @@ function engineFacts() {
         title: b.grammar_loaded === false ? t("facts.chip.nogrammar") : "",
       })),
     });
-  } else if (engineLangs) {
+  } else if (view.engineLangs) {
     // Probed and answered, but with no list: an engine older than the field.
-    rows.push({ label: t("facts.reads"), text: engineLanguageText(engineLangs), missing: true });
+    rows.push({ label: t("facts.reads"), text: engineLanguageText(view.engineLangs), missing: true });
   }
   // The engine held to `engine.lock`: the one row that can say "this binary
   // is not the one this app was checked against" before a map comes back
   // short. Marked like a missing grammar when it is not in step.
-  const verdict = contractVerdict(engineLangs);
+  const verdict = contractVerdict(view.engineLangs);
   if (verdict) {
     rows.push({
       label: t("facts.contract"),
@@ -1616,14 +1639,14 @@ function renderEngine() {
   // Asked of the engine rather than inferred from the grammars directory --
   // see `engineVerdict` for the failure that inference had: a directory
   // holding one grammar out of four read "ready".
-  s.textContent = engineVerdict(engine, engineLangs);
-  s.className = "engine-summary" + (engine.path ? "" : " missing");
+  s.textContent = engineVerdict(view.engine, view.engineLangs);
+  s.className = "engine-summary" + (view.engine.path ? "" : " missing");
 
   // Escalate, never collapse. A missing engine is the one state worth
   // opening the panel for on its own; forcing it *shut* when things are
   // fine would slam it closed under the user the moment `set_grammars`
   // re-renders — right after they opened it to press that button.
-  if (!engine.path) {
+  if (!view.engine.path) {
     els.engine.open = true;
   }
 
@@ -1632,18 +1655,26 @@ function renderEngine() {
 }
 
 /** Both generate buttons depend on the engine; only one also needs a
-    selection. Shared so the two can never disagree about whether the engine
+    selection. Shared so the two can never disagree about whether the view.engine
     is usable. */
 function syncActions() {
-  els.gen.disabled = !engine.path || !selectedId;
+  els.gen.disabled = !view.engine.path || !view.selectedId;
 }
 
 async function loadEngine() {
-  engine = await invoke("engine_info");
-
+  view.engine = await invoke("engine_info");
   probeEngineLanguages();
-  renderEngine();
 }
+
+// The panels follow the state: whoever sets the engine, what it reads, the grammars directory or Neovim does not
+// call the renderers after it.
+viewStore.subscribe("engine", renderEngine);
+viewStore.subscribe("engineLangs", () => {
+  renderEngine();
+  void render();
+});
+viewStore.subscribe("grammarDir", renderGrammarDiagnosis);
+viewStore.subscribe("nvim", renderNvim);
 
 /// Ask the engine which languages it reads, and repaint when it answers.
 ///
@@ -1659,12 +1690,10 @@ async function loadEngine() {
 function probeEngineLanguages() {
   invoke("engine_languages")
     .then((res) => {
-      engineLangs = res;
-      renderEngine();
-      void render();
+      view.engineLangs = res;
     })
     .catch(() => {
-      engineLangs = null;
+      view.engineLangs = null;
     });
 
   // Asked separately and swallowed separately. A directory that cannot be
@@ -1673,11 +1702,10 @@ function probeEngineLanguages() {
   // which is the weaker sentence and the safe one.
   invoke("grammar_dir")
     .then((res) => {
-      grammarDir = res;
-      renderGrammarDiagnosis();
+      view.grammarDir = res;
     })
     .catch(() => {
-      grammarDir = null;
+      view.grammarDir = null;
     });
 }
 
@@ -1685,9 +1713,8 @@ els.pickEngine.addEventListener("click", async () => {
   try {
     const file = await open({ multiple: false, title: "Locate the docmap engine" });
     if (!file) return;
-    engine = await invoke("set_engine", { path: file });
+    view.engine = await invoke("set_engine", { path: file });
     probeEngineLanguages();
-    renderEngine();
     say("Engine set");
   } catch (e) {
     say(errorText(e));
@@ -1698,9 +1725,8 @@ els.pickGrammars.addEventListener("click", async () => {
   try {
     const dir = await open({ directory: true, multiple: false, title: "Tree-sitter grammars" });
     if (!dir) return;
-    engine = await invoke("set_grammars", { path: dir });
+    view.engine = await invoke("set_grammars", { path: dir });
     probeEngineLanguages();
-    renderEngine();
     say("Grammars set");
   } catch (e) {
     say(errorText(e));
@@ -1710,24 +1736,24 @@ els.pickGrammars.addEventListener("click", async () => {
 // -------------------------------------------------------------- neovim
 
 function nvimFacts() {
-  if (!nvim.path) {
+  if (!view.nvim.path) {
     return [{ label: t("facts.binary"), text: t("facts.nvim.missing"), missing: true }];
   }
   const rows = [
     {
       label: t("facts.binary"),
-      path: nvim.path,
-      tag: nvim.from_path ? { text: t("facts.tag.path") } : { text: t("facts.tag.chosen") },
-      title: nvim.path,
+      path: view.nvim.path,
+      tag: view.nvim.from_path ? { text: t("facts.tag.path") } : { text: t("facts.tag.chosen") },
+      title: view.nvim.path,
     },
   ];
   rows.push(
-    nvim.config_dir
+    view.nvim.config_dir
       ? {
           label: t("facts.config"),
-          path: nvim.config_dir,
-          tag: nvim.config_dir_from_default ? { text: t("facts.tag.default") } : { text: t("facts.tag.chosen") },
-          title: nvim.config_dir,
+          path: view.nvim.config_dir,
+          tag: view.nvim.config_dir_from_default ? { text: t("facts.tag.default") } : { text: t("facts.tag.chosen") },
+          title: view.nvim.config_dir,
         }
       : { label: t("facts.config"), text: t("facts.nvim.noConfig"), missing: true }
   );
@@ -1736,7 +1762,7 @@ function nvimFacts() {
 
 function renderNvim() {
   const s = els.nvimSummary;
-  const ok = !!(nvim.path && nvim.config_dir);
+  const ok = !!(view.nvim.path && view.nvim.config_dir);
   const rows = nvimFacts();
   renderFacts(els.nvimState, rows);
   renderFacts(document.getElementById("prefs-nvim-state"), rows);
@@ -1750,16 +1776,14 @@ function renderNvim() {
 }
 
 async function loadNvim() {
-  nvim = await invoke("nvim_info");
-  renderNvim();
+  view.nvim = await invoke("nvim_info");
 }
 
 els.pickNvim.addEventListener("click", async () => {
   try {
     const file = await open({ multiple: false, title: "Locate the nvim binary" });
     if (!file) return;
-    nvim = await invoke("set_nvim_path", { path: file });
-    renderNvim();
+    view.nvim = await invoke("set_nvim_path", { path: file });
     say("nvim set");
   } catch (e) {
     say(errorText(e));
@@ -1770,8 +1794,7 @@ els.pickNvimConfig.addEventListener("click", async () => {
   try {
     const dir = await open({ directory: true, multiple: false, title: "Locate the Neovim config directory" });
     if (!dir) return;
-    nvim = await invoke("set_nvim_config_dir", { path: dir });
-    renderNvim();
+    view.nvim = await invoke("set_nvim_config_dir", { path: dir });
     say("Neovim config directory set");
   } catch (e) {
     say(errorText(e));
@@ -1786,7 +1809,7 @@ els.pickNvimConfig.addEventListener("click", async () => {
 // ---------------------------------------------------------- generation
 
 async function generateFor(id, full = false) {
-  const p = projects.find((x) => x.id === id);
+  const p = view.projects.find((x) => x.id === id);
   if (!p) return;
 
   // Who the reader was looking at when this started. A generation takes
@@ -1795,8 +1818,8 @@ async function generateFor(id, full = false) {
   // have gone to the project that was generated — that is the one the result
   // is about. (Adding a project generates for one that is not selected yet,
   // which is why `started` is compared as well as `id`.)
-  const started = selectedId;
-  const here = () => selectedId === started || selectedId === id;
+  const started = view.selectedId;
+  const here = () => view.selectedId === started || view.selectedId === id;
 
   // Replace the view while it runs: leaving the previous project's map on
   // screen during a rebuild is the same "wrong panel's data" problem the
@@ -1833,7 +1856,7 @@ async function generateFor(id, full = false) {
             // hidden the placeholder, which is the only host `appendLog`
             // has - the report of a run that worked was dropped there, and
             // with it every finding the status line counts.
-            if (log && selectedId === id) showRunReport(log);
+            if (log && view.selectedId === id) showRunReport(log);
           }
           sayLive(() => generatedMessageFor(p.name, log));
         } else {
@@ -1929,7 +1952,7 @@ function generatedMessageFor(name, log) {
   return generatedMessage(name, summarizeEngineLog(log).tally, { t, plural });
 }
 
-els.gen.addEventListener("click", () => selectedId && generateFor(selectedId));
+els.gen.addEventListener("click", () => view.selectedId && generateFor(view.selectedId));
 
 /// Regenerate every project, one after another.
 ///
@@ -1957,9 +1980,9 @@ els.gen.addEventListener("click", () => selectedId && generateFor(selectedId));
  * not disappear when the sidebar is collapsed.
  */
 async function generateAll(only) {
-  if (!engine.path || projects.length === 0) return;
+  if (!view.engine.path || view.projects.length === 0) return;
 
-  const list = only ? projects.filter((p) => only.has(p.id)) : projects.slice();
+  const list = only ? view.projects.filter((p) => only.has(p.id)) : view.projects.slice();
   if (list.length === 0) return;
   const failed = [];
   let ok = 0;
@@ -1999,7 +2022,7 @@ async function generateAll(only) {
   }
 
   await refresh();
-  if (selectedId) await select(selectedId);
+  if (view.selectedId) await select(view.selectedId);
   renderEngine();
   say(
     failed.length
@@ -2038,12 +2061,12 @@ async function generateAll(only) {
  * about a tree it did not read.
  */
 async function checkMap(id) {
-  const p = projects.find((x) => x.id === id);
+  const p = view.projects.find((x) => x.id === id);
   if (!p) return;
 
   // See `generateFor`: the report is for whoever started the check.
-  const started = selectedId;
-  const here = () => selectedId === started;
+  const started = view.selectedId;
+  const here = () => view.selectedId === started;
 
   showTaskPlaceholder(
     t("ph.check.title"),
@@ -2073,11 +2096,11 @@ async function checkMap(id) {
 }
 
 async function generateStale() {
-  if (!engine.path || projects.length === 0) return;
+  if (!view.engine.path || view.projects.length === 0) return;
   say(t("gen.stale.checking"));
 
   const stale = new Set();
-  for (const p of projects) {
+  for (const p of view.projects) {
     try {
       const f = await invoke("map_freshness", { id: p.id });
       freshness.set(p.id, f);
@@ -2142,7 +2165,7 @@ function contextNoteFor(ctx) {
   if (
     ctx.tab === "hierarchy" &&
     (ctx.view === "calls" || ctx.view === "modulecalls") &&
-    callsSupport === "no"
+    view.callsSupport === "no"
   ) {
     return t("note.calls");
   }
@@ -2161,7 +2184,7 @@ window.addEventListener("message", (ev) => {
   // one request today is opening a file in an editor; the path is
   // repo-relative because that is what the artifact stores, and it is
   // resolved and bounds-checked in Rust rather than trusted here.
-  if (data.kind === "open-file" && data.path && selectedId) {
+  if (data.kind === "open-file" && data.path && view.selectedId) {
     // Something the reader just did in the map (a right-click menu item),
     // not a page that loaded and asked on its own: a repository's own page
     // runs the moment it is selected, and an open-file request with no click
@@ -2169,7 +2192,7 @@ window.addEventListener("message", (ev) => {
     const activation = navigator.userActivation;
     if (activation && !activation.isActive) return;
     invoke("open_in_editor", {
-      id: selectedId,
+      id: view.selectedId,
       path: data.path,
       line: data.line ?? null,
     }).catch((e) => say(errorText(e)));
@@ -2178,12 +2201,12 @@ window.addEventListener("message", (ev) => {
 
   // The page ran. Whatever else this message says, it is the evidence the
   // blank-pane watchdog is waiting for.
-  mapLoaded = true;
-  if (mapWatch) {
-    clearTimeout(mapWatch);
-    mapWatch = null;
+  view.mapLoaded = true;
+  if (view.mapWatch) {
+    clearTimeout(view.mapWatch);
+    view.mapWatch = null;
   }
-  if (data.tab) mapTab = data.tab;
+  if (data.tab) view.mapTab = data.tab;
   const note = contextNoteFor(data);
   els.contextNote.innerHTML = note || "";
   els.contextNote.hidden = !note;
@@ -2374,10 +2397,10 @@ document.getElementById("pick-folder").addEventListener("click", async () => {
 
   if (scan.isGit) {
     await closeThen(async () => {
-      const before = new Set(projects.map((x) => x.id));
+      const before = new Set(view.projects.map((x) => x.id));
       await refresh(await invoke("add_project", { root: dir }));
       say(`Added ${dir}`);
-      const added = projects.find((x) => !before.has(x.id));
+      const added = view.projects.find((x) => !before.has(x.id));
       if (added) await autoGenerate(added);
     });
     return;
@@ -2716,7 +2739,7 @@ function mapUrl(base) {
   // `tab` only. The page deliberately posts a coarse context and not its
   // whole state, so this restores the panel and nothing finer -- which is
   // the part a reader would notice losing.
-  if (mapTab) url += "#tab=" + encodeURIComponent(mapTab);
+  if (view.mapTab) url += "#tab=" + encodeURIComponent(view.mapTab);
   return url;
 }
 
@@ -2736,14 +2759,14 @@ function mapUrl(base) {
  * fetched something.
  */
 function watchMapLoad(url) {
-  if (mapWatch) clearTimeout(mapWatch);
-  mapLoaded = false;
-  mapWatch = setTimeout(() => {
-    mapWatch = null;
+  if (view.mapWatch) clearTimeout(view.mapWatch);
+  view.mapLoaded = false;
+  view.mapWatch = setTimeout(() => {
+    view.mapWatch = null;
     // `mapBase` is "a map is meant to be showing"; the frame's own `hidden`
     // is also set by the Files and Statistics panes, which disarmed the
     // watchdog for a reader who opened one within 8 seconds.
-    if (mapLoaded || !mapBase) return;
+    if (view.mapLoaded || !view.mapBase) return;
     showPlaceholder(
       t("map.blank.title"),
       t("map.blank.body") + '<br><span class="detail">' + escapeHtml(url) + "</span>"
@@ -2753,7 +2776,7 @@ function watchMapLoad(url) {
 
 /** Reload the map with the current theme, if one is showing. */
 function retheme() {
-  if (mapBase) els.frame.src = mapUrl(mapBase);
+  if (view.mapBase) els.frame.src = mapUrl(view.mapBase);
 }
 
 function currentTheme() {
@@ -2920,7 +2943,7 @@ function fill(text, vars) {
 }
 
 async function renderTelemetry() {
-  const p = projects.find((x) => x.id === selectedId);
+  const p = view.projects.find((x) => x.id === view.selectedId);
   const ns = telemetryNamespace(p);
   tel.toggle.hidden = true;
   tel.snaps.hidden = true;
@@ -3032,7 +3055,7 @@ const trafficEntries = new Map();
 async function measureTraffic({ busy = true } = {}) {
   if (busy) els.sort.disabled = true;
   try {
-    const list = await invoke("traffic_list", { ids: projects.map((p) => p.id) });
+    const list = await invoke("traffic_list", { ids: view.projects.map((p) => p.id) });
     trafficEntries.clear();
     for (const entry of list) trafficEntries.set(entry.id, entry);
   } catch (e) {
@@ -3095,7 +3118,7 @@ async function renderTraffic(p) {
   }
   // The answer can arrive after the selection moved on; writing it then would
   // put one project's numbers under another's name.
-  if (selectedId !== p.id) return;
+  if (view.selectedId !== p.id) return;
 
   const line = trafficLine(info);
   if (!line) return;
@@ -3181,7 +3204,7 @@ function renderTrafficSurvey(survey) {
 
 /** Fill the Settings panel. Asked when the dialog opens, like telemetry. */
 async function renderTrafficSettings() {
-  const p = projects.find((x) => x.id === selectedId);
+  const p = view.projects.find((x) => x.id === view.selectedId);
   trafficUi.show.disabled = !p;
   trafficUi.show.checked = p ? !p.traffic_hidden : true;
 
@@ -3204,7 +3227,7 @@ async function refreshTraffic() {
     // The overview's per-row chips (fillOverviewTraffic) are the other
     // reader of trafficEntries; without this they keep showing the source
     // that was just replaced or cleared.
-    if (!selectedId) renderOverview();
+    if (!view.selectedId) renderOverview();
   }
 }
 
@@ -3255,7 +3278,7 @@ trafficUi.refresh.addEventListener("click", async () => {
 // the plugin and still does not want on screen or in a screenshot. Off means
 // nothing is read for it — not even its remote.
 trafficUi.show.addEventListener("change", async () => {
-  const p = projects.find((x) => x.id === selectedId);
+  const p = view.projects.find((x) => x.id === view.selectedId);
   if (!p) return;
   const hidden = !trafficUi.show.checked;
   try {
@@ -3342,14 +3365,14 @@ function renderTrafficDetail(d, id) {
 }
 
 document.getElementById("proj-traffic-detail").addEventListener("click", async () => {
-  const id = selectedId;
+  const id = view.selectedId;
   if (!id) return;
   try {
     const d = await invoke("traffic_detail", { id });
     // The answer can arrive after the selection moved on — same guard as
     // `renderTraffic`, so a slow read never shows one project's traffic
     // under another's name.
-    if (selectedId !== id) return;
+    if (view.selectedId !== id) return;
     if (!d) {
       say(t("traffic.detail.none"));
       return;
@@ -3381,11 +3404,11 @@ const changesBox = {
 const CHANGES_LIMIT = 100;
 
 els.stale.addEventListener("click", async () => {
-  const id = selectedId;
+  const id = view.selectedId;
   if (!id) return;
   try {
     const c = await invoke("map_changes", { id, limit: CHANGES_LIMIT });
-    if (selectedId !== id) return;
+    if (view.selectedId !== id) return;
     changesBox.lead.textContent = plural("changes.lead", c.total);
     changesBox.list.replaceChildren();
     for (const f of c.files) {
@@ -3533,13 +3556,13 @@ let filesSeq = 0;
 
 async function renderFiles() {
   const mine = ++filesSeq;
-  if (!filesOpen || !selectedId) return;
+  if (!filesOpen || !view.selectedId) return;
   const crumb = document.getElementById("files-crumb");
   const list = document.getElementById("files-list");
 
   let listing;
   try {
-    listing = await invoke("file_tree", { id: selectedId, sub: filesPath });
+    listing = await invoke("file_tree", { id: view.selectedId, sub: filesPath });
   } catch (e) {
     if (mine !== filesSeq || !filesOpen) return;
     list.innerHTML = "";
@@ -3554,7 +3577,7 @@ async function renderFiles() {
 
   // Breadcrumb: the project name, then every segment of the current path.
   crumb.innerHTML = "";
-  const project = projects.find((p) => p.id === selectedId);
+  const project = view.projects.find((p) => p.id === view.selectedId);
   const segments = filesPath ? filesPath.split("/") : [];
   const crumbButton = (label, target) => {
     const b = document.createElement("button");
@@ -3660,7 +3683,7 @@ async function renderFiles() {
       }
       // A file opens where files open — the editor setting decides which,
       // and an empty setting means the desktop's own association.
-      invoke("open_in_editor", { id: selectedId, path: e.path, line: null }).catch((err) =>
+      invoke("open_in_editor", { id: view.selectedId, path: e.path, line: null }).catch((err) =>
         say(errorText(err))
       );
     });
@@ -3682,7 +3705,7 @@ function setPane(name) {
   // The panes belong to a project; with none selected the overview is the
   // view, and a pane opened over it (View menu items are enabled without a
   // project) would be an empty overlay with no tabs to leave it by.
-  if (!selectedId) name = "map";
+  if (!view.selectedId) name = "map";
   filesOpen = name === "files";
   statsOpen = name === "stats";
   const overlay = filesOpen || statsOpen;
@@ -3690,9 +3713,9 @@ function setPane(name) {
   document.getElementById("stats").hidden = !statsOpen;
   // The map keeps its src: coming back should not cost a reload of a
   // two-megabyte page that has not changed.
-  els.frame.hidden = overlay || !mapBase;
-  els.placeholder.hidden = overlay || !!mapBase || (!selectedId && projects.length > 0);
-  els.overview.hidden = overlay || !!mapBase || !!selectedId || projects.length === 0;
+  els.frame.hidden = overlay || !view.mapBase;
+  els.placeholder.hidden = overlay || !!view.mapBase || (!view.selectedId && view.projects.length > 0);
+  els.overview.hidden = overlay || !!view.mapBase || !!view.selectedId || view.projects.length === 0;
   if (filesOpen) {
     filesPath = "";
     renderFiles();
@@ -3780,13 +3803,13 @@ function node(tag, cls, text) {
 /** The button belongs to the project on screen: disabled only while *its*
     count is running, not while some other project's is. */
 function syncStatsRefresh() {
-  statsUi.refresh.disabled = !!selectedId && statsPending.has(selectedId);
+  statsUi.refresh.disabled = !!view.selectedId && statsPending.has(view.selectedId);
 }
 
 async function renderStats(force = false) {
-  const id = selectedId;
+  const id = view.selectedId;
   if (!statsOpen || !id) return;
-  const p = projects.find((x) => x.id === id);
+  const p = view.projects.find((x) => x.id === id);
   statsUi.title.textContent = p ? fill(t("stats.titleFor"), { name: p.name }) : t("stats.title");
 
   let s = force ? null : statsCache.get(id);
@@ -3805,7 +3828,7 @@ async function renderStats(force = false) {
     try {
       s = await call;
     } catch (e) {
-      if (id === selectedId) statsUi.state.textContent = errorText(e);
+      if (id === view.selectedId) statsUi.state.textContent = errorText(e);
       return;
     } finally {
       syncStatsRefresh();
@@ -3814,7 +3837,7 @@ async function renderStats(force = false) {
   }
   syncStatsRefresh();
   // The count can finish after the reader moved on or left the pane.
-  if (id !== selectedId || !statsOpen) return;
+  if (id !== view.selectedId || !statsOpen) return;
 
   const nf = new Intl.NumberFormat(locale);
   const h = statsHeadline(s);
@@ -3908,7 +3931,7 @@ function legendKey(key) {
 }
 
 statsUi.refresh.addEventListener("click", () => {
-  statsCache.delete(selectedId);
+  statsCache.delete(view.selectedId);
   renderStats(true);
 });
 
@@ -3974,7 +3997,7 @@ function saveFinder() {
 }
 
 function finderProject() {
-  return projects.find((p) => p.id === selectedId) || null;
+  return view.projects.find((p) => p.id === view.selectedId) || null;
 }
 
 function openFinder() {
@@ -4083,7 +4106,7 @@ function renderFolderHits(res, query) {
       b.append(what);
     }
     b.addEventListener("click", () => {
-      invoke("open_in_editor", { id: selectedId, path: h.path, line: h.line ?? null }).catch((e) =>
+      invoke("open_in_editor", { id: view.selectedId, path: h.path, line: h.line ?? null }).catch((e) =>
         say(errorText(e))
       );
     });
@@ -4129,7 +4152,7 @@ function renderViewHits(res) {
       open.title = h.file;
       li.classList.add("finder-hit-row");
       open.addEventListener("click", () => {
-        invoke("open_in_editor", { id: selectedId, path: h.file, line: h.line ?? null }).catch((e) =>
+        invoke("open_in_editor", { id: view.selectedId, path: h.file, line: h.line ?? null }).catch((e) =>
           say(errorText(e))
         );
       });
@@ -4148,7 +4171,7 @@ function renderViewHits(res) {
         gotoMap(target);
         closeFinder();
       } else if (h.file) {
-        invoke("open_in_editor", { id: selectedId, path: h.file, line: h.line ?? null }).catch((e) =>
+        invoke("open_in_editor", { id: view.selectedId, path: h.file, line: h.line ?? null }).catch((e) =>
           say(errorText(e))
         );
       }
@@ -4179,7 +4202,7 @@ async function runFinder() {
 }
 
 async function runFinderOnce() {
-  const id = selectedId;
+  const id = view.selectedId;
   const query = finder.input.value.trim();
   const seq = ++finderSeq;
   if (!id || !query) {
@@ -4355,7 +4378,7 @@ window.addEventListener("blur", () => {
 // not cross out of a cross-origin frame, so there it simply does not fire.
 document.addEventListener("keydown", (ev) => {
   if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && ev.key.toLowerCase() === "k") {
-    if (!selectedId) return;
+    if (!view.selectedId) return;
     ev.preventDefault();
     finder.input.focus();
     finder.input.select();
@@ -4590,24 +4613,24 @@ async function maybeOpenWorkspaces() {
 const MENU_ACTIONS = {
   "menu.file.add": () => els.add.click(),
   "menu.file.open_browser": async () => {
-    if (!selectedId) return;
+    if (!view.selectedId) return;
     try {
-      await invoke("open_map_in_browser", { id: selectedId });
+      await invoke("open_map_in_browser", { id: view.selectedId });
     } catch (e) {
       say(errorText(e));
     }
   },
   "menu.file.export": () => exportCurrentView(),
   "menu.file.reveal": async () => {
-    if (!selectedId) return;
+    if (!view.selectedId) return;
     try {
-      await invoke("reveal_project", { id: selectedId });
+      await invoke("reveal_project", { id: view.selectedId });
     } catch (e) {
       say(errorText(e));
     }
   },
   "menu.file.copy_path": async () => {
-    const p = projects.find((x) => x.id === selectedId);
+    const p = view.projects.find((x) => x.id === view.selectedId);
     if (!p) return;
     try {
       // The webview's own clipboard rather than a plugin: the text is a
@@ -4619,19 +4642,19 @@ const MENU_ACTIONS = {
       say(errorText(e));
     }
   },
-  "menu.file.remove": () => selectedId && removeProject(selectedId),
+  "menu.file.remove": () => view.selectedId && removeProject(view.selectedId),
   "menu.file.workspaces": () => openWorkspaces(),
   "menu.file.settings": () => openPrefs(),
-  "menu.project.scope": () => selectedId && openScope(),
-  "menu.project.generate": () => selectedId && generateFor(selectedId),
+  "menu.project.scope": () => view.selectedId && openScope(),
+  "menu.project.generate": () => view.selectedId && generateFor(view.selectedId),
   "menu.project.generate_all": () => generateAll(),
   "menu.project.generate_stale": () => generateStale(),
-  "menu.project.check": () => selectedId && checkMap(selectedId),
-  "menu.project.generate_full": () => selectedId && generateFor(selectedId, true),
+  "menu.project.check": () => view.selectedId && checkMap(view.selectedId),
+  "menu.project.generate_full": () => view.selectedId && generateFor(view.selectedId, true),
   // `generateFor` already reloads the map on success; the extra `select()`
   // that used to follow it ran after a *failure* too, and put the old map
   // back over the failure message.
-  "menu.project.regenerate": () => selectedId && generateFor(selectedId),
+  "menu.project.regenerate": () => view.selectedId && generateFor(view.selectedId),
   "menu.view.theme.system": () => chooseTheme("system"),
   "menu.view.theme.light": () => chooseTheme("light"),
   "menu.view.theme.dark": () => chooseTheme("dark"),
@@ -4749,13 +4772,13 @@ function chooseLocale(code) {
    the map live, what a source link should point at, and whether generating
    it means generating it fully. All of it lives on the project rather than
    on this machine — see `scopebox`'s own comment in `index.html` — and all
-   of it is passed to the engine on the Rust side, looked up by root, so
+   of it is passed to the view.engine on the Rust side, looked up by root, so
    `Generate`, `Generate all` and `Check exactly` honour it without each
    remembering to.
 
-   The engine also reads a `.docmap.json` in the repository itself now. What
+   The view.engine also reads a `.docmap.json` in the repository itself now. What
    is set here wins over that file, because a flag beats a config file in the
-   engine's own precedence — so an empty field here is not "override with
+   view.engine's own precedence — so an empty field here is not "override with
    nothing", it is "leave whatever the repository says alone". That is why
    every field stores `null` when cleared rather than an empty string.
 
@@ -4790,7 +4813,7 @@ let scopeProject = null;
 function renderScopeLanguages(chosen) {
   const list = document.getElementById("scope-langs");
   list.textContent = "";
-  const known = engineLangs && engineLangs.languages;
+  const known = view.engineLangs && view.engineLangs.languages;
   if (!known || known.length === 0) {
     const li = document.createElement("li");
     li.textContent = t("scope.languages.unknown");
@@ -4845,7 +4868,7 @@ async function showStoredMapDirProblem(dir) {
 }
 
 async function openScope() {
-  const p = projects.find((x) => x.id === selectedId);
+  const p = view.projects.find((x) => x.id === view.selectedId);
   if (!p) return;
   scopeProject = p;
 
@@ -4883,7 +4906,7 @@ async function openScope() {
 /** A field's value, or `null` when it was left empty.
 
     `null`, never `""`: an empty field means "the engine decides", and the
-    engine's answer includes whatever the repository's own `.docmap.json`
+    view.engine's answer includes whatever the repository's own `.docmap.json`
     says. An empty string would reach it as a real `--out-dir=` and override
     that file with nothing. Rust normalises the non-empty case; this only has
     to get the empty one right.
@@ -5035,11 +5058,11 @@ function aboutFacts() {
     lines.push("docmap-desktop " + aboutInfo.appVersion);
     lines.push(aboutInfo.os + " / " + aboutInfo.arch);
   }
-  lines.push("engine: " + (engine.path || t("about.engineNone")));
-  if (engineLangs && engineLangs.schema !== null && engineLangs.schema !== undefined) {
-    lines.push("schema: " + engineLangs.schema);
+  lines.push("engine: " + (view.engine.path || t("about.engineNone")));
+  if (view.engineLangs && view.engineLangs.schema !== null && view.engineLangs.schema !== undefined) {
+    lines.push("schema: " + view.engineLangs.schema);
   }
-  const b = engineLangs && engineLangs.build;
+  const b = view.engineLangs && view.engineLangs.build;
   if (b && b.commit) {
     lines.push(
       "build: " + b.commit + (b.committedAt ? " (" + b.committedAt + ")" : "")
@@ -5048,7 +5071,7 @@ function aboutFacts() {
   } else {
     lines.push("build: " + t("about.buildNone"));
   }
-  lines.push("grammars: " + (engine.grammars || "none"));
+  lines.push("grammars: " + (view.engine.grammars || "none"));
   lines.push("interface: " + locale);
   return lines.join("\n");
 }
@@ -5112,7 +5135,7 @@ async function syncMenu() {
   try {
     await invoke("set_menu", {
       labels,
-      hasProject: Boolean(selectedId),
+      hasProject: Boolean(view.selectedId),
       state: viewState(),
     });
   } catch (e) {
@@ -5155,7 +5178,7 @@ function closeProjMenu() {
 }
 
 function openProjMenu(x, y) {
-  if (!selectedId) return;
+  if (!view.selectedId) return;
   projmenu.innerHTML = "";
   PROJECT_CONTEXT.forEach((id) => {
     if (id === "sep") {
@@ -5195,7 +5218,7 @@ function openProjMenu(x, y) {
 }
 
 els.detail.addEventListener("contextmenu", (ev) => {
-  if (!selectedId) return;
+  if (!view.selectedId) return;
   ev.preventDefault();
   openProjMenu(ev.clientX, ev.clientY);
 });

@@ -105,7 +105,7 @@ test("the picker can say that nothing is selected", () => {
   // would now hide the only way back to that screen.
   assert.ok(MAIN.includes('t("picker.overview")'), "the empty state needs its own label");
   assert.ok(
-    /if \(projects\.length\) \{[\s\S]{0,120}createElement\("option"\)/.test(MAIN),
+    /if \(view\.projects\.length\) \{[\s\S]{0,120}createElement\("option"\)/.test(MAIN),
     "and it is offered whenever there are projects to survey"
   );
   assert.ok(
@@ -121,7 +121,7 @@ test("the picker never falls back to what it showed before", () => {
   // project from the workspace just left. The structural test passed
   // throughout; the browser did not. This asserts the fallback stays gone.
   assert.ok(
-    /els\.list\.value = selectedId \?\? "";/.test(MAIN),
+    /els\.list\.value = view\.selectedId \?\? "";/.test(MAIN),
     "the picker shows the selection or nothing"
   );
   assert.ok(!/const previous = els\.list\.value/.test(MAIN));

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { keys } from "./i18n.js";
+import { MAIN_RS } from "./rust-main.js";
 
 // The window is plain HTML plus one script, joined by nothing but string
 // equality: an element id, a command name, a catalog key. A typo in any of
@@ -16,7 +17,7 @@ function read(path) {
 
 const MAIN = read("../main.js");
 const HTML = read("../index.html");
-const RUST = read("../../src-tauri/src/main.rs");
+const RUST = MAIN_RS;
 
 test("every element main.js looks up by id exists in the markup", () => {
   const ids = [...new Set([...MAIN.matchAll(/getElementById\("([A-Za-z0-9_-]+)"\)/g)].map((m) => m[1]))];
@@ -83,12 +84,12 @@ test("the search kinds the backend emits are the ones the interface can name", (
 });
 
 test("the project bar is only shown for a selected project", () => {
-  assert.match(MAIN, /classList\.toggle\("has-bar", !!selectedId\)/);
-  assert.match(MAIN, /getElementById\("projbar"\)\.hidden = !selectedId/);
+  assert.match(MAIN, /classList\.toggle\("has-bar", !!view\.selectedId\)/);
+  assert.match(MAIN, /getElementById\("projbar"\)\.hidden = !view\.selectedId/);
 });
 
 test("the sort control only exists on the overview", () => {
-  assert.match(MAIN, /els\.sort\.hidden = projects\.length < 2 \|\| !!selectedId/);
+  assert.match(MAIN, /els\.sort\.hidden = view\.projects\.length < 2 \|\| !!view\.selectedId/);
 });
 
 test("a hidden control inside the search panel is actually hidden", () => {
@@ -158,11 +159,11 @@ test("no English catalog key is dead", () => {
 test("a message that takes the map's place says there is no map any more", () => {
   const start = MAIN.indexOf("function showPlaceholder(");
   const body = MAIN.slice(start, MAIN.indexOf("\n}\n", start));
-  assert.match(body, /mapBase = null/, "showPlaceholder must reset mapBase");
+  assert.match(body, /view\.mapBase = null/, "showPlaceholder must reset view.mapBase");
   assert.match(body, /mapTab = null/);
   // Declared before the function that writes it, or the first call is a
   // temporal-dead-zone error.
-  assert.ok(MAIN.indexOf("let mapBase = null") < start, "mapBase must be declared above showPlaceholder");
+  assert.ok(MAIN.indexOf("const viewStore = createStore(") < start, "the view state must be declared above showPlaceholder");
 });
 
 test("removing a project or switching workspace leaves no pane over the overview", () => {
@@ -214,7 +215,7 @@ test("the opaque panes sit above the map's context note", () => {
 test("a result about a project is shown wherever that project is shown", () => {
   const start = MAIN.indexOf("async function generateFor(");
   const body = MAIN.slice(start, MAIN.indexOf("\n}\n", start));
-  assert.match(body, /const here = \(\) => selectedId === started \|\| selectedId === id;/);
+  assert.match(body, /const here = \(\) => view\.selectedId === started \|\| view\.selectedId === id;/);
   // The cached verdict is about the map that was just replaced.
   assert.match(body, /freshness\.delete\(p\.id\)/);
 });
@@ -232,7 +233,7 @@ test("dropping the selection tells the native menu", () => {
 });
 
 test("the Count-again button follows the project on screen", () => {
-  assert.match(MAIN, /statsUi\.refresh\.disabled = !!selectedId && statsPending\.has\(selectedId\)/);
+  assert.match(MAIN, /statsUi\.refresh\.disabled = !!view\.selectedId && statsPending\.has\(view\.selectedId\)/);
   assert.doesNotMatch(MAIN, /statsUi\.refresh\.disabled = (true|false)/);
 });
 
@@ -248,8 +249,8 @@ test("the Count-again button follows the project on screen", () => {
 const code = (text) => text.replace(/^\s*(\/\/|\/\*|\*(\s|\/|$)).*$/gm, "");
 
 function rustFn(name) {
-  const start = RUST.search(new RegExp(`\\n(?:async )?fn ${name}\\b`));
-  assert.ok(start >= 0, `no fn ${name} in main.rs`);
+  const start = RUST.search(new RegExp(`\\n(?:pub\\(crate\\) )?(?:async )?fn ${name}\\b`));
+  assert.ok(start >= 0, `no fn ${name} in the command modules`);
   return code(RUST.slice(start, RUST.indexOf("\n}\n", start)));
 }
 
@@ -417,12 +418,12 @@ function guardAfter(body, awaited, guard, before, what) {
 
 test("an answer for a project the reader has left is dropped", () => {
   const detail = jsFn("async function renderDetail(");
-  const stale = "if (p.id !== selectedId) return;";
+  const stale = "if (p.id !== view.selectedId) return;";
   guardAfter(detail, "await mapStatus(", stale, "renderIcon(", "renderDetail");
   guardAfter(detail, "scanLanguages(", stale, "callsSupport = callsSupportFor", "renderDetail's scan");
 
   const sel = jsFn("async function select(");
-  const left = "if (selectedId !== id) return;";
+  const left = "if (view.selectedId !== id) return;";
   guardAfter(sel, "await mapStatus(", left, "if (!status.exists)", "select");
   guardAfter(sel, "await scanLanguages(", left, "showPlaceholder(", "select");
   guardAfter(sel, 'await invoke("serve_project"', left, "mapBase = ", "select");
@@ -430,7 +431,7 @@ test("an answer for a project the reader has left is dropped", () => {
   const files = jsFn("async function renderFiles(");
   assert.ok(
     files.indexOf("const mine = ++filesSeq;") >= 0 &&
-      files.indexOf("const mine = ++filesSeq;") < files.indexOf("if (!filesOpen || !selectedId) return;"),
+      files.indexOf("const mine = ++filesSeq;") < files.indexOf("if (!filesOpen || !view.selectedId) return;"),
     "renderFiles takes its ticket before it can return early"
   );
   guardAfter(files, 'await invoke("file_tree"', "mine !== filesSeq", "crumb.innerHTML", "renderFiles");

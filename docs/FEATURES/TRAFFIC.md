@@ -72,7 +72,7 @@ The chosen folder is read by the app's own process only; it is **not** added to
 any Tauri fs scope, so the window can ask for numbers but never gets a path it
 could read on its own.
 
-- **Module:** `src-tauri/src/traffic.rs`, `src-tauri/src/main.rs` (`traffic_*` commands)
+- **Module:** `src-tauri/src/traffic.rs`, `src-tauri/src/traffic_cmds.rs` (`traffic_*` commands)
 - **Config:** Settings → GitHub traffic
 - **Docs:** [USAGE.md](../USAGE.md#github-traffic)
 

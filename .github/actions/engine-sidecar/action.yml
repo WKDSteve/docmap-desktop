@@ -4,7 +4,7 @@
 #
 # Skipped by the caller on macOS on purpose, not by oversight: docmap.nvim does not publish a macOS
 # build of the engine (see that repository's docs/ROADMAP/V1_EXTENSION/PORTABILITY.md). A macOS build of this
-# app still succeeds without it: engine_sidecar() in main.rs resolves to None when the file is not there.
+# app still succeeds without it: engine_sidecar() in engine.rs resolves to None when the file is not there.
 #
 # `gh` rather than a raw curl: it is on every GitHub-hosted runner, and `release download` handles the asset
 # matching and the auth through GH_TOKEN. The engine binary keeps its published name,

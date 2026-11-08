@@ -229,10 +229,14 @@ impl AppError {
         AppError::new("err.task").detail(e)
     }
 
+    // Read by the tests of every module; the app itself only sends the error whole.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn key(&self) -> &'static str {
         self.key
     }
 
+    // Read by the tests of every module; the app itself only sends the error whole.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn param(&self, name: &str) -> Option<&str> {
         self.params
             .iter()
@@ -240,6 +244,8 @@ impl AppError {
             .map(|(_, v)| v.as_str())
     }
 
+    // Read by the tests of every module; the app itself only sends the error whole.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn detail_text(&self) -> Option<&str> {
         self.detail.as_deref()
     }
@@ -371,14 +377,18 @@ mod tests {
         ("apperr.rs", include_str!("apperr.rs")),
         ("contract.rs", include_str!("contract.rs")),
         ("deps.rs", include_str!("deps.rs")),
+        ("engine.rs", include_str!("engine.rs")),
         ("feedback.rs", include_str!("feedback.rs")),
         ("filetree.rs", include_str!("filetree.rs")),
         ("freshness.rs", include_str!("freshness.rs")),
         ("github.rs", include_str!("github.rs")),
         ("icon.rs", include_str!("icon.rs")),
+        ("import.rs", include_str!("import.rs")),
         ("languages.rs", include_str!("languages.rs")),
         ("main.rs", include_str!("main.rs")),
         ("menu.rs", include_str!("menu.rs")),
+        ("nvim.rs", include_str!("nvim.rs")),
+        ("paths.rs", include_str!("paths.rs")),
         ("proc.rs", include_str!("proc.rs")),
         ("safe_read.rs", include_str!("safe_read.rs")),
         ("search.rs", include_str!("search.rs")),
@@ -387,6 +397,9 @@ mod tests {
         ("telemetry.rs", include_str!("telemetry.rs")),
         ("testutil.rs", include_str!("testutil.rs")),
         ("traffic.rs", include_str!("traffic.rs")),
+        ("traffic_cmds.rs", include_str!("traffic_cmds.rs")),
+        ("views.rs", include_str!("views.rs")),
+        ("workspace.rs", include_str!("workspace.rs")),
     ];
 
     /// What a key is made of: the catalog's own convention

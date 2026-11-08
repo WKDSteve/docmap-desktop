@@ -184,5 +184,5 @@ engine computes coverage and the summary after it has written the map, so a
 crash in that later part still exits 1 (read from the engine's source, not
 provoked), and the window then shows the run as failed.
 
-- **Module:** `src/main.js`, `src/lib/engine-log.js` (the grouping), `src/lib/log-view.js` (drawing it; `src-tauri/src/main.rs` `generate_command` passes `--lenient`)
+- **Module:** `src/main.js`, `src/lib/engine-log.js` (the grouping), `src/lib/log-view.js` (drawing it; `src-tauri/src/engine.rs` `generate_command` passes `--lenient`)
 - **Tests:** `src/lib/log-view.test.js`, `src/lib/wiring.test.js`; the layout itself is measured in the browser preview with `tools/preview/probe-report.js`

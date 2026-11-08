@@ -37,7 +37,7 @@ No auto-generate loop follows a bulk add — the same restraint
 sequential engine runs would block the window, and **Generate the
 out-of-date ones** already exists to catch every project left without a map.
 
-- **Module:** `src-tauri/src/main.rs` (`inspect_folder`; `import_many`, `import_from_nvim_config` and `add_project` all wrap `add_one`, the in-memory add neither does its own disk I/O for), `src/main.js` (the checklist)
+- **Module:** `src-tauri/src/import.rs` (`inspect_folder`, `import_many`), `src-tauri/src/nvim.rs` (`import_from_nvim_config`) and `src-tauri/src/workspace.rs` (`add_project`; all three wrap `add_one`, the in-memory add neither does its own disk I/O for), `src/main.js` (the checklist)
 - **Usercmds:** File → Add project… → Folder → pick a non-repository directory
 - **Docs:** [USAGE.md](../USAGE.md#adding-a-project)
 

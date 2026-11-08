@@ -154,6 +154,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("err.editor.noFile", "No file was named"),
     ("err.editor.empty", "The editor command is empty"),
     ("err.docs.page", "No such documentation page: {page}"),
+    ("err.docs.query", "Type a word to search the documentation for"),
     ("err.feedback.repo", "No such repository: {repo}"),
     ("err.feedback.topic", "No such feedback topic: {topic}"),
     ("err.window.none", "The main window is gone"),

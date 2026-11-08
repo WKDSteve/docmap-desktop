@@ -22,7 +22,10 @@
     <aside id="sidebar">
       <header>
         <div class="brand">
-        <h1><img src="docmap-desktop.svg" alt="" width="20" height="20" />docmap</h1>
+        <!-- The name is the way to the start: the workspaces, as in the other
+             desktop apps, where the name at the left end leads to the start
+             view. A button inside the heading, so the heading stays one. -->
+        <h1><button id="brand" class="brand-link" type="button" data-i18n-help="brand.hint"><img src="docmap-desktop.svg" alt="" width="20" height="20" />docmap</button></h1>
         <!-- One line, not two, and not translated. The name and the motto
              are the product's own words; a translated subtitle beside an
              untranslated tagline would be the same thing said twice in two
@@ -615,7 +618,28 @@
         A window in front of the maps <strong>docmap.nvim</strong> generates.
       </p>
       <pre id="about-facts" class="fb-env"></pre>
+      <!-- The repository and the license, as the About dialogs of the other
+           desktop apps name them. Buttons, not links: the webview opens
+           nothing by itself, Rust opens the page by name (`open_docs`). -->
+      <p class="about-links">
+        <button id="about-repo" class="linklike" type="button" data-i18n="about.repo">GitHub repository</button>
+        <button id="about-license" class="linklike" type="button" data-i18n="about.license">License: MIT</button>
+      </p>
       <button id="about-copy" class="addbox-go" type="button" data-i18n="about.copy">Copy for a bug report</button>
+    </dialog>
+
+    <dialog id="docsearchbox" class="addbox">
+      <form method="dialog" class="addbox-close-form">
+        <button class="addbox-x" value="cancel" aria-label="Close">&times;</button>
+      </form>
+      <h2 class="addbox-title" data-i18n="docsearch.title">Search the documentation</h2>
+      <p class="addbox-note" data-i18n="docsearch.lead">Searches the README and the documents in docs/ of the repository on GitHub, in the browser.</p>
+      <div class="addbox-row">
+        <input id="docsearch-q" type="search" autocomplete="off" spellcheck="false"
+               aria-label="Words to search for" data-i18n-aria="docsearch.label"
+               placeholder="Words to search for" data-i18n-placeholder="docsearch.label" />
+      </div>
+      <button id="docsearch-go" class="addbox-go" type="button" data-i18n="docsearch.go">Search on GitHub</button>
     </dialog>
 
     <dialog id="prefsbox" class="addbox">

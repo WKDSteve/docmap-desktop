@@ -19,6 +19,7 @@
 // Both side-effect-free, so hoisting them above the `window.__TAURI__`
 // guard below changes nothing about what that guard catches.
 import { withBusyButton } from "./lib/busy-button.js";
+import { closeOnBackdrop } from "./lib/backdrop.js";
 import { nvimImportSummary } from "./lib/nvim-import.js";
 import { lastKey, migrateLastKey } from "./lib/last-selection.js";
 import { createStore } from "./lib/store.js";
@@ -4691,6 +4692,9 @@ const MENU_ACTIONS = {
   "menu.help.about": () => openAbout(),
   "menu.help.usage": () => openDocs("usage"),
   "menu.help.engine": () => openDocs("engine"),
+  "menu.help.docs_search": () => openDocSearch(),
+  "menu.help.repo": () => openDocs("repo"),
+  "menu.help.license": () => openDocs("license"),
 };
 
 /**
@@ -5118,6 +5122,51 @@ async function openDocs(page) {
     say(errorText(e));
   }
 }
+
+document.getElementById("about-repo").addEventListener("click", () => openDocs("repo"));
+document.getElementById("about-license").addEventListener("click", () => openDocs("license"));
+
+// Help -> Search the documentation: the words go to Rust, which opens
+// GitHub's search over this repository's Markdown (`search_docs`).
+const docSearch = {
+  box: document.getElementById("docsearchbox"),
+  q: document.getElementById("docsearch-q"),
+  go: document.getElementById("docsearch-go"),
+};
+
+function openDocSearch() {
+  docSearch.box.showModal();
+  docSearch.q.select();
+}
+
+async function runDocSearch() {
+  const query = docSearch.q.value.trim();
+  if (query === "") {
+    docSearch.q.focus();
+    return;
+  }
+  try {
+    await invoke("search_docs", { query });
+    docSearch.box.close();
+  } catch (e) {
+    say(errorText(e));
+  }
+}
+
+docSearch.go.addEventListener("click", runDocSearch);
+docSearch.q.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter" && !ev.isComposing) {
+    ev.preventDefault();
+    runDocSearch();
+  }
+});
+
+// The name at the top of the sidebar leads to the start: the workspaces.
+document.getElementById("brand").addEventListener("click", () => openWorkspaces());
+
+// A click beside a dialog closes it, the way Escape does, as in the other
+// desktop apps (appkit-ui's closeOnBackdrop, see lib/backdrop.js).
+document.querySelectorAll("dialog").forEach((box) => closeOnBackdrop(box));
 
 /**
  * Hand Rust the labels and the enable state, and let it rebuild the menu.

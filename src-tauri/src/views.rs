@@ -298,22 +298,73 @@ pub(crate) fn open_map_in_browser(app: tauri::AppHandle, id: String) -> Result<S
     Ok(url)
 }
 
-/// Open one of this project's own documentation pages.
+/// The repository this app is built from: the root of every page below.
+const REPO: &str = "https://github.com/WKDSteve/docmap-desktop";
+
+/// The address of one of this project's own pages, by name, or `None`.
 ///
-/// An allowlist of two, not a URL parameter. The webview asks for a *page*
-/// by name and this decides what that means — so nothing the page can say
-/// turns into a browser opening an arbitrary address, which is what a
-/// generic `open_url` command would be.
-#[tauri::command]
-pub(crate) fn open_docs(page: String) -> Result<(), AppError> {
-    const BASE: &str = "https://github.com/WKDSteve/docmap-desktop/blob/main/docs/";
-    let target = match page.as_str() {
-        "usage" => format!("{BASE}USAGE.md"),
+/// An allowlist, not a URL parameter. The webview asks for a *page* by name
+/// and this decides what that means — so nothing the page can say turns
+/// into a browser opening an arbitrary address, which is what a generic
+/// `open_url` command would be.
+pub(crate) fn docs_url(page: &str) -> Option<String> {
+    let base = format!("{REPO}/blob/main/docs/");
+    Some(match page {
+        "usage" => format!("{base}USAGE.md"),
         // The single most common confusion this app produces: that the
         // engine is a separate program this is a window onto.
-        "engine" => format!("{BASE}USAGE.md#the-engine-indicator"),
-        other => return Err(AppError::new("err.docs.page").with("page", other)),
-    };
+        "engine" => format!("{base}USAGE.md#the-engine-indicator"),
+        // The Help menu and the About dialog of the other desktop apps name
+        // the repository and the license; this one does the same.
+        "repo" => REPO.to_string(),
+        "license" => format!("{REPO}/blob/main/LICENSE"),
+        _ => return None,
+    })
+}
+
+/// Open one of this project's own documentation pages (see `docs_url`).
+#[tauri::command]
+pub(crate) fn open_docs(page: String) -> Result<(), AppError> {
+    let target =
+        docs_url(&page).ok_or_else(|| AppError::new("err.docs.page").with("page", &page))?;
+    open_externally(&target)
+}
+
+/// Percent-encode everything but the unreserved characters of RFC 3986, so
+/// a query is one parameter value and never a second parameter or a path.
+pub(crate) fn encode_query(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for byte in text.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+/// The address of GitHub's search over this repository's Markdown (README
+/// and `docs/`) for the words typed, or `None` for no words.
+///
+/// The words only ever land in the value of `q`, encoded, behind a fixed
+/// repository: the page cannot make this open anything but a search here.
+pub(crate) fn docs_search_url(query: &str) -> Option<String> {
+    let words = query.trim();
+    if words.is_empty() {
+        return None;
+    }
+    let q = format!("repo:WKDSteve/docmap-desktop language:Markdown {words}");
+    Some(format!(
+        "https://github.com/search?type=code&q={}",
+        encode_query(&q)
+    ))
+}
+
+/// Search the documentation (Help → Search the documentation…) on GitHub.
+#[tauri::command]
+pub(crate) fn search_docs(query: String) -> Result<(), AppError> {
+    let target = docs_search_url(&query).ok_or_else(|| AppError::new("err.docs.query"))?;
     open_externally(&target)
 }
 
@@ -463,4 +514,52 @@ pub(crate) fn set_menu(
     app.set_menu(built)
         .map_err(|e| AppError::new("err.menu.build").detail(e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_pages_of_the_help_menu_are_an_allowlist_on_this_repository() {
+        assert_eq!(
+            docs_url("repo").as_deref(),
+            Some("https://github.com/WKDSteve/docmap-desktop")
+        );
+        assert_eq!(
+            docs_url("license").as_deref(),
+            Some("https://github.com/WKDSteve/docmap-desktop/blob/main/LICENSE")
+        );
+        assert!(docs_url("usage").unwrap().ends_with("/docs/USAGE.md"));
+        assert_eq!(docs_url("https://example.com"), None);
+        assert_eq!(docs_url(""), None);
+    }
+
+    #[test]
+    fn a_search_puts_the_words_into_the_value_of_q_and_nowhere_else() {
+        let url = docs_search_url("  map & legend#x?y=1/..  ").unwrap();
+        let (base, q) = url.split_once("&q=").unwrap();
+        assert_eq!(base, "https://github.com/search?type=code");
+        // Nothing the words hold can start another parameter, a fragment or a path.
+        assert!(!q.contains(['&', '#', '?', '/', ' ', '=']), "{q}");
+        assert!(
+            q.starts_with(
+                "repo%3AWKDSteve%2Fdocmap-desktop%20language%3AMarkdown%20map%20%26%20legend"
+            ),
+            "{q}"
+        );
+        assert!(q.ends_with("%23x%3Fy%3D1%2F.."), "{q}");
+    }
+
+    #[test]
+    fn a_search_without_words_opens_nothing() {
+        assert_eq!(docs_search_url(""), None);
+        assert_eq!(docs_search_url("   "), None);
+    }
+
+    #[test]
+    fn the_encoding_keeps_letters_of_other_scripts_as_their_utf8_bytes() {
+        assert_eq!(encode_query("Größe"), "Gr%C3%B6%C3%9Fe");
+        assert_eq!(encode_query("a-b_c.d~e"), "a-b_c.d~e");
+    }
 }

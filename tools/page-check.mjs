@@ -100,6 +100,25 @@ try {
       await page.evaluate((name) => document.getElementById(name).close(), id);
     }
   }
+  // Behaviour, not only axe: a click beside a dialog closes it and one inside does not (src/lib/backdrop.js), and the
+  // name at the top leads to the workspaces.
+  const expectThat = (what, ok) => {
+    console.log(`${ok ? 'ok    ' : 'FAILED'} ${what}`);
+    if (!ok) failed.push(what);
+  };
+  const isOpen = (id) => page.evaluate((name) => document.getElementById(name).open, id);
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.evaluate(() => document.getElementById('aboutbox').showModal());
+  await page.locator('#aboutbox h2').click();
+  expectThat('a click inside a dialog keeps it open', await isOpen('aboutbox'));
+  await page.mouse.click(5, 5);
+  expectThat('a click beside a dialog closes it', !(await isOpen('aboutbox')));
+  await page.locator('#brand').click();
+  await page.waitForTimeout(200);
+  expectThat('the name opens the workspaces', await isOpen('wsbox'));
+  await page.mouse.click(5, 5);
+  expectThat('a click beside the workspaces closes them', !(await isOpen('wsbox')));
+
   if (problems.length > 0) {
     console.log(`FAILED errors of the page: ${problems.join('; ')}`);
     failed.push(...problems);

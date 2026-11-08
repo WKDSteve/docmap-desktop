@@ -208,6 +208,68 @@ body.sb-auto #sidebar.peek::after {
   vertical-align: -4px;
 }
 
+/* The name is a button (it leads to the workspaces) that still looks like
+   the name: the hover and the focus draw a line under it and tint it with
+   the accent, the way the brand of appkit-ui does in the other desktop apps.
+   The name never changes its width, so the line grows by a transform. */
+.brand-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  font: inherit;
+  letter-spacing: inherit;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.brand-link::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), transparent);
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+.brand-link:hover:not(:disabled),
+.brand-link:focus-visible {
+  color: var(--accent);
+}
+.brand-link:hover::after,
+.brand-link:focus-visible::after {
+  transform: scaleX(1);
+}
+/* Only the line moves: a colour that fades would be caught half way by a
+   change of theme, in neither theme's contrast. */
+@media (prefers-reduced-motion: no-preference) {
+  .brand-link::after {
+    transition: transform 0.3s ease;
+  }
+}
+
+/* The repository and the license in the About dialog: two quiet links. */
+.about-links {
+  display: flex;
+  gap: 14px;
+  margin: 0 0 10px;
+}
+.linklike {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-size: 12.5px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 /* The motto, and the only line under the name. Not italic and not smaller
    than the rest of the sidebar's secondary text: a motto set in small
    italics reads as a caption apologising for itself, and this one is meant

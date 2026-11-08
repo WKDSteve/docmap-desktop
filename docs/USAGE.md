@@ -941,11 +941,17 @@ decide whether the next action works.
 | | Statistics | |
 | | Sidebar | `Ctrl+B` |
 | | Auto-hide sidebar | |
-| **Help** | Usage · What the engine is · Open the settings folder | |
+| **Help** | Usage · What the engine is · Search the documentation… · Open the settings folder | |
+| | GitHub repository · License: MIT | |
 | | Send feedback… | |
 | | About docmap | |
 
-Project items are greyed when nothing is selected. The menu's design record
+Project items are greyed when nothing is selected. **Search the
+documentation…** asks for words and opens GitHub's search over the README and
+`docs/` of this repository in your browser; the window builds that address
+itself, so the words can only ever be the search. Every dialog closes with
+Escape or with a click beside it, and the name **docmap** at the top of the
+sidebar opens the workspaces. The menu's design record
 (kept with the author's notes, not in this repository) has the rule every one
 of these had to pass, and the review that checked them all against it.
 
@@ -972,7 +978,7 @@ that does not describe it, so About says so rather than quoting a sha that
 would send a reader to the wrong diff.
 
 There is a copy button, because the whole point of the block is a bug
-report.
+report, and the links to the repository and its license.
 
 ## Sending feedback
 

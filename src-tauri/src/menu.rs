@@ -198,7 +198,11 @@ const GROUPS: &[Group] = &[
         items: &[
             item("menu.help.usage", None, false),
             item("menu.help.engine", None, false),
+            item("menu.help.docs_search", None, false),
             item("menu.help.settings_folder", None, false),
+            Node::Separator,
+            item("menu.help.repo", None, false),
+            item("menu.help.license", None, false),
             Node::Separator,
             item("menu.help.feedback", None, false),
             Node::Separator,

@@ -160,6 +160,7 @@ fn main() {
             views::reveal_project,
             views::reveal_settings,
             views::open_docs,
+            views::search_docs,
             views::set_zoom,
             views::set_window_title,
             views::open_feedback,

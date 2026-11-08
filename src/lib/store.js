@@ -21,8 +21,6 @@ export function createStore(initial) {
   const values = { ...initial };
   /** @type {Map<string, Set<(value: any, old: any, key: string) => void>>} */
   const listeners = new Map();
-  /** @type {Set<(key: string, value: any, old: any) => void>} */
-  const any = new Set();
   let depth = 0;
   /** @type {Map<string, [any, any]>} */
   let pending = new Map();
@@ -37,7 +35,6 @@ export function createStore(initial) {
       }
     };
     for (const fn of [...(listeners.get(key) ?? [])]) run(() => fn(value, old, key));
-    for (const fn of [...any]) run(() => fn(key, value, old));
     if (first) throw first.error;
   }
 
@@ -85,8 +82,12 @@ export function createStore(initial) {
      */
     batch(fn) {
       depth += 1;
+      let failed = false;
       try {
         return fn();
+      } catch (e) {
+        failed = true;
+        throw e;
       } finally {
         depth -= 1;
         if (depth === 0) {
@@ -101,7 +102,8 @@ export function createStore(initial) {
               if (first === null) first = { error: e };
             }
           }
-          if (first) throw first.error;
+          // A throw here would replace the error of `fn`, which is the one that matters.
+          if (first && !failed) throw first.error;
         }
       }
     },

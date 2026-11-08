@@ -96,3 +96,20 @@ test("a nested batch reports once, when the outer one ends", () => {
   });
   assert.deepEqual(seen, [3]);
 });
+
+test("a batch that throws reports its own error, not that of a subscriber", () => {
+  const store = createStore({ a: 1 });
+  store.subscribe("a", () => {
+    throw new Error("subscriber");
+  });
+  assert.throws(
+    () =>
+      store.batch(() => {
+        store.state.a = 2;
+        throw new Error("batch");
+      }),
+    /batch/,
+  );
+  // Without an error of its own, the batch still tells of a broken subscriber.
+  assert.throws(() => store.batch(() => (store.state.a = 3)), /subscriber/);
+});

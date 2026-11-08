@@ -15,6 +15,7 @@ import {
   compareTraffic,
   githubUrl,
 } from "./traffic.js";
+import { MAIN_RS } from "./rust-main.js";
 
 const here = fileURLToPath(new URL(".", import.meta.url));
 const MAIN = readFileSync(here + "../main.js", "utf8");
@@ -229,7 +230,7 @@ test("the fifth sort order is offered and handled", () => {
 });
 
 test("the traffic commands the window calls are the ones the backend registers", () => {
-  const rust = readFileSync(here + "../../src-tauri/src/main.rs", "utf8");
+  const rust = MAIN_RS;
   const called = new Set([...MAIN.matchAll(/invoke\("(traffic_[a-z_]+)"/g)].map((m) => m[1]));
   assert.ok(called.size >= 5, `expected the traffic calls, found ${called.size}`);
   for (const name of called) {
@@ -305,7 +306,7 @@ test("a top-page row is a link only when the Rust side resolved project_path", (
 });
 
 test("open_in_editor and traffic_detail are the commands the dialog calls, and both are registered", () => {
-  const rust = readFileSync(here + "../../src-tauri/src/main.rs", "utf8");
+  const rust = MAIN_RS;
   const start = MAIN.indexOf("// The traffic detail dialog");
   assert.ok(start > 0, "the detail dialog's section should be marked");
   const section = MAIN.slice(start, MAIN.indexOf("\n// ====", start));

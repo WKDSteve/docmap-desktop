@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { MAIN_RS } from "./rust-main.js";
 
 // A dialog's own action has to be on screen when the dialog opens.
 //
@@ -74,14 +75,14 @@ test("only the dialog's own action is pinned, not every button that shares the c
 // fails the same way when it drifts — silently, in the running window.
 
 const MAIN = readFileSync(new URL("../main.js", import.meta.url), "utf8");
-const RUST = readFileSync(new URL("../../src-tauri/src/main.rs", import.meta.url), "utf8");
+const RUST = MAIN_RS;
 
 test("the grammar_dir command is defined and registered", () => {
   assert.ok(MAIN.includes('invoke("grammar_dir")'), "main.js should ask for it");
   assert.ok(RUST.includes("fn grammar_dir("), "grammar_dir should be defined");
   // Defined is not enough: an unregistered command compiles and fails at
   // the call.
-  assert.ok(/^\s*grammar_dir,$/m.test(RUST), "grammar_dir should be in the invoke_handler list");
+  assert.ok(/^\s*(?:[a-z_]+::)?grammar_dir,$/m.test(RUST), "grammar_dir should be in the invoke_handler list");
 });
 
 test("both places the diagnosis is written to exist in the markup", () => {

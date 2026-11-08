@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import { keys, keysOf } from "./i18n.js";
+import { MAIN_RS } from "./rust-main.js";
 
 // The per-project settings dialog is markup in `index.html`, behaviour in
 // `main.js` and storage in `main.rs`, joined by nothing but string equality:
@@ -16,7 +17,7 @@ import { keys, keysOf } from "./i18n.js";
 
 const HTML = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const MAIN = readFileSync(new URL("../main.js", import.meta.url), "utf8");
-const RUST = readFileSync(new URL("../../src-tauri/src/main.rs", import.meta.url), "utf8");
+const RUST = MAIN_RS;
 
 /** Every `document.getElementById("…")` in `main.js` that names a scope id. */
 function scopeIdsUsed() {
@@ -49,7 +50,7 @@ test("both Tauri commands the dialog calls are registered in Rust", () => {
     // Defined is not enough — an unregistered command compiles and then
     // fails at the call, which is the failure this line exists for.
     assert.ok(
-      new RegExp(`^\\s*${cmd},$`, "m").test(RUST),
+      new RegExp(`^\\s*(?:[a-z_]+::)?${cmd},$`, "m").test(RUST),
       `${cmd} should be in the invoke_handler list`
     );
   }

@@ -204,20 +204,78 @@ impl Engine for CliEngine {
         // A file, not stdin (the engine's own choice: a host that forgets to
         // close a pipe would leave it waiting for ever). Removed when done.
         let file = TempAnswer::write(answer)?;
-        let v = self.call(
-            root,
-            "rules/validate",
-            &[
-                format!("--select={rule}"),
-                format!("--answer={}", file.path().display()),
-            ],
-        )?;
-        unavailable(&v)?;
+        let v = self
+            .call(
+                root,
+                "rules/validate",
+                &[
+                    format!("--select={rule}"),
+                    format!("--answer={}", answer_arg(file.path()).display()),
+                ],
+            )
+            .and_then(|v| unavailable(&v).map(|()| v))
+            .map_err(answer_unreadable)?;
         v.get("proposal")
             .cloned()
             .filter(Value::is_object)
             .ok_or_else(|| AppError::new("err.agent.engineShape"))
     }
+}
+
+/// The path the engine is told for the answer file.
+///
+/// The bundled engine reads its arguments through the ANSI code page on Windows, so a temp folder with a character
+/// outside it (a user name with `中`) made every answer unreadable. Such a path goes in its 8.3 form, which is plain
+/// ASCII (`C:\Users\5E2D~1\...`). Where there is none (8.3 names switched off on the drive) it stays as it is, and
+/// the engine's "cannot be read" stops the run ([`answer_unreadable`]). A relative name beside a working directory
+/// does not help: the engine changes its directory while it walks the project and finds its way back through the
+/// same code page.
+fn answer_arg(path: &Path) -> std::path::PathBuf {
+    if path.to_str().is_some_and(str::is_ascii) {
+        return path.to_path_buf();
+    }
+    short_ascii(path).unwrap_or_else(|| path.to_path_buf())
+}
+
+/// The 8.3 form of an existing `path`, when it is plain ASCII.
+#[cfg(windows)]
+fn short_ascii(path: &Path) -> Option<std::path::PathBuf> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetShortPathNameW(long: *const u16, short: *mut u16, len: u32) -> u32;
+    }
+
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut buf = vec![0u16; 1024];
+    let cap = u32::try_from(buf.len()).ok()?;
+    // SAFETY: `wide` is NUL-terminated and lives through the call; `buf` holds `cap` u16s, and the call writes at
+    // most that many (a buffer too small gets nothing written and the size it needs returned instead).
+    let n = unsafe { GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), cap) } as usize;
+    if n == 0 || n >= buf.len() {
+        return None;
+    }
+    let short = std::path::PathBuf::from(std::ffi::OsString::from_wide(&buf[..n]));
+    short.to_str().is_some_and(str::is_ascii).then_some(short)
+}
+
+#[cfg(not(windows))]
+fn short_ascii(_path: &Path) -> Option<std::path::PathBuf> {
+    None
+}
+
+/// An engine that could not read the answer it was handed did not check the rule: that is the hand-over failing, not
+/// a finding, and the run must not count the batch as done.
+fn answer_unreadable(e: AppError) -> AppError {
+    let unread = e
+        .detail_text()
+        .is_some_and(|d| d.contains("the answer file cannot be read"));
+    if e.key() == "err.agent.engine" && unread {
+        let detail = e.detail_text().unwrap_or_default().to_string();
+        return AppError::new("err.agent.answerUnreadable").detail(detail);
+    }
+    e
 }
 
 /// An answer on disk for the length of one `rules/validate` call.
@@ -289,6 +347,50 @@ mod tests {
         assert_eq!(e.detail_text(), Some("the selection matches no rule"));
         let e = Plan::from_engine(&json!({"batches": []})).unwrap_err();
         assert_eq!(e.key(), "err.agent.engine");
+    }
+
+    #[test]
+    fn a_plain_path_goes_as_it_is() {
+        let file = TempAnswer::write("{}").unwrap();
+        if file.path().to_str().is_some_and(str::is_ascii) {
+            assert_eq!(answer_arg(file.path()), file.path());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_path_outside_the_code_page_goes_in_its_short_ascii_form() {
+        let dir = std::env::temp_dir().join(format!("docmap-中-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("docmap-answer-1.txt");
+        std::fs::write(&file, "{}").unwrap();
+        let arg = answer_arg(&file);
+        let text = std::fs::read_to_string(&arg);
+        let short = short_ascii(&file);
+        let _ = std::fs::remove_dir_all(&dir);
+        match short {
+            // 8.3 names are on (the default on the system drive): ASCII, and it is the same file
+            Some(_) => {
+                assert!(arg.to_str().is_some_and(str::is_ascii), "{}", arg.display());
+                assert_eq!(text.unwrap(), "{}");
+            }
+            // switched off on this drive: the path stays, the engine's refusal stops the run
+            None => assert_eq!(arg, file),
+        }
+    }
+
+    #[test]
+    fn an_answer_the_engine_cannot_read_is_its_own_error() {
+        let e = answer_unreadable(
+            AppError::new("err.agent.engine").detail("the answer file cannot be read: x.txt"),
+        );
+        assert_eq!(e.key(), "err.agent.answerUnreadable");
+        assert_eq!(
+            e.detail_text(),
+            Some("the answer file cannot be read: x.txt")
+        );
+        let other = answer_unreadable(AppError::new("err.agent.engine").detail("no rule A-9"));
+        assert_eq!(other.key(), "err.agent.engine");
     }
 
     #[test]

@@ -144,6 +144,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("err.agent.engine", "The docmap engine could not plan or check the rules"),
     ("err.agent.engineOld", "{engine} is a docmap engine without the rules agent. Rebuild it from docmap.nvim, or point at a newer one"),
     ("err.agent.engineShape", "The docmap engine answered the rules agent with something unexpected"),
+    ("err.agent.answerUnreadable", "The docmap engine could not read the model's answer, so no rule of the batch was checked. The batch stays to do: resume the run"),
     ("err.agent.noRun", "No such run: {id}"),
     ("err.agent.running", "Run {id} is already working"),
     ("err.agent.notResumable", "Run {id} cannot be resumed: it was cancelled or is finished"),

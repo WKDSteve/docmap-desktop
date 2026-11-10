@@ -739,8 +739,15 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
         // came in meanwhile, so its rules are checked before the queue ends.
         let ids: Vec<String> = pb.rules.iter().map(|r| r.id.clone()).collect();
         let hashes = rule_hashes(&pb.prompt, &ids);
+        let mut handover: Option<AppError> = None;
         for id in &ids {
             let outcome = ctx.engine.validate(&ctx.root, id, &text);
+            if let Err(e) = &outcome {
+                if e.key() == "err.agent.answerUnreadable" {
+                    handover = Some(e.clone());
+                    break;
+                }
+            }
             run.set_proposal(proposal_of(
                 outcome,
                 id,
@@ -748,6 +755,15 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
                 &key,
                 hashes.get(id).cloned(),
             ));
+        }
+        // The answer never reached the engine: no rule was checked, and every rule of every batch would end the same
+        // way. The batch is not done (it stays to do, its paid answer is in the cache) and the run stops, saying why.
+        if let Some(e) = handover {
+            run.batches[i].state = BatchState::Queued;
+            run.error = Some(wire(&e));
+            fatal = true;
+            let _ = persist(&store, &mut run, stop);
+            break;
         }
         let b = &mut run.batches[i];
         b.state = BatchState::Done;
@@ -830,6 +846,8 @@ mod tests {
         lie: AtomicBool,
         /// The rule whose validation fails.
         fail: Mutex<Option<String>>,
+        /// Every validate fails as an engine that cannot read the answer file does.
+        unreadable: AtomicBool,
     }
 
     impl FakeEngine {
@@ -840,6 +858,7 @@ mod tests {
                 selections: Mutex::new(Vec::new()),
                 lie: AtomicBool::new(false),
                 fail: Mutex::new(None),
+                unreadable: AtomicBool::new(false),
             })
         }
     }
@@ -855,6 +874,10 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((rule.to_string(), answer.to_string()));
+            if self.unreadable.load(Ordering::SeqCst) {
+                return Err(AppError::new("err.agent.answerUnreadable")
+                    .detail("the answer file cannot be read: docmap-answer-1.txt"));
+            }
             if self.fail.lock().unwrap().as_deref() == Some(rule) {
                 return Err(AppError::new("err.agent.engine").detail("boom"));
             }
@@ -1428,6 +1451,48 @@ mod tests {
         assert_eq!(bad.proposal["verified"], false);
         let good = done.proposals.iter().find(|p| p.rule_id == "R1-2").unwrap();
         assert_eq!(good.status, "violation");
+        wait_idle(&runner);
+    }
+
+    #[test]
+    fn an_answer_the_engine_cannot_read_stops_the_run_and_leaves_the_batch_to_do() {
+        let root = fresh_dir("docmap-agent-run-answer-unreadable");
+        let fake = Fake::start(|s| ok_reply(&prompt_of(s)));
+        let engine = FakeEngine::new(plan_of(2, &[]));
+        engine.unreadable.store(true, Ordering::SeqCst);
+        let runner = Runner::default();
+        let run = runner
+            .start(
+                &root,
+                start_args("llama3"),
+                engine.clone(),
+                client_of(&fake),
+            )
+            .unwrap();
+        let failed = wait_state(&runner, &root, &run.id, RunState::Failed);
+        assert_eq!(
+            failed.error.as_ref().unwrap()["key"],
+            "err.agent.answerUnreadable"
+        );
+        assert_eq!(
+            failed.batches[0].state,
+            BatchState::Queued,
+            "not done: no rule was checked"
+        );
+        assert!(
+            failed.proposals.is_empty(),
+            "no rule of it became an error proposal"
+        );
+        assert_eq!(
+            engine.validated.lock().unwrap().len(),
+            1,
+            "one try was enough to know"
+        );
+        assert_ne!(
+            failed.batches[1].state,
+            BatchState::Done,
+            "the run did not go on"
+        );
         wait_idle(&runner);
     }
 

@@ -738,7 +738,7 @@ mod tests {
                     batch: format!("b{b}"),
                     status: "error".into(),
                     error: Some(
-                        serde_json::json!({ "key": "err.agent.answerShape", "detail": raw }),
+                        serde_json::json!({ "key": "err.agent.engine", "detail": raw }),
                     ),
                     ..Default::default()
                 });

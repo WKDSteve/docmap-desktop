@@ -699,6 +699,68 @@ mod tests {
         assert_eq!(s.load("../x").unwrap_err().key(), "err.agent.noRun");
     }
 
+    /// The cost of the record of a large run, written as the runner writes it: three saves per batch
+    /// (asking, paid, done), eight rules per batch, and every answer kept as 10 KB of raw text in the
+    /// error of each rule (an answer that is no JSON). Not a check, a measurement:
+    /// `cargo test --release -- --ignored --nocapture measure_the_record_of_a_large_run`.
+    #[test]
+    #[ignore = "a measurement, minutes of disk writes"]
+    fn measure_the_record_of_a_large_run() {
+        let dir = fresh_dir("docmap-agent-store-measure");
+        let s = Store::new(&dir);
+        let raw = "x".repeat(10 * 1024);
+        let mut run = Run {
+            id: "big".into(),
+            ..Default::default()
+        };
+        let (batches, rules) = (200, 8);
+        for b in 0..batches {
+            run.batches.push(BatchRec {
+                id: format!("b{b}"),
+                ..Default::default()
+            });
+        }
+        let started = std::time::Instant::now();
+        let mut written = 0u64;
+        let mut save = |run: &Run| {
+            s.save(run).unwrap();
+            written += fs::metadata(dir.join(DIR).join("big").join("run.json"))
+                .unwrap()
+                .len();
+        };
+        for b in 0..batches {
+            run.batches[b].state = BatchState::Asking;
+            save(&run);
+            save(&run);
+            for r in 0..rules {
+                run.set_proposal(ProposalRec {
+                    rule_id: format!("R-{b}-{r}"),
+                    batch: format!("b{b}"),
+                    status: "error".into(),
+                    error: Some(
+                        serde_json::json!({ "key": "err.agent.answerShape", "detail": raw }),
+                    ),
+                    ..Default::default()
+                });
+            }
+            run.batches[b].state = BatchState::Done;
+            save(&run);
+        }
+        let elapsed = started.elapsed();
+        let size = fs::metadata(dir.join(DIR).join("big").join("run.json"))
+            .unwrap()
+            .len();
+        let listed = std::time::Instant::now();
+        assert_eq!(s.list().len(), 1);
+        eprintln!(
+            "MEASURE batches={batches} rules={rules} final={:.1} MB written={:.2} GB in {:.1} s; list {:.0} ms",
+            size as f64 / 1e6,
+            written as f64 / 1e9,
+            elapsed.as_secs_f64(),
+            listed.elapsed().as_secs_f64() * 1e3
+        );
+    }
+
     #[test]
     fn a_run_survives_a_round_trip_and_lists_newest_first() {
         let dir = fresh_dir("docmap-agent-store-roundtrip");

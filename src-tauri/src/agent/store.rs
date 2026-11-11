@@ -737,9 +737,7 @@ mod tests {
                     rule_id: format!("R-{b}-{r}"),
                     batch: format!("b{b}"),
                     status: "error".into(),
-                    error: Some(
-                        serde_json::json!({ "key": "err.agent.engine", "detail": raw }),
-                    ),
+                    error: Some(serde_json::json!({ "key": "err.agent.engine", "detail": raw })),
                     ..Default::default()
                 });
             }

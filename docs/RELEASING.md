@@ -193,6 +193,15 @@ green `CI` run on `main` it builds the NSIS setup of exactly that commit (with t
 fixed name `docmap-desktop-windows-x86_64-setup.exe`, and replaces the files of `latest` with the script and
 `SHA256SUMS`. It is for trying the newest state, not a release. Only the tip of `main` is built.
 
+**Tauri smoke.** Before the installer goes up, the rolling build opens the real window of exactly that build
+(`scripts/e2e/tauri_smoke.mjs`: title, rendered page, size, a screenshot as the artifact `tauri-smoke-windows`). It
+needs `tauri-driver` (`cargo install tauri-driver --locked`) and an `msedgedriver` of the installed WebView2 on the
+runner's PATH, installed once (the driver from `msedgedriver.microsoft.com/<version>/edgedriver_win64.zip`, its
+Authenticode signature checked; the WebView2 version is `pv` under the EdgeUpdate client
+`{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}`). After a WebView2 update the driver has to follow, or the smoke fails at
+the session. A missing tool is a reported skip (exit 77), a warning on the run; a failed check stops the rolling
+build.
+
 **The kit is pinned in one place.** `tools/release-kit.pin` names the tag and the commit; the `uses:` lines of
 both workflows are that commit, and `tools/check-release-kit-pin.py` (CI job `tokens`) fails when they differ or
 when the tag was moved. To move to another kit tag: change the pin file and the `uses:` lines together. The

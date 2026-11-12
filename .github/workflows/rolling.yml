@@ -88,6 +88,32 @@ jobs:
       - name: Build the installer
         run: npx --yes @tauri-apps/cli@2.12.4 build --bundles nsis
 
+      # Tier 3: the real window of exactly this build, through tauri-driver and an msedgedriver of the installed
+      # WebView2 (both on the runner's PATH, installed once: docs/RELEASING.md "Tauri smoke"). A missing tool is a
+      # reported skip (exit 77), shown as a warning; a failed check stops the rolling build. Only here, on the push of
+      # main and the self-hosted runner: a hosted runner would need a release build of its own.
+      - name: Smoke the window (tauri-driver)
+        env:
+          DOCMAP_E2E_OUT: ${{ runner.temp }}/e2e
+        run: |
+          set +e
+          node scripts/e2e/tauri_smoke.mjs src-tauri/target/release/docmap-desktop.exe
+          code=$?
+          set -e
+          if [ "$code" -eq 77 ]; then
+            echo "::warning title=tauri smoke::skipped, a tool is missing on the runner (the line above names it)"
+            exit 0
+          fi
+          exit "$code"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: tauri-smoke-windows
+          path: ${{ runner.temp }}/e2e/*.png
+          if-no-files-found: ignore
+          retention-days: 14
+
       # The one installer of this platform, under the fixed name of the rolling build.
       - name: Name the installer
         run: |

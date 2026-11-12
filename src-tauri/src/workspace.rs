@@ -369,13 +369,26 @@ pub(crate) fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
 }
 
 /// The choice of [`config_dir`], without the app: an empty variable counts
-/// as unset.
+/// as unset. A relative value is an error, not a fallback: it would land
+/// relative to whatever the working directory is (System32 for an app the
+/// shell started), and a test run that meant a folder of its own must never
+/// quietly write into the user's real config instead.
 pub(crate) fn config_dir_from(
     over: Option<std::ffi::OsString>,
     fallback: impl FnOnce() -> Result<PathBuf, AppError>,
 ) -> Result<PathBuf, AppError> {
     match over {
-        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
+        Some(dir) if !dir.is_empty() => {
+            let dir = PathBuf::from(dir);
+            if dir.is_absolute() {
+                Ok(dir)
+            } else {
+                Err(AppError::new("err.config.noDir").detail(format!(
+                    "{CONFIG_DIR_ENV} must be an absolute path, not {}",
+                    dir.display()
+                )))
+            }
+        }
         _ => fallback(),
     }
 }
@@ -1050,11 +1063,21 @@ mod config_dir_tests {
     #[test]
     fn the_variable_moves_the_config_dir_and_empty_counts_as_unset() {
         let fallback = || Ok(PathBuf::from("real"));
-        let moved = config_dir_from(Some("fake".into()), fallback).expect("a dir");
-        assert_eq!(moved, PathBuf::from("fake"));
+        let abs = std::env::temp_dir().join("docmap-fake-config");
+        let moved = config_dir_from(Some(abs.clone().into()), fallback).expect("a dir");
+        assert_eq!(moved, abs);
         let unset = config_dir_from(None, fallback).expect("a dir");
         assert_eq!(unset, PathBuf::from("real"));
         let empty = config_dir_from(Some("".into()), fallback).expect("a dir");
         assert_eq!(empty, PathBuf::from("real"));
+    }
+
+    #[test]
+    fn a_relative_config_dir_is_refused_not_resolved_or_replaced() {
+        let fallback = || Ok(PathBuf::from("real"));
+        for relative in ["fake", "./fake", "sub/fake"] {
+            let refused = config_dir_from(Some(relative.into()), fallback);
+            assert!(refused.is_err(), "{relative} must be refused");
+        }
     }
 }

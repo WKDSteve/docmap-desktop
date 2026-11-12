@@ -229,8 +229,9 @@ node --test src/lib/*.test.js
 The real window has test sheets of testing.nvim (`TESTS/sheets/`, engine
 `webview`: the page in the WebView2, through tauri-driver and msedgedriver).
 `.testing.lua` builds the release binary and starts it against folders of the
-run, never your own: `DOCMAP_DESKTOP_CONFIG_DIR` moves the app's config
-directory (projects, workspaces, clones), `WEBVIEW2_USER_DATA_FOLDER` the
+run, never your own: `DOCMAP_DESKTOP_CONFIG_DIR` (an absolute path; a
+relative one is refused) moves the app's config directory (projects,
+workspaces, clones), `WEBVIEW2_USER_DATA_FOLDER` the
 page's storage, `LOCALAPPDATA` the Neovim folders it reads. Not part of CI (the
 window needs a desktop):
 

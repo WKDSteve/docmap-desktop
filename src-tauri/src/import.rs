@@ -181,11 +181,7 @@ pub(crate) fn import_many(
 /// directory `workspace.json` lives in, not the system temp dir: a clone
 /// this app made is something to keep and reopen, not scratch space.
 pub(crate) fn repos_cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::new("err.config.noDir").detail(e))?
-        .join("repos");
+    let dir = crate::workspace::config_dir(app)?.join("repos");
     fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;
     Ok(dir)
 }

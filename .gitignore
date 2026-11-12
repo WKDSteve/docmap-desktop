@@ -15,6 +15,9 @@
 /node_modules/
 /tools/page-check/node_modules/
 
+# Pictures of the test sheets (testing.nvim), made by every run
+/TESTS/sheets/out/
+
 # Editor / OS
 .DS_Store
 Thumbs.db

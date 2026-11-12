@@ -353,12 +353,35 @@ pub(crate) fn workspace_file_name(name: &str) -> String {
     }
 }
 
+/// The variable that moves the whole app-config directory: a test sheet
+/// (testing.nvim, `sheets.apps` of `.testing.lua`) starts the app against a
+/// folder of its run, never against the user's projects and settings.
+pub(crate) const CONFIG_DIR_ENV: &str = "DOCMAP_DESKTOP_CONFIG_DIR";
+
+/// `app_config_dir`, unless `DOCMAP_DESKTOP_CONFIG_DIR` names another one.
+/// Every file of the app's own lives below this.
+pub(crate) fn config_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
+    config_dir_from(std::env::var_os(CONFIG_DIR_ENV), || {
+        app.path()
+            .app_config_dir()
+            .map_err(|e| AppError::new("err.config.noDir").detail(e))
+    })
+}
+
+/// The choice of [`config_dir`], without the app: an empty variable counts
+/// as unset.
+pub(crate) fn config_dir_from(
+    over: Option<std::ffi::OsString>,
+    fallback: impl FnOnce() -> Result<PathBuf, AppError>,
+) -> Result<PathBuf, AppError> {
+    match over {
+        Some(dir) if !dir.is_empty() => Ok(PathBuf::from(dir)),
+        _ => fallback(),
+    }
+}
+
 pub(crate) fn workspaces_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::new("err.config.noDir").detail(e))?
-        .join("workspaces");
+    let dir = config_dir(app)?.join("workspaces");
     fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;
     Ok(dir)
 }
@@ -402,10 +425,7 @@ pub fn workspace_names(app: &tauri::AppHandle) -> Result<Vec<String>, AppError> 
 /// app has no business writing into Program Files, and a portable copy on a
 /// USB stick should still find the same list on the same machine.
 pub(crate) fn workspace_path(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::new("err.config.noDir").detail(e))?;
+    let dir = config_dir(app)?;
     fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;
     Ok(dir.join("workspace.json"))
 }
@@ -1021,4 +1041,20 @@ pub(crate) fn delete_workspace(
         .map_err(|e| path_err("err.path.write", &settings_path, e))?;
 
     list_workspaces(app)
+}
+
+#[cfg(test)]
+mod config_dir_tests {
+    use super::*;
+
+    #[test]
+    fn the_variable_moves_the_config_dir_and_empty_counts_as_unset() {
+        let fallback = || Ok(PathBuf::from("real"));
+        let moved = config_dir_from(Some("fake".into()), fallback).expect("a dir");
+        assert_eq!(moved, PathBuf::from("fake"));
+        let unset = config_dir_from(None, fallback).expect("a dir");
+        assert_eq!(unset, PathBuf::from("real"));
+        let empty = config_dir_from(Some("".into()), fallback).expect("a dir");
+        assert_eq!(empty, PathBuf::from("real"));
+    }
 }

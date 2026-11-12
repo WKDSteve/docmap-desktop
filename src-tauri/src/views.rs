@@ -392,10 +392,7 @@ pub(crate) fn reveal_project(app: tauri::AppHandle, id: String) -> Result<(), Ap
 /// retype.
 #[tauri::command]
 pub(crate) fn reveal_settings(app: tauri::AppHandle) -> Result<(), AppError> {
-    let dir = app
-        .path()
-        .app_config_dir()
-        .map_err(|e| AppError::new("err.config.noDir").detail(e))?;
+    let dir = crate::workspace::config_dir(&app)?;
     fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;
     open_externally(&dir.to_string_lossy())
 }

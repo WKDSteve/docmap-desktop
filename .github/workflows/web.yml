@@ -85,8 +85,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-      # docmap-web holds nothing but the built page, its sum and the notices. A page that did not change is not
-      # committed again.
+      # docmap-web holds nothing but the built page, its sum, the notices, and the README and license this repository
+      # keeps for it (web/pages/README.md, LICENSE): an empty docmap-web is enough to start from. A page that did not
+      # change is not committed again. The push names the branch, so the first commit of an empty repository lands on
+      # main whatever the runner's git calls a new branch.
       - name: publish to docmap-web
         run: |
           sha="$(git rev-parse --short HEAD)"
@@ -95,12 +97,14 @@ jobs:
           git clone --quiet https://github.com/WKDSteve/docmap-web "$publish"
           cp web/dist/docmap.html "$publish/docmap.html"
           cp web/THIRD-PARTY-NOTICES.md "$publish/THIRD-PARTY-NOTICES.md"
+          cp web/pages/README.md "$publish/README.md"
+          cp LICENSE "$publish/LICENSE"
           cd "$publish"
           sha256sum *.html > SHA256SUMS
-          git add docmap.html SHA256SUMS THIRD-PARTY-NOTICES.md
+          git add docmap.html SHA256SUMS THIRD-PARTY-NOTICES.md README.md LICENSE
           if git diff --cached --quiet; then
             echo "docmap.html is the same as the published one"
           else
             git commit --quiet -m "docmap.html, built from docmap-desktop@$sha ($GITHUB_REF_NAME)"
-            git push --quiet origin HEAD
+            git push --quiet origin HEAD:main
           fi

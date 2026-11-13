@@ -299,3 +299,17 @@ starts, and whether **Show all** keeps the keyboard focus (it closes the
 workspaces dialog the preview opens at start, which makes the page inert, and
 reports `focusKept: null` if `focus()` still had no effect). It is a layout check only: what the
 commands do is looked at in the installed app.
+
+<!-- connections:begin (written by the app-icons tool of the workshop; change integrations.json there, not this block) -->
+## Connections
+
+![docmap-desktop: what it uses and what uses it](assets/graphs/docmap-desktop.png)
+
+**Uses**
+
+- [docmap.nvim](https://github.com/WKDSteve/docmap.nvim): The engine of docmap-desktop is docmap.nvim, pinned in `engine.lock`: the map is the same one, browsed in a window of its own. ([picture](assets/graphs/pair/docmap-desktop--docmap.nvim.png))
+
+**Used by**
+
+- [hub-desktop](https://github.com/WKDSteve/hub-desktop): hub-desktop shows docmap-desktop as a tile and starts it. ([picture](assets/graphs/pair/hub-desktop--docmap-desktop.png))
+<!-- connections:end -->

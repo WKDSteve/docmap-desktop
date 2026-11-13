@@ -144,3 +144,18 @@ One place for "disable, swap label, run, restore", instead of that pattern
 hand-rolled at every call site that starts something slow.
 
 - **Module:** `src/lib/busy-button.js`
+
+## The web variant
+
+The same window as one HTML file opened from disk, for a machine on which
+nothing may be installed: no program, no server, no request. The page of the
+app is taken as it is; a shell answers its commands in the browser, the
+engine runs in a Lua VM in a worker, and a project is a folder picked in the
+browser and read only. A map is generated in memory; one that lies in the
+folder is shown as it is. What needs a program is not offered, and the page
+says so in a strip under its menu bar. [`WEB.md`](../WEB.md) is the manual.
+
+- **Module:** `web/src/shell.js` (the bridge and the strip), `web/src/backend.js` (the commands), `web/src/menubar.js`, `web/src/engine.js` with `web/src/lua/host.lua` and `web/src/worker.js` (the engine), `web/src/folder-read.js`, `web/src/vmfs.js`
+- **Config:** `engine.lock` (`commit`, `lib_commit`: the sources in the page); `web/build.mjs` (the parts and the policy of the file, `pnpm build` writes `web/dist/docmap.html`); `.github/workflows/web.yml` publishes it to `WKDSteve/docmap-web`
+- **Tests:** `web/test/` (Node: the engine in the VM, the commands, the build), `web/e2e/` (the built file opened from disk in Chrome)
+- **Docs:** `docs/WEB.md`

@@ -35,6 +35,7 @@ for that project.
 ## Table of content
 
 - [Get the app](#get-the-app)
+- [In the browser, without installing](#in-the-browser-without-installing)
 - [Why this exists as its own program](#why-this-exists-as-its-own-program)
 - [What already exists, and what this adds](#what-already-exists-and-what-this-adds)
 - [Status](#status)
@@ -84,6 +85,26 @@ setup or the install line: all three are the same per-user setup); your settings
 
 You will also need `docmap.nvim`'s standalone engine binary — this
 app runs it, it does not replace it. See [The engine](#the-engine).
+
+## In the browser, without installing
+
+For a machine on which nothing may be installed or run there is the **web variant**: the same window as one HTML
+file, `docmap.html`, opened from disk in Chrome or Edge. No program, no server, no request to anywhere; the engine
+of docmap.nvim runs inside the page, and a project is a folder you pick in the browser.
+
+```
+git clone https://github.com/WKDSteve/docmap-web
+```
+
+Open `docmap.html` from that folder (`file:///C:/repos/docmap-web/docmap.html`), choose **Add project…** and pick a
+folder. The page reads the folder and writes nothing into it: a map you generate lives in the tab, a map that
+already lies in the folder is shown as it is. After a restart of the browser one click (**Allow access**) lets it
+read your folders again.
+
+What it has not, because there is no program behind it: function-level facts in a map generated there (no parser),
+the git history, telemetry of a Neovim session, rule runs with an agent, statistics, opening a file in your editor,
+cloning from a URL and anything from GitHub. The page says so itself, in the strip under its menu bar.
+[docs/WEB.md](docs/WEB.md) has the whole comparison, the limits, what the page can reach, and how it is built.
 
 ## Why this exists as its own program
 
@@ -173,6 +194,7 @@ a user or a contributor needs.
 | [docs/FEATURES/](docs/FEATURES/README.md) | The catalogue, by theme: the workspace model, running the engine, the window, settings, and the desktop parts. What it does, with the module behind each — the same shape the Neovim siblings use, so one reader can move between all three repositories. |
 | [docs/USAGE.md](docs/USAGE.md) | Using it, button by button: adding projects, workspaces, the project picker and its five sort orders, GitHub traffic, the files pane, opening a file in your editor, the four Generate commands, settings and per-project settings, the notes that appear over some panels, the menu bar, and where everything is stored. |
 | [docmap.nvim/docs/ecosystem.md](https://github.com/WKDSteve/docmap.nvim/blob/main/docs/ecosystem.md) | **The architecture, and it is not in this repository.** Where docs, static analysis and runtime each belong, and why `runtime-analysis.nvim` is a separate plugin rather than a module. Written before this app existed, so it describes four pieces and not five — a header there records why that needed a note and not a revision: this app is a second host for the artifact-and-serve tier its Seam B already covers. |
+| [docs/WEB.md](docs/WEB.md) | The web variant: one HTML file opened from disk, for a machine that may install nothing. Getting and using it, what differs from the app, its limits, what the page can and cannot reach, how it is built and tested. |
 | [docs/RELEASING.md](docs/RELEASING.md) | Cutting a release: what to check before tagging, what the workflow builds, and why the last step is a person opening the app. |
 
 ### The engine
@@ -229,6 +251,9 @@ gives for no bundler:
 ```bash
 node --test src/lib/*.test.js
 ```
+
+The web variant (`web/`) is the one part with a package manager: its tests, its build and its browser tests are
+`pnpm test`, `pnpm build` and `pnpm e2e` there ([docs/WEB.md](docs/WEB.md#building-and-testing)).
 
 The real window has test sheets of testing.nvim (`TESTS/sheets/`, engine
 `webview`: the page in the WebView2, through tauri-driver and msedgedriver).

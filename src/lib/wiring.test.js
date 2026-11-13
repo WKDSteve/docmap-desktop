@@ -134,6 +134,10 @@ test("no English catalog key is dead", () => {
     // A command's error names its key in Rust: `apperr::ENGLISH` lists every
     // one, and `errors.test.js` holds that list against the catalog.
     read("../../src-tauri/src/apperr.rs"),
+    // The web variant answers the same commands from the browser, and its
+    // refusals name their keys (`web.*`) there.
+    read("../../web/src/backend.js").replaceAll("'", '"'),
+    read("../../web/src/shell.js").replaceAll("'", '"'),
   ].join("\n");
   const RUNTIME = [
     "menu.", // the Rust menu builder asks for these by id

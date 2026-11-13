@@ -97,6 +97,11 @@ if (!window.__TAURI__) {
 const { invoke, convertFileSrc } = window.__TAURI__.core;
 const { open, save } = window.__TAURI__.dialog;
 
+// The web variant (web/, one HTML file opened from disk, the engine in the page) answers the same bridge from the
+// browser and sets this beside it. Two things differ for this page there, and both are asked for by name below: the
+// address of a map (a blob cannot carry `?theme=`), and a folder that changed on disk (nothing watches for the app).
+const web = window.__DOCMAP_WEB__ ?? null;
+
 const els = {
   sidebar: document.getElementById("sidebar"),
   sbPin: document.getElementById("sb-pin"),
@@ -2733,6 +2738,7 @@ els.sbPin.addEventListener("click", () => {
 /** `base` with the theme, and the panel to land on, appended. */
 function mapUrl(base) {
   const theme = currentTheme();
+  if (web) return web.mapUrl(base, theme, view.mapTab);
   let url = base;
   if (theme === "light" || theme === "dark") {
     url += (url.includes("?") ? "&" : "?") + "theme=" + theme;
@@ -5301,5 +5307,17 @@ window.addEventListener("resize", closeProjMenu);
     const run = MENU_ACTIONS[ev.payload];
     if (run) run();
   });
+  if (web) {
+    // Folders were read again (they changed on disk, or the browser was allowed to read them): what was measured
+    // from the old state is forgotten, and the selection is shown anew.
+    listen("web:folders-changed", () => {
+      for (const p of view.projects) {
+        invalidate(p.map_dir);
+        invalidateLanguages(p.root);
+      }
+      freshness.clear();
+      select(view.selectedId);
+    });
+  }
   syncMenu();
 }

@@ -659,6 +659,15 @@ const CATALOGS = {
     // A rejection that carries no key at all, which `errorText` says rather
     // than showing a blank or `[object Object]`.
     "error.unknown": "Something failed, and it did not say what.",
+    // What only the web variant (web/) fails with: there is no program behind that page. The keys are not `err.*`:
+    // those are the app's own (src-tauri/src/apperr.rs), and errors.test.js holds the two lists to each other.
+    "web.unavailable": "Not part of the web variant: {what}",
+    "web.access": "The browser needs your permission to read {name} again. Choose \"Allow access\" at the top",
+    "web.gone": "The folder {name} is not there any more",
+    "web.tooLarge": "{name} holds more than the web variant reads ({limit} {what})",
+    "web.read": "{name} could not be read",
+    "web.picker": "This browser cannot open a folder (the page needs the File System Access API, as in Chrome or Edge)",
+    "web.start": "The engine in the page did not start",
   },
 
   de: {
@@ -1244,6 +1253,13 @@ const CATALOGS = {
     "err.menu.build": "Das Menü lässt sich nicht aufbauen",
     "err.server.start": "Die Karte ließ sich auf diesem Rechner nicht ausliefern",
     "error.unknown": "Etwas ist fehlgeschlagen, ohne zu sagen, was.",
+    "web.unavailable": "Nicht Teil der Web-Variante: {what}",
+    "web.access": "Der Browser braucht deine Erlaubnis, um {name} wieder zu lesen. Wähle oben „Zugriff erlauben“",
+    "web.gone": "Den Ordner {name} gibt es nicht mehr",
+    "web.tooLarge": "{name} enthält mehr, als die Web-Variante liest ({limit} {what})",
+    "web.read": "{name} ließ sich nicht lesen",
+    "web.picker": "Dieser Browser kann keinen Ordner öffnen (die Seite braucht die File System Access API, wie in Chrome oder Edge)",
+    "web.start": "Die Engine in der Seite ist nicht gestartet",
   },
 };
 

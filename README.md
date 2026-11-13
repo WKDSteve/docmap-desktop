@@ -8,6 +8,8 @@
                          |_|                                     |_|
 ```
 
+[![wkd](https://img.shields.io/badge/wkd-family-c6ff3d)](https://wkdsteve.github.io/wkd/apps/docmap-desktop/)
+
 > **know your project**
 
 A desktop workspace for the module maps [docmap.nvim](https://github.com/WKDSteve/docmap.nvim)

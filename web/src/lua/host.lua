@@ -369,11 +369,20 @@ os.exit = function(code)
 end
 
 local captured = {}
+
+---Keep one piece of output: the stream (`o` or `e`), the length of the text in bytes, a colon, the text. No separator
+---byte between the pieces: a NUL in a Lua string ends the string on its way to the page.
+---@param stream string
+---@param text string
+local function capture(stream, text)
+  captured[#captured + 1] = ("%s%d:"):format(stream, #text) .. text
+end
+
 local function sink(stream)
   local file = {}
   function file:write(...)
     for i = 1, select("#", ...) do
-      captured[#captured + 1] = stream .. tostring((select(i, ...)))
+      capture(stream, tostring((select(i, ...))))
     end
     return self
   end
@@ -395,7 +404,7 @@ print = function(...)
   for i = 1, select("#", ...) do
     parts[i] = tostring((select(i, ...)))
   end
-  captured[#captured + 1] = "o" .. table.concat(parts, "\t") .. "\n"
+  capture("o", table.concat(parts, "\t") .. "\n")
 end
 
 -- ------------------------------------------------------------- the pipeline
@@ -429,7 +438,7 @@ local function guarded(fn)
     end
     return debug.traceback(tostring(err), 2)
   end)
-  local log = table.concat(captured, "\0")
+  local log = table.concat(captured)
   captured = {}
   if ok then
     return "ok", result, log
@@ -440,8 +449,8 @@ local function guarded(fn)
   return "error", tostring(result), log
 end
 
----One answer string: the status, the length of the payload, the payload, then the log (stream marks `o`/`e`, NUL
----separated).
+---One answer string: the status, the length of the payload, the payload, then the log (the pieces as `capture` wrote
+---them).
 local function answer(status, payload, log)
   payload = payload or ""
   return ("%s %d\n"):format(status, #payload) .. payload .. (log or "")

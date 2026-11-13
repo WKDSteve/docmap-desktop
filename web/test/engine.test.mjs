@@ -121,11 +121,33 @@ test('a folder the engine cannot map ends with its message, not with a broken VM
 test('an answer is told apart by bytes, not by characters', () => {
   const payload = '{"a":"Grüße"}';
   const bytes = new TextEncoder().encode(payload).length;
-  const answer = parseAnswer(`ok ${bytes}\n${payload}owrote x\n\0ewarn ü\n`);
+  // A piece of the log is `<o|e><bytes>:<text>`; "warn ü\n" is 8 bytes, and a piece may hold a colon and a NUL.
+  const answer = parseAnswer(`ok ${bytes}\n${payload}o8:wrote x\ne8:warn ü\no4:a:\0b`);
   assert.equal(answer.payload, payload);
   assert.deepEqual(answer.log, [
     { stream: 'out', text: 'wrote x\n' },
     { stream: 'err', text: 'warn ü\n' },
+    { stream: 'out', text: 'a:\0b' },
   ]);
+  assert.deepEqual(parseAnswer('exit 1\n2').log, []);
   assert.throws(() => parseAnswer('nonsense'), /without a head/);
+  assert.throws(() => parseAnswer('ok 0\no99:short'), /cannot read/);
+  assert.throws(() => parseAnswer('ok 0\nonocolon'), /cannot read/);
+});
+
+test('everything the engine prints reaches the page, not only its first line', async () => {
+  // The run writes several lines to stdout and the findings to stderr. They once came back cut after the first
+  // piece: the pieces were joined with NUL, which ends a Lua string on its way out of the VM.
+  const engine = await newEngine();
+  engine.mount({ ...mounted(), [`${ROOT}/lua/sample/bare.lua`]: 'return {}\n' });
+  const run = engine.generate({ root: ROOT, argv: ['--lenient'] });
+  assert.equal(run.code, 0, run.payload);
+  const out = run.log.filter((l) => l.stream === 'out').map((l) => l.text).join('');
+  assert.match(out, /wrote docs\/map\/index\.html\n/);
+  assert.match(out, /\d+ modules?, \d+ namespaces?, \d+ files?\n/, 'the summary line after the first one');
+  assert.match(out, /\d+ errors?, \d+ warnings?/);
+  assert.ok(run.log.length > 2, `the log has ${run.log.length} pieces`);
+  // The same through the capabilities door: one piece, no log.
+  assert.deepEqual(engine.capabilities().log, []);
+  engine.close();
 });

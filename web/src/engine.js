@@ -81,11 +81,21 @@ export function parseAnswer(raw) {
   const size = Number(head[2]);
   const decoder = new TextDecoder();
   const payload = decoder.decode(bytes.subarray(0, size));
-  const rest = decoder.decode(bytes.subarray(size));
   /** @type {LogLine[]} */
   const log = [];
-  for (const piece of rest === '' ? [] : rest.split('\0')) {
-    log.push({ stream: piece[0] === 'e' ? 'err' : 'out', text: piece.slice(1) });
+  // The pieces of output, each `<o|e><bytes>:<text>` (host.lua, `capture`).
+  let at = size;
+  while (at < bytes.length) {
+    const colon = bytes.indexOf(0x3a, at);
+    const length = colon < 0 ? NaN : Number(decoder.decode(bytes.subarray(at + 1, colon)));
+    if (!Number.isInteger(length) || length < 0 || colon + 1 + length > bytes.length) {
+      throw new Error('the engine answered with a log this page cannot read');
+    }
+    log.push({
+      stream: bytes[at] === 0x65 ? 'err' : 'out',
+      text: decoder.decode(bytes.subarray(colon + 1, colon + 1 + length)),
+    });
+    at = colon + 1 + length;
   }
   return { status: /** @type {Answer['status']} */ (head[1]), payload, log };
 }

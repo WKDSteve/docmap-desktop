@@ -1,0 +1,106 @@
+# The web variant: builds the window as one file (web/dist/docmap.html), tests it, and puts it into the repository
+# WKDSteve/docmap-web, from which it is opened on a machine that may not install anything:
+#
+#   git clone https://github.com/WKDSteve/docmap-web   (git pull for a newer one)
+#   open file:///C:/repos/docmap-web/docmap.html       (a local file: no server, no hosting)
+#
+# Runs on a tag (v*) and by hand. Like ci.yml it runs on the maintainer's self-hosted Windows runner, whose git
+# credentials push to docmap-web: there is no deploy key and no secret in this workflow, and a workflow that anybody
+# else could trigger would have the maintainer's rights, which is why it has no `pull_request` trigger and no
+# `workflow_run`. The file is built from the ref, opened in Chrome from disk with the requests counted (web/e2e), and
+# only then published; SHA256SUMS in docmap-web lists the page. The same steps as the job `web` of ci.yml, which runs
+# them on every push.
+
+name: web
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web
+  cancel-in-progress: false
+
+env:
+  DOCMAP_ENGINE_DIR: ${{ github.workspace }}/engine-src/docmap.nvim
+  LIB_NVIM_DIR: ${{ github.workspace }}/engine-src/lib.nvim
+
+defaults:
+  run:
+    shell: C:\PROGRA~1\Git\bin\bash.exe --noprofile --norc -e -o pipefail {0}
+
+jobs:
+  publish:
+    runs-on: [self-hosted, windows]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (node24)
+        with:
+          persist-credentials: false
+
+      # The engine of the page is the pinned one: its sources go into the file.
+      - name: fetch the engine sources (docmap.nvim and lib.nvim, with the pinned commits)
+        run: |
+          rm -rf engine-src
+          mkdir engine-src
+          git clone --quiet https://github.com/WKDSteve/docmap.nvim engine-src/docmap.nvim
+          git clone --quiet https://github.com/WKDSteve/lib.nvim engine-src/lib.nvim
+          git -C engine-src/docmap.nvim cat-file -e "$(sed -n 's/^commit *= *//p' engine.lock)^{commit}"
+          git -C engine-src/lib.nvim cat-file -e "$(sed -n 's/^lib_commit *= *//p' engine.lock)^{commit}"
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: install
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      # Without the sidecar: what is published is the engine of engine.lock, and the comparison with the rolling
+      # binary is ci.yml's on every push.
+      - name: node --test
+        working-directory: web
+        run: pnpm test
+
+      - name: build the page
+        working-directory: web
+        # The build the page names (Help > About): the ref, its commit and the day it was built.
+        run: WEB_BUILD="$GITHUB_REF_NAME@${GITHUB_SHA::7} $(date -u +%Y-%m-%d)" pnpm build
+
+      # The same suite as in ci.yml: the built file itself, from disk, in Chrome. What is published is what was tested.
+      - name: open the built file from disk in Chrome
+        working-directory: web
+        run: pnpm e2e
+
+      - name: traces of failed browser tests
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-playwright-traces
+          path: web/test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # docmap-web holds nothing but the built page, its sum and the notices. A page that did not change is not
+      # committed again.
+      - name: publish to docmap-web
+        run: |
+          sha="$(git rev-parse --short HEAD)"
+          publish="$RUNNER_TEMP/docmap-web"
+          rm -rf "$publish"
+          git clone --quiet https://github.com/WKDSteve/docmap-web "$publish"
+          cp web/dist/docmap.html "$publish/docmap.html"
+          cp web/THIRD-PARTY-NOTICES.md "$publish/THIRD-PARTY-NOTICES.md"
+          cd "$publish"
+          sha256sum *.html > SHA256SUMS
+          git add docmap.html SHA256SUMS THIRD-PARTY-NOTICES.md
+          if git diff --cached --quiet; then
+            echo "docmap.html is the same as the published one"
+          else
+            git commit --quiet -m "docmap.html, built from docmap-desktop@$sha ($GITHUB_REF_NAME)"
+            git push --quiet origin HEAD
+          fi

@@ -212,3 +212,84 @@ jobs:
 
       - name: the engine is in step with engine.lock
         run: python tools/check-engine-lock.py --binary "$(cygpath -m "$PWD")/engine-dl/docmap-x86_64-pc-windows-msvc.exe"
+
+  # The web variant (web/): the window as one HTML file opened from disk, the engine of docmap.nvim in a Lua VM in the
+  # page. Its tests run the engine of the commits in engine.lock (the Lua sources are read from git, so both
+  # repositories are cloned), compare the engine in the VM with the rolling sidecar byte for byte (the sources bundled
+  # at the commit the binary was built from: red here without a change in this repository means the engine does
+  # something the page's host does not, see web/test/sidecar-compare.test.mjs), build the file and open the built file
+  # itself in the Chrome of the machine, counting the requests it makes (none).
+  # Its steps run on a push only, as the axe step of `tokens`: they need pnpm and a Chrome, which the self-hosted
+  # runner has; on the hosted leg of a pull request the job checks out and is done.
+  web:
+    name: web (${{ matrix.leg }})
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      matrix:
+        include: ${{ fromJSON(github.event_name == 'push' && '[{"leg":"self-hosted","runs-on":["self-hosted","windows"],"shell":"C:\\PROGRA~1\\Git\\bin\\bash.exe --noprofile --norc -e -o pipefail {0}"}]' || '[{"leg":"windows-latest","runs-on":"windows-latest","shell":"bash --noprofile --norc -e -o pipefail {0}"}]') }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    timeout-minutes: 20
+    env:
+      DOCMAP_ENGINE_DIR: ${{ github.workspace }}/engine-src/docmap.nvim
+      LIB_NVIM_DIR: ${{ github.workspace }}/engine-src/lib.nvim
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (node24)
+        with:
+          persist-credentials: false
+
+      - name: fetch the engine sources (docmap.nvim and lib.nvim, with the pinned commits)
+        if: github.event_name == 'push'
+        run: |
+          rm -rf engine-src
+          mkdir engine-src
+          git clone --quiet https://github.com/WKDSteve/docmap.nvim engine-src/docmap.nvim
+          git clone --quiet https://github.com/WKDSteve/lib.nvim engine-src/lib.nvim
+          git -C engine-src/docmap.nvim cat-file -e "$(sed -n 's/^commit *= *//p' engine.lock)^{commit}"
+          git -C engine-src/lib.nvim cat-file -e "$(sed -n 's/^lib_commit *= *//p' engine.lock)^{commit}"
+
+      - name: download the rolling engine (the sidecar the page is compared with)
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf engine-web
+          gh release download standalone-latest \
+            --repo WKDSteve/docmap.nvim \
+            --pattern "docmap-x86_64-pc-windows-msvc.exe" \
+            --dir engine-web
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: github.event_name == 'push'
+        with:
+          node-version: "22"
+
+      - name: install
+        if: github.event_name == 'push'
+        working-directory: web
+        run: pnpm install --frozen-lockfile
+
+      - name: node --test (the engine in the VM, the commands of the window, against the sidecar)
+        if: github.event_name == 'push'
+        working-directory: web
+        run: DOCMAP_WEB_SIDECAR="$(cygpath -w "$PWD/../engine-web/docmap-x86_64-pc-windows-msvc.exe")" pnpm test
+
+      - name: build the page
+        if: github.event_name == 'push'
+        working-directory: web
+        run: pnpm build
+
+      - name: open the built file from disk in Chrome
+        if: github.event_name == 'push'
+        working-directory: web
+        run: pnpm e2e
+
+      - name: traces of failed browser tests
+        if: failure() && github.event_name == 'push'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-playwright-traces
+          path: web/test-results
+          if-no-files-found: ignore
+          retention-days: 14

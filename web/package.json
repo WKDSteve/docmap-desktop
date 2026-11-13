@@ -1,0 +1,22 @@
+{
+  "name": "docmap-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The web variant of docmap-desktop: the page of src/ as one HTML file opened from disk, the engine of docmap.nvim in a Lua VM in the browser. The desktop app reads nothing from this folder.",
+  "packageManager": "pnpm@10.29.2",
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "build": "node build.mjs",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "appkit-web": "github:WKDSteve/appkit#v0.49.0&path:web-kit",
+    "wasmoon": "1.16.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
+    "@playwright/test": "1.64.1",
+    "esbuild": "0.25.12"
+  }
+}

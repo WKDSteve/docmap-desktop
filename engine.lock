@@ -4,6 +4,8 @@
 #   schema    the artifact schema the engine writes (`M.SCHEMA` in core/scan.lua, `schema` of --capabilities)
 #   routes    the /api/* routes the window asks for (`M.routes` in core/api.lua, `routes` of --capabilities),
 #             space-separated, sorted
+#   lib_commit  the commit of lib.nvim whose modules go into the web variant next to the engine's
+#             (web/engine-bundle.mjs reads the Lua sources of both commits from git; the sidecar brings its own copy)
 #
 # contract/docmap.schema.json is docs/docmap.schema.json of this commit, byte for byte (the `.docmap.json`
 # this app reads `out_dir` from). The window reads `schema` and `routes` of this file at build time
@@ -19,5 +21,6 @@
 # which copies the schema file, rewrites schema and routes from that commit, and stops for review.
 repo = https://github.com/WKDSteve/docmap.nvim
 commit = 939c434b0a5596ab920c20ab7f1af11700e006d1
+lib_commit = 2dac3c280225e0e7a4afd9ae5398187d34cf1f66
 schema = 6
 routes = checklist commits loaded loaded/snapshots telemetry telemetry/snapshots

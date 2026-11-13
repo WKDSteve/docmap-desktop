@@ -49,3 +49,8 @@ tags
 
 # Python bytecode of tools/ and its tests
 __pycache__/
+
+# The web variant (web/): what pnpm installs, what the build writes, what the browser tests leave
+/web/node_modules/
+/web/dist/
+/web/test-results/

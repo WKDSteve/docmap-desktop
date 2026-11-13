@@ -1,0 +1,8 @@
+# The Lua in this folder runs on Lua 5.4 (wasmoon in the browser), not on Neovim's LuaJIT: it uses the 5.4 integer
+# operators. Otherwise the rules of docmap.nvim (two spaces, double quotes).
+syntax = "Lua54"
+column_width = 120
+line_endings = "Unix"
+indent_type = "Spaces"
+indent_width = 2
+quote_style = "AutoPreferDouble"

@@ -6,7 +6,7 @@
 //! The window used to load the map through Tauri's asset protocol
 //! (`convertFileSrc`). That shows the page but answers no request: the
 //! generated page fetches `/api/telemetry`, `/api/loaded`, `/api/checklist`,
-//! `/api/commits`, `/api/commit/<sha>` and two snapshot-listing routes, and
+//! `/api/commits`, `/api/commit/<sha>`, `/api/shape/<sha>[/<sha>]` and two snapshot-listing routes, and
 //! nothing was listening. On Windows it was worse than silent —
 //! `convertFileSrc` hands out `http://asset.localhost/…`, so the page's own
 //! "is a server behind this origin" test said *yes*, fetched, got the asset
@@ -34,8 +34,8 @@
 //!    source.
 //! 2. **Whitelist the route before it reaches the subprocess.** A request
 //!    path is otherwise argument injection into the engine. Fixed-name
-//!    routes go through a literal list; `commit/<sha>` goes through
-//!    `safe_sha`, the same `^[0-9a-f]{7,40}$` shape check
+//!    routes go through a literal list; `commit/<sha>` and `shape/<sha>[/<sha>]`
+//!    go through `safe_sha`, the same `^[0-9a-f]{7,40}$` shape check
 //!    `docmap.core.api.safe_sha` enforces on the Lua side. Both are
 //!    whitelists, not escapes.
 //! 3. **No path parameter can leave the map directory.** Static serving takes
@@ -117,6 +117,25 @@ fn safe_sha(s: &str) -> bool {
     let n = s.len();
     // Lua's `%x` pattern class matches both cases, so this does too.
     (7..=40).contains(&n) && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// `shape/<a>` or `shape/<a>/<b>` (the Hierarchy tab's "Compare maps", answered by
+/// `docmap.core.api.shape`), or `false`.
+///
+/// Every sha is checked with `safe_sha` on its own, and nothing but one or two of them
+/// may follow the prefix: a third segment, an empty one or git's `a..b` spelling is not
+/// this route. The name is then handed to the engine unchanged, like `commit/<sha>`.
+fn safe_shape_route(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("shape/") else {
+        return false;
+    };
+    let mut parts = rest.split('/');
+    let first = parts.next().unwrap_or("");
+    let second = parts.next();
+    if parts.next().is_some() || !safe_sha(first) {
+        return false;
+    }
+    second.is_none_or(safe_sha)
 }
 
 /// A request path segment is servable only if it is a bare filename.
@@ -455,6 +474,17 @@ fn handle(cfg: &ServeConfig, port: u16, stream: &mut TcpStream) {
                 Err(e) => respond_json_error(stream, 500, &e),
             };
         }
+        // `shape/<a>[/<b>]`: the same reasoning, for one or two shas. The
+        // engine answers it from `core/diff.lua`; nothing but hex reaches it.
+        if name.starts_with("shape/") {
+            if !safe_shape_route(name) {
+                return respond_json_error(stream, 400, &AppError::new("api.sha"));
+            }
+            return match engine_api(cfg, name, None) {
+                Ok(body) => respond(stream, 200, "application/json", body.as_bytes()),
+                Err(e) => respond_json_error(stream, 500, &e),
+            };
+        }
 
         if !ROUTES.contains(&name) {
             // Deliberately not echoed back: refusing to repeat an
@@ -586,8 +616,8 @@ pub fn url(port: u16) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        api_asked_by_own_page, asked_by_own_page, lock_servers, read_head, safe_sha, servable_file,
-        UntilDeadline, MAX_HEAD,
+        api_asked_by_own_page, asked_by_own_page, lock_servers, read_head, safe_sha,
+        safe_shape_route, servable_file, UntilDeadline, MAX_HEAD,
     };
     use std::fs;
     use std::sync::Mutex;
@@ -876,6 +906,30 @@ Host: evil.example
         assert!(!safe_sha("")); // empty
         assert!(!safe_sha("HEAD")); // a real revision, but not this route's shape
         assert!(!safe_sha("g1234567")); // 'g' is not a hex digit
+    }
+
+    #[test]
+    fn shape_route_takes_one_or_two_shas() {
+        assert!(safe_shape_route("shape/abc1234"));
+        assert!(safe_shape_route(&format!(
+            "shape/{}/{}",
+            "a".repeat(40),
+            "b".repeat(7)
+        )));
+    }
+
+    #[test]
+    fn shape_route_refuses_everything_else() {
+        assert!(!safe_shape_route("shape/"));
+        assert!(!safe_shape_route("shape/abc1234/"));
+        assert!(!safe_shape_route("shape//abc1234"));
+        assert!(!safe_shape_route("shape/abc1234/bcd2345/cde3456")); // a third sha
+        assert!(!safe_shape_route("shape/abc1234..bcd2345")); // git's spelling is not the route's
+        assert!(!safe_shape_route("shape/HEAD"));
+        assert!(!safe_shape_route("shape/abc1234/HEAD"));
+        assert!(!safe_shape_route("shape/abc1234 --upload-pack=evil"));
+        assert!(!safe_shape_route("commit/abc1234"));
+        assert!(!safe_shape_route("shapes/abc1234"));
     }
 
     #[test]

@@ -39,7 +39,10 @@ app is a window in front of it, not a second renderer.
 
 A small HTTP server so the embedded page's own `/api/*` calls resolve. The
 page is the same document a browser would open; giving it a real origin is
-what lets the parts of it that expect one keep working.
+what lets the parts of it that expect one keep working. That includes the
+History tab (`commits`, `commit/<sha>`) and the Hierarchy tab's **Compare
+maps** (`shape/<sha>` against the map on disk, `shape/<sha>/<sha>` between
+two commits); every sha is checked before it reaches the engine.
 
 - **Module:** `src-tauri/src/server.rs`
 

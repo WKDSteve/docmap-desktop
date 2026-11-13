@@ -94,6 +94,11 @@ const HANDLERS = {
     for (const key of Object.keys(files)) files[key] = files[key].slice();
     return { value: files, transfer: Object.values(files).map((b) => b.buffer) };
   },
+  stat: (e, { root, path }) => {
+    if (!inside(root, path)) throw new Error('not a path inside the project');
+    const got = vmfs.statFileAt(/** @type {vmfs.Fs} */ (e.fs), path);
+    return { value: got };
+  },
   tree: (e, { root, sub }) => ({ value: vmfs.fileTree(/** @type {vmfs.Fs} */ (e.fs), root, sub) }),
   freshness: (e, { root, mapDir, now }) => ({ value: vmfs.freshness(/** @type {vmfs.Fs} */ (e.fs), root, mapDir, now) }),
   changes: (e, { root, mapDir, limit }) => ({

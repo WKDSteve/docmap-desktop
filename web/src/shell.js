@@ -177,9 +177,17 @@ const ready = start().then(
     backend = made;
     made.publishNotice().catch(() => {});
     // A folder that changed on disk is read again when the person comes back to the tab, and every half minute.
+    // One look at a time (a look walks every loaded folder), and none while nobody sees the tab.
+    let looking = false;
     const look = async () => {
-      const changed = await made.refreshChanged().catch(() => /** @type {string[]} */ ([]));
-      if (changed.length > 0) made.emit('web:folders-changed', changed);
+      if (looking || doc.visibilityState === 'hidden') return;
+      looking = true;
+      try {
+        const changed = await made.refreshChanged().catch(() => /** @type {string[]} */ ([]));
+        if (changed.length > 0) made.emit('web:folders-changed', changed);
+      } finally {
+        looking = false;
+      }
     };
     window.addEventListener('focus', look);
     setInterval(look, 30_000);

@@ -146,7 +146,82 @@ test('the theme goes into the page of a map without touching what the page does 
   const html = '<!doctype html><html><head><title>t</title></head><body></body></html>';
   assert.equal(themed(html, 'system'), html);
   assert.equal(themed(html, 'light'), '<!doctype html><html><head><title>t</title><script>document.documentElement.setAttribute("data-theme","light")</script></head><body></body></html>');
-  assert.match(themed('<p>no head</p>', 'dark'), /^<script>.*<\/script><p>no head<\/p>$/);
+  // Without a head, or with `</head>` also inside a script (where an insert would break the script), the theme is set
+  // at the very end: later, but never inside something.
+  assert.match(themed('<p>no head</p>', 'dark'), /^<p>no head<\/p><script>.*<\/script>$/);
+  const tricky = '<html><head><script>var s = "</head>";</script></head><body></body></html>';
+  assert.equal(themed(tricky, 'dark'), `${tricky}<script>document.documentElement.setAttribute("data-theme","dark")</script>`);
+});
+
+test('the page of a map stays what it is while the folder is read again or checked, until it is asked for anew', async () => {
+  const folder = sample();
+  const p = page({ folders: [folder] });
+  const [project] = await addPicked(p);
+  assert.equal((await p.backend.invoke('generate', { root: project.root, full: false })).ok, true);
+  const base = await p.backend.invoke('serve_project', { id: project.id });
+  const light = p.backend.mapUrl(base, 'light', null);
+  // Checking the map reads the folder again; the window does not ask for the map again afterwards, and then the
+  // person switches the theme: the frame must get a page, not an empty address.
+  assert.equal((await p.backend.invoke('check_map', { root: project.root })).current, true);
+  assert.deepEqual(p.ui.revoked, []);
+  assert.equal(p.backend.mapUrl(base, 'light', null), light);
+  assert.match(p.backend.mapUrl(base, 'dark', null), /^blob:test\/\d+$/);
+  // Asked for anew, the old pages are let go.
+  await p.backend.invoke('serve_project', { id: project.id });
+  assert.ok(p.ui.revoked.includes(light));
+  assert.equal(p.ui.blobs.has(light), false);
+});
+
+test('a full run is the plain run: nothing that starts a program reaches the engine', async () => {
+  const p = page({ folders: [sample()] });
+  const [project] = await addPicked(p);
+  const asked = await p.backend.invoke('generate', { root: project.root, full: true });
+  assert.equal(asked.ok, true, asked.stderr);
+  await p.backend.invoke('project_scope_set', { id: project.id, exclude: [], languages: null, outDir: null, full: true });
+  const always = await p.backend.invoke('generate', { root: project.root, full: false });
+  assert.equal(always.ok, true, always.stderr);
+  // The whole report of the engine comes back, not its first line.
+  assert.match(always.stdout, /wrote docs\/map\/index\.html\n[\s\S]*\d+ modules?, /);
+});
+
+test('what the store says about where a project lies is not believed', async () => {
+  const first = page({ folders: [sample(), sample('other')] });
+  const [project] = await addPicked(first);
+  await addPicked(first);
+  const stored = structuredCloneKeepingHandles(first.store.get('state'));
+  const [a, b] = stored.workspaces[0].projects;
+  // Another page of the same origin rewrote the list: one project points into the other, ids repeat, the counter
+  // went back, and a name is a path.
+  a.root = b.root;
+  a.map_dir = '/w/p2/other/docs/map';
+  a.out_dir = '../../p2/other';
+  a.exclude = 'not a list';
+  stored.workspaces[0].projects.push({ ...b }, { ...b, id: 'p9', name: '../escape' });
+  stored.nextId = 1;
+  const p = page({ store: new Map([['state', stored]]), folders: [sample('third')] });
+  const list = await p.backend.invoke('list_projects');
+  assert.deepEqual(list.map((x) => [x.id, x.name, x.root, x.map_dir]), [
+    [project.id, 'sample', `/w/${project.id}/sample`, `/w/${project.id}/sample/docs/map`],
+    [b.id, 'other', `/w/${b.id}/other`, `/w/${b.id}/other/docs/map`],
+  ]);
+  assert.deepEqual(list[0].exclude, []);
+  assert.equal(list[0].out_dir, null);
+  const added = await addPicked(p);
+  assert.equal(new Set(added.map((x) => x.id)).size, 3, 'a new project never takes an id that is in use');
+});
+
+test('a run that asks waits for a read that is under way, and then asks itself', async () => {
+  const folder = sample();
+  const first = page({ folders: [folder] });
+  const [project] = await addPicked(first);
+  folder.state.permission = 'prompt';
+  const p = page({ store: first.store });
+  // The window measures the list on its own (no click, so nothing is asked), and the person clicks Generate at once.
+  const quiet = p.backend.invoke('map_freshness', { id: project.id });
+  const run = p.backend.invoke('generate', { root: project.root, full: false });
+  assert.equal((await quiet).hasMap, false);
+  assert.equal((await run).ok, true);
+  assert.equal(folder.state.asked, 1);
 });
 
 test('a file that changed on disk makes the map stale, and generating reads the folder again', async () => {
@@ -167,7 +242,7 @@ test('a file that changed on disk makes the map stale, and generating reads the 
   assert.equal(stale.newest, 'lua/sample/more.lua');
   assert.ok(stale.behindSecs >= 58 && stale.behindSecs <= 60, String(stale.behindSecs));
   assert.deepEqual((await p.backend.invoke('map_changes', { id: project.id, limit: 5 })).files.map((f) => f.path), ['lua/sample/more.lua']);
-  assert.ok(p.ui.revoked.includes(before), 'the page of the old map is let go');
+  assert.equal(p.backend.mapUrl(base, 'system', null), before, 'the page that is shown stays until it is asked for anew');
   assert.equal((await p.backend.invoke('check_map', { root: project.root })).current, false);
 
   // Later (the file is now in the past) the map is generated again: it holds the new module and is fresh.
@@ -283,7 +358,10 @@ test('a folder that is no checkout lists the checkouts inside it, and several ar
   const res = await p.backend.invoke('import_many', { roots: ['folder:repos/one.nvim', 'folder:repos/two.nvim', 'folder:repos/never-picked'] });
   assert.equal(res.found, 3);
   assert.deepEqual(res.added.map((a) => a.name), ['one.nvim', 'two.nvim']);
+  // A failure has the shape the app gives it: the name it was asked by, and a command's error.
   assert.equal(res.errors.length, 1);
+  assert.equal(res.errors[0].name, 'folder:repos/never-picked');
+  assert.equal(res.errors[0].error.key, 'err.path.notDirectory');
   // The same folder picked again is known.
   const again = await p.backend.invoke('inspect_folder', { root: await p.backend.dialog.open({ directory: true }) });
   assert.deepEqual(again.subrepos.map((s) => s.alreadyAdded), [false, true, true]);

@@ -11,7 +11,7 @@
 // Nothing here touches the DOM: the caller hands in what it needs of the browser (`deps`), a test hands in fakes.
 
 import { computeDeps } from './deps.js';
-import { FolderTooLarge, folderSignature, inspectFolder, readFolder } from './folder-read.js';
+import { FolderTooLarge, folderSignature, inspectFolder, readFolder, safeName } from './folder-read.js';
 import { searchView } from './view-search.js';
 import { PROJECTS } from './worker.js';
 
@@ -72,13 +72,48 @@ export function plainOutDir(dir) {
 }
 
 /**
+ * A project as the store gave it back, made whole again, or null when it cannot be one. Its place in the VM follows
+ * from its id and its name; the fields of its scope are kept only as the types they are.
+ * @param {any} p
+ * @returns {StoredProject | null}
+ */
+export function storedProject(p) {
+  if (!p || typeof p !== 'object' || !p.handle || typeof p.handle !== 'object') return null;
+  if (typeof p.id !== 'string' || !/^[A-Za-z0-9_-]+$/.test(p.id)) return null;
+  if (!safeName(p.name)) return null;
+  const text = (/** @type {unknown} */ v) => (typeof v === 'string' && v !== '' ? v : null);
+  const root = `${PROJECTS}/${p.id}/${p.name}`;
+  const outDir = plainOutDir(p.out_dir);
+  return {
+    id: p.id,
+    name: p.name,
+    root,
+    map_dir: `${root}/${outDir ?? DEFAULT_OUT_DIR}`,
+    exclude: Array.isArray(p.exclude) ? p.exclude.filter((/** @type {unknown} */ e) => typeof e === 'string') : [],
+    languages:
+      Array.isArray(p.languages) && p.languages.length > 0
+        ? p.languages.filter((/** @type {unknown} */ l) => typeof l === 'string')
+        : null,
+    out_dir: outDir,
+    source: text(p.source),
+    repo_url: text(p.repo_url),
+    branch: text(p.branch),
+    full: p.full === true,
+    traffic_hidden: p.traffic_hidden === true,
+    handle: p.handle,
+  };
+}
+
+/**
  * @typedef {{ id: string, name: string, root: string, map_dir: string, exclude: string[], languages: string[] | null,
  *   out_dir: string | null, source: string | null, repo_url: string | null, branch: string | null, full: boolean,
  *   traffic_hidden: boolean, handle: any }} StoredProject
  * @typedef {{ version: 1, active: string, nextId: number, workspaces: { name: string, projects: StoredProject[] }[] }} State
  * @typedef {{ loading: Promise<void> | null, loaded: boolean, signature: string | null,
  *   generated: { files: Record<string, Uint8Array>, dir: string, at: number } | null,
- *   skipped: import('./folder-read.js').Skipped[], mapHtml: string | null, urls: Map<string, string> }} Session
+ *   skipped: import('./folder-read.js').Skipped[], mapHtml: string | null, urls: Map<string, string>,
+ *   artifact: any }} Session `artifact` is the map's module_map.json once it was read (null: there is none),
+ *   undefined while it was not
  */
 
 /**
@@ -111,23 +146,30 @@ export function createBackend(deps) {
     if (state) return state;
     const stored = /** @type {any} */ (await deps.kv.get(STATE_KEY).catch(() => null));
     if (stored && stored.version === 1 && Array.isArray(stored.workspaces) && stored.workspaces.length > 0) {
-      // What IndexedDB holds is not trusted to be whole: a project without a handle or an id is dropped.
+      // What IndexedDB holds is not trusted (every local page shares the origin file:// and could have written it):
+      // a project without a handle, a usable id or a usable name is dropped, an id that was seen before too, and
+      // where a project lies in the VM is worked out here again, never taken from the store.
+      const seen = new Set();
       const workspaces = stored.workspaces
-        .filter((/** @type {any} */ w) => w && typeof w.name === 'string' && Array.isArray(w.projects))
+        .filter((/** @type {any} */ w) => w && typeof w.name === 'string' && w.name !== '' && Array.isArray(w.projects))
         .map((/** @type {any} */ w) => ({
           name: w.name,
-          projects: w.projects.filter(
-            (/** @type {any} */ p) =>
-              p && typeof p.id === 'string' && /^[A-Za-z0-9_-]+$/.test(p.id) && typeof p.name === 'string' && p.handle,
-          ),
+          projects: w.projects.flatMap((/** @type {any} */ p) => {
+            const kept = storedProject(p);
+            if (!kept || seen.has(kept.id)) return [];
+            seen.add(kept.id);
+            return [kept];
+          }),
         }));
       if (workspaces.length > 0) {
+        // The next id is above every id that is in use, whatever the store says.
+        const used = [...seen].map((id) => (/^p(\d+)$/.exec(id) ? Number(id.slice(1)) : 0));
         state = {
           version: 1,
           active: workspaces.some((/** @type {{name: string}} */ w) => w.name === stored.active)
             ? stored.active
             : workspaces[0].name,
-          nextId: Number.isInteger(stored.nextId) ? stored.nextId : 1,
+          nextId: Math.max(1, Number.isInteger(stored.nextId) ? stored.nextId : 1, ...used.map((n) => n + 1)),
           workspaces,
         };
         return state;
@@ -180,7 +222,16 @@ export function createBackend(deps) {
   function sessionOf(p) {
     let s = sessions.get(p.id);
     if (!s) {
-      s = { loading: null, loaded: false, signature: null, generated: null, skipped: [], mapHtml: null, urls: new Map() };
+      s = {
+        loading: null,
+        loaded: false,
+        signature: null,
+        generated: null,
+        skipped: [],
+        mapHtml: null,
+        urls: new Map(),
+        artifact: undefined,
+      };
       sessions.set(p.id, s);
     }
     return s;
@@ -227,7 +278,16 @@ export function createBackend(deps) {
    */
   function ensureLoaded(p, opts = {}) {
     const s = sessionOf(p);
-    if (s.loading) return s.loading;
+    if (s.loading) {
+      // A read that is under way is enough for who only wants the folder loaded. Who asks for more (a new read, or
+      // the browser's question) waits for it and then makes its own attempt: the one under way may have been started
+      // without the right to ask.
+      if (!opts.again && !opts.ask) return s.loading;
+      return s.loading.then(
+        () => (opts.again ? ensureLoaded(p, opts) : undefined),
+        () => ensureLoaded(p, opts),
+      );
+    }
     if (s.loaded && !opts.again) return Promise.resolve();
     s.loading = (async () => {
       let perm = await deps.permission.of(p.handle).catch(() => 'gone');
@@ -252,7 +312,9 @@ export function createBackend(deps) {
       );
       s.skipped = read.skipped;
       s.loaded = true;
-      dropMapPage(s);
+      // What was read of the map before is of the old state. The page that is shown stays as it is until the window
+      // asks for the map again (`serve_project`): a frame must not lose its page because a folder was read anew.
+      s.artifact = undefined;
     })().finally(() => {
       s.loading = null;
       publishNotice().catch(() => {});
@@ -279,13 +341,17 @@ export function createBackend(deps) {
   /** @param {StoredProject} p */
   async function artifact(p) {
     if (!(await loadedQuietly(p))) return null;
-    const got = await readText(p, `${mapDirOf(p)}/module_map.json`);
-    if (!got) return null;
-    try {
-      return JSON.parse(got.text);
-    } catch {
-      return null;
+    const s = sessionOf(p);
+    // Read and parsed once per state of the folder: the window asks for it with every key of a search.
+    if (s.artifact === undefined) {
+      const got = await readText(p, `${mapDirOf(p)}/module_map.json`);
+      try {
+        s.artifact = got ? JSON.parse(got.text) : null;
+      } catch {
+        s.artifact = null;
+      }
     }
+    return s.artifact;
   }
 
   // --------------------------------------------------------------- projects
@@ -441,7 +507,7 @@ export function createBackend(deps) {
       for (const root of roots ?? []) {
         const handle = picked.get(root);
         if (!handle) {
-          errors.push({ root: String(root), error: 'not a folder that was picked' });
+          errors.push({ name: String(root), error: appError('err.path.notDirectory', { path: String(root) }) });
           continue;
         }
         if (await sameAs(handle, active(s).projects)) {
@@ -497,6 +563,8 @@ export function createBackend(deps) {
       p.branch = text(args.branch);
       p.full = Boolean(args.full);
       p.map_dir = mapDirOf(p);
+      // The map may lie somewhere else now.
+      sessionOf(p).artifact = undefined;
       await save();
       return null;
     },
@@ -512,8 +580,7 @@ export function createBackend(deps) {
       const none = { exists: false, index_path: index, modules: null, files: null, namespaces: null, schema: null };
       const p = everyProject(await load()).find((x) => x.map_dir === mapDir);
       if (!p || !(await loadedQuietly(p))) return none;
-      const page = await deps.client.ask('read', { root: p.root, path: index });
-      if (!page) return none;
+      if (!(await deps.client.ask('stat', { root: p.root, path: index }))) return none;
       const doc = await artifact(p);
       const counts = doc?.meta?.counts ?? {};
       const number = (/** @type {unknown} */ v) => (Number.isInteger(v) ? v : null);
@@ -550,13 +617,17 @@ export function createBackend(deps) {
     generate: async ({ root, full }) => {
       const p = await projectByRoot(root);
       const s = sessionOf(p);
-      const res = await run(p, [...(full || p.full ? ['--full'] : []), '--lenient']);
+      // Never `--full`: that is the enrichment by lua-language-server, a program the engine would have to start. The
+      // run is the plain one, whatever the window or the settings of the project ask for.
+      void full;
+      const res = await run(p, ['--lenient']);
+      s.artifact = undefined;
       if (res.code === 0) {
         const dir = mapDirOf(p);
         const rel = dir.slice(p.root.length + 1);
         const files = await deps.client.ask('readTree', { root: p.root, dir });
         // The time the VM gave the map, so that a later read of the folder puts it back as old as it is.
-        const written = await deps.client.ask('read', { root: p.root, path: `${dir}/module_map.json` });
+        const written = await deps.client.ask('stat', { root: p.root, path: `${dir}/module_map.json` });
         s.generated = {
           // Kept as paths relative to the root, which is how a later read of the folder puts them back.
           files: Object.fromEntries(Object.entries(files).map(([k, v]) => [`${rel}/${k}`, v])),
@@ -564,7 +635,6 @@ export function createBackend(deps) {
           at: written?.mtime ?? deps.now(),
         };
       }
-      dropMapPage(s);
       return { ok: res.code === 0, code: res.code, stdout: res.stdout, stderr: res.stderr };
     },
 
@@ -799,6 +869,11 @@ export function createBackend(deps) {
 export function themed(html, theme) {
   if (theme === 'system') return html;
   const script = `<script>document.documentElement.setAttribute("data-theme","${theme}")</script>`;
-  const at = html.search(/<\/head>/i);
-  return at < 0 ? script + html : html.slice(0, at) + script + html.slice(at);
+  // Before the end of the head when the page has exactly one (then that is the real one, and the theme is set before
+  // the first paint); a page where `</head>` also stands inside a script or a text gets it at the very end instead,
+  // where it cannot land inside something.
+  const ends = [...html.matchAll(/<\/head>/gi)];
+  if (ends.length !== 1) return html + script;
+  const at = /** @type {number} */ (ends[0].index);
+  return html.slice(0, at) + script + html.slice(at);
 }

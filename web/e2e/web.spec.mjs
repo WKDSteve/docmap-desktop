@@ -74,6 +74,40 @@ test('a folder is added, mapped in the page and shown; nothing leaves the page a
   for (const w of writes) expect(w.json).not.toContain('entry of the sample project');
 });
 
+test('the report of a run is the whole of what the engine printed', async ({ page }) => {
+  await fakeFolders(page, { sample: SAMPLE });
+  await page.goto(pageUrl());
+  await addAndWait(page, 'sample', 'sample');
+  await expect(page.locator('#run-report')).toBeVisible();
+  await expect(page.locator('#run-report-body')).toContainText('wrote docs/map/index.html');
+  await expect(page.locator('#run-report-body')).toContainText(/\d+ modules?, \d+ namespaces?, \d+ files?/);
+});
+
+test('checking the map says whether it is current, from the folder as it is now', async ({ page }) => {
+  const seen = await watchPage(page);
+  await fakeFolders(page, { sample: SAMPLE });
+  await page.goto(pageUrl());
+  await addAndWait(page, 'sample', 'sample');
+  await choose(page, 'Project', 'Check exactly');
+  await expect(page.locator('#status')).toContainText('exactly current', { timeout: 15_000 });
+  expect(seen.errors).toEqual([]);
+});
+
+test('the map opens in a tab of its own, from the same blob, still without a request', async ({ page }) => {
+  const seen = await watchPage(page);
+  await fakeFolders(page, { sample: SAMPLE });
+  await page.goto(pageUrl());
+  await addAndWait(page, 'sample', 'sample');
+  const opening = page.waitForEvent('popup');
+  await choose(page, 'File', 'Open map in browser');
+  const tab = await opening;
+  await tab.waitForLoadState('domcontentloaded');
+  expect(tab.url()).toMatch(/^blob:/);
+  await expect(tab.locator('body')).toContainText('The entry of the sample project');
+  expect(seen.requests).toEqual([]);
+  expect(seen.errors).toEqual([]);
+});
+
 test('the theme of the window is the theme of the map, light and dark', async ({ page }) => {
   await fakeFolders(page, { sample: SAMPLE });
   await page.goto(pageUrl());

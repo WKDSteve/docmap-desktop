@@ -77,6 +77,16 @@ test('the map is fresh until a source is newer, and the changed files are listed
   assert.deepEqual(changes, { files: [{ path: 'README.md', afterSecs: 140 }], total: 2, truncated: false });
 });
 
+test('whether a file is there is asked without its bytes', async () => {
+  await mount();
+  const readme = await client.ask('stat', { root: ROOT, path: `${ROOT}/README.md` });
+  assert.equal(readme.mtime, T0);
+  assert.ok(readme.size > 0);
+  assert.equal(await client.ask('stat', { root: ROOT, path: `${ROOT}/lua` }), null, 'a folder is no file');
+  assert.equal(await client.ask('stat', { root: ROOT, path: `${ROOT}/none.md` }), null);
+  await assert.rejects(client.ask('stat', { root: ROOT, path: '/w/p2/other/x' }), /not a path inside the project/);
+});
+
 test('a project without a map has none, and says so', async () => {
   await mount();
   const none = await client.ask('freshness', { root: ROOT, mapDir: MAP, now: T0 });

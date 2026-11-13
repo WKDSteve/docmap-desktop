@@ -90,6 +90,21 @@ export function readFileAt(fs, path) {
   }
 }
 
+/**
+ * Whether there is a file at `path`, with its size and the time it was last changed (milliseconds), without its bytes.
+ * @param {Fs} fs
+ * @param {string} path
+ * @returns {{ size: number, mtime: number } | null}
+ */
+export function statFileAt(fs, path) {
+  try {
+    const st = fs.stat(path);
+    return isFile(st.mode) ? { size: st.size, mtime: st.mtime.getTime() } : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The files below `dir`, as path relative to it -> bytes. @param {Fs} fs @param {string} dir */
 export function readTree(fs, dir) {
   /** @type {Record<string, Uint8Array>} */

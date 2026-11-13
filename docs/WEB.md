@@ -42,7 +42,8 @@ To build it yourself, see [Building and testing](#building-and-testing): the res
    folders. Generating a map asks too, so that click is often all it takes.
 
 The menu bar at the top is the menu of the app, drawn in the page. A folder that changed on disk is read again when
-you come back to the tab and every half minute; a map older than its sources gets the mark it has in the app.
+you come back to the tab and every half minute; a map older than its sources gets the mark it has in the app, and
+the map you are reading stays as it is until you generate it again.
 
 ## What is different from the app
 
@@ -53,6 +54,7 @@ The strip under the menu bar says this on the page itself (**What is different h
 | A project | a path on disk | a folder picked in the browser, read only |
 | A generated map | written into the project (`docs/map`) | kept in memory of the tab; nothing is written into the folder, and it is gone when the tab closes |
 | Function-level facts (functions, calls, complexity) | with the tree-sitter grammars | not in a map generated here: the page carries no parser. A map that lies in the folder has what it was generated with |
+| "Generate fully" (types from lua-language-server) | when the program is installed | not there: a run is always the plain one, and the project setting for it is not offered |
 | History, checklist status | from git, through the local server | not there: no git. The map's own text for a page opened from disk applies |
 | Telemetry, loaded modules | from a Neovim session's data | not there: those files are outside the folder |
 | Rule runs with an agent | through ai-desktop | not there |
@@ -74,6 +76,8 @@ Every command the window sends has an answer in the page or a refusal that names
 - **What is read:** everything the engine walks. The folders it never walks (`node_modules`, `target`, `dist`,
   `build`, `.git`, ... the list of `core/scan.lua`) are not read at all.
 - **Memory:** every project that was opened stays loaded until the tab closes.
+- **A checkout inside a project** (a folder with its own `.git`) counts as part of the project when the page looks
+  for changed files: `.git` is never read, so the page cannot tell where another repository begins.
 - **Names:** a file or folder whose name could not be a path segment (a separator in it, a trailing dot or space)
   is left out and counted.
 

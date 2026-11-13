@@ -22,6 +22,7 @@ import { build as esbuild } from 'esbuild';
 import { assemble, verifyShell, writePage } from 'appkit-web/pack';
 import { bundle, bundleJson, readLock } from './engine-bundle.mjs';
 import { menuModel } from './menu-model.mjs';
+import { noticesText, readLock as readPackages } from './notices.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..');
@@ -157,7 +158,10 @@ export async function buildPage({ build = process.env.WEB_BUILD ?? commit() } = 
     parts,
     csp: CSP,
     title: 'docmap',
-    comment: `docmap-desktop web variant ${info.version}, build ${build}, engine docmap.nvim ${lock.commit.slice(0, 12)}`,
+    comment: `docmap-desktop web variant ${info.version}, build ${build}, engine docmap.nvim ${lock.commit.slice(0, 12)}
+
+${noticesText(readPackages())}
+`,
   });
   const problems = verifyShell(html, { partIds: PART_IDS });
   if (problems.length) throw new Error('build: ' + problems.join('; '));

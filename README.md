@@ -17,6 +17,8 @@ generates: add several projects, look at any of them, switch between them
 quickly. The kind of shell an IDE or Blender put in front of a
 project — a list you load from, not one window per thing.
 
+**Status: beta.** In use and released in versions (newest: v0.6.0); the surface is not frozen yet.
+
 **This is not a Neovim plugin and does not need Neovim.** It is a separate
 program, in a separate repository, with a separate toolchain — deliberately.
 

@@ -5308,14 +5308,21 @@ window.addEventListener("resize", closeProjMenu);
     if (run) run();
   });
   if (web) {
-    // Folders were read again (they changed on disk, or the browser was allowed to read them): what was measured
-    // from the old state is forgotten, and the selection is shown anew.
-    listen("web:folders-changed", () => {
+    // Folders were read again: what was measured from the old state is forgotten. The payload names the projects
+    // that changed on disk; an empty one means the browser was allowed to read folders it could not read before.
+    listen("web:folders-changed", (ev) => {
       for (const p of view.projects) {
         invalidate(p.map_dir);
         invalidateLanguages(p.root);
       }
       freshness.clear();
+      const changed = Array.isArray(ev.payload) ? ev.payload : [];
+      if (changed.length > 0 && view.selectedId && view.mapBase) {
+        // A map is being read: it stays where the reader is (the page is not loaded again every time a file is
+        // saved), and only the mark that it is older than its sources is looked at again.
+        if (changed.includes(view.selectedId)) refreshFreshness(view.selectedId);
+        return;
+      }
       select(view.selectedId);
     });
   }

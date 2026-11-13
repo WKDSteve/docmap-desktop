@@ -197,19 +197,26 @@ test('after a reload the projects are there; a folder the browser asks about aga
   expect(seen.errors).toEqual([]);
 });
 
-test('a file changed by another program marks the map as stale, and generating again clears the mark', async ({ page }) => {
+test('a file changed by another program marks the map as stale without reloading it; generating again shows the change', async ({ page }) => {
   await fakeFolders(page, { sample: SAMPLE });
   await page.goto(pageUrl());
   await addAndWait(page, 'sample', 'sample');
   await expect(page.locator('#proj-stale')).toBeHidden();
+  // The reader is somewhere in the map when the file is saved: the frame must keep its page (not load it again).
+  await mapFrame(page).locator('body').evaluate((body) => body.setAttribute('data-reader-was-here', '1'));
   await page.evaluate(() => {
     // An editor saves a new module; the fake disk's clock runs ahead of the real one, so it is newer than the map.
     window.__disk.write('sample', 'lua/sample/later.lua', "---@module 'sample.later'\n---@brief Written after the map.\nreturn {}\n");
     window.dispatchEvent(new Event('focus'));
   });
   await expect(page.locator('#proj-stale')).toBeVisible({ timeout: 15_000 });
+  await expect(mapFrame(page).locator('body')).toHaveAttribute('data-reader-was-here', '1');
   // The map shown is still the one generated before: it does not know the new module.
   await expect(mapFrame(page).locator('body')).not.toContainText('Written after the map');
+  // Generating again reads the folder as it is now: the new module is in the map. (The mark stays in this test,
+  // whose fake disk dates the file a minute into the future.)
+  await page.locator('#gen').click();
+  await expect(mapFrame(page).locator('body')).toContainText('Written after the map', { timeout: 30_000 });
 });
 
 test('the files of a project are browsed and searched from what was read', async ({ page }) => {

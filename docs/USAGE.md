@@ -458,6 +458,12 @@ Configure it in **Settings → Editor**: a command template with `{file}` and
 `{line}` substituted. The template is split into arguments *before*
 substitution, so a path with a space in it stays one argument.
 
+The command is started as a program of its own that outlives the app. On
+Windows a terminal editor (`nvim {file}`) gets a console window of its own,
+because it is never started hidden; a windowed editor shows only its own
+window, and a `.cmd` wrapper shows a console for as long as the wrapper runs
+(name the editor's `.exe` to avoid that).
+
 **Leaving it empty hands the file to the desktop — for documents only.** What a
 search hit, a changed file or a map's own "open" points at is text from a
 repository somebody else wrote, and "open" on an executable or a script *runs*

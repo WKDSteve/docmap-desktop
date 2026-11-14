@@ -29,6 +29,7 @@ mod proc;
 mod safe_read;
 mod search;
 mod server;
+mod shellopen;
 mod stats;
 mod telemetry;
 #[cfg(test)]
@@ -596,20 +597,70 @@ mod tests {
         assert_eq!(added.name, "by-hand");
     }
 
-    // `open_externally`'s own `windows_open_command` is not spawned here (it
-    // opens a real window on this machine); what is checked is the `Command`
-    // it builds. A regression here means `target` is no longer passed as one
-    // argv entry to a non-shell program -- the exact class of change that
-    // reintroduces the `&`-splits-the-command-line defect `cmd /c start` had.
+    /// The code of a source file outside its tests, without comment lines.
+    fn production_code(source: &str) -> String {
+        source
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap()
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    // Opening and revealing start no `explorer.exe` of the app's own: the
+    // shell is asked directly on Windows. Nothing here opens a window; what
+    // is checked is that the old child is gone from the code and that a
+    // target that is not there comes back as an error (`explorer <missing>`
+    // started fine and opened Documents).
+    #[test]
+    fn opening_and_revealing_start_no_explorer() {
+        for (name, source) in [
+            ("views.rs", include_str!("views.rs")),
+            ("paths.rs", include_str!("paths.rs")),
+            ("shellopen.rs", include_str!("shellopen.rs")),
+        ] {
+            let code = production_code(source);
+            assert!(!code.contains("\"explorer"), "{name} starts explorer");
+            assert!(!code.contains("\"cmd"), "{name} starts cmd");
+        }
+        assert!(!production_code(include_str!("shellopen.rs")).contains("Command::new"));
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
-    fn open_externally_passes_the_target_as_one_argument_to_explorer_not_cmd() {
-        let target = r"C:\repos\Foo & Bar\file.txt";
-        let cmd = windows_open_command(target);
+    fn a_target_that_is_not_there_is_an_error_of_the_app() {
+        let dir = std::env::temp_dir().join(format!("docmap-open-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let missing = dir.join("Foo & Bar").join("file.txt");
+        let missing = missing.to_string_lossy();
 
-        assert_eq!(cmd.get_program(), "explorer");
-        let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
-        assert_eq!(args, vec![std::ffi::OsStr::new(target)]);
+        let err = open_externally(&missing).unwrap_err();
+        assert_eq!(err.key(), "err.open.failed");
+        let err = reveal_in_file_manager(&missing).unwrap_err();
+        assert_eq!(err.key(), "err.open.reveal");
+    }
+
+    // The editor command is the user's own and may be a terminal editor: it
+    // gets a console of its own and is never started without a window, where
+    // it would run unseen for good.
+    #[test]
+    fn the_editor_command_is_never_started_hidden() {
+        let code = production_code(include_str!("paths.rs"));
+        assert!(!code.contains("CREATE_NO_WINDOW"));
+        assert!(!code.contains("DETACHED_PROCESS"));
+        assert!(!code.contains("0x0800_0000"));
+        #[cfg(windows)]
+        {
+            let flags = editor_creation_flags();
+            assert_eq!(flags & 0x0800_0000, 0, "CREATE_NO_WINDOW");
+            assert_eq!(flags & 0x0000_0008, 0, "DETACHED_PROCESS");
+            assert_ne!(flags & 0x0000_0010, 0, "CREATE_NEW_CONSOLE");
+            assert_ne!(flags & 0x0000_0200, 0, "CREATE_NEW_PROCESS_GROUP");
+        }
+        // A program that does not exist is an error, not a silent nothing.
+        assert!(start_editor("docmap-no-such-editor-program", &[]).is_err());
     }
 
     #[test]

@@ -241,48 +241,35 @@ pub(crate) fn workspace_deps(app: tauri::AppHandle) -> Result<deps::Deps, AppErr
 /// process" still means a project's own folder name, which is not this
 /// program's to constrain (`Foo & Bar`, say, is a real folder name nobody
 /// would call hostile).
-/// `explorer <target>`, not `cmd /c start "" <target>`. `cmd.exe` parses its
-/// *whole command line* for `&`, `|`, `^`, `<`, `>` before `start` ever sees
-/// an argument — confirmed by building a Rust CLI that called exactly the
-/// previous line with a path containing `&` and watching the part after it
-/// run as a second command. That is not this process's own quoting failing
-/// (`Command` quotes each argument correctly for a normal argv-parsing
-/// program); it is that `cmd.exe`'s *own* parser does not read its command
-/// line that way, no matter how correctly the caller quoted it — the
-/// documented reason Rust's std singles out `cmd.exe`/batch files as unsafe
-/// targets for argument passing. `explorer.exe` is an ordinary Win32 program
-/// (`CommandLineToArgvW` parsing, the same convention `Command` quotes for)
-/// and still honours the default browser for a URL and the default handler
-/// for a file, same as `start` did. Pulled out of `open_externally` so the
-/// one-argument shape is a thing a test can check without opening a window.
-#[cfg(target_os = "windows")]
-pub(crate) fn windows_open_command(target: &str) -> std::process::Command {
-    let mut c = std::process::Command::new("explorer");
-    c.arg(target);
-    c
-}
-
+/// On Windows the target goes to the shell itself (`shellopen::open`,
+/// `ShellExecuteExW`): one string, never a command line, so there is nothing
+/// in it for a parser to split at `&`, `|` or a quote — the reason this was
+/// never `cmd /c start "" <target>`. It used to be `explorer <target>`, an
+/// ordinary program with ordinary argument parsing; that was safe, but it
+/// was a process of this app's own for something the shell does when asked,
+/// and it answered a target that is not there by opening Documents. macOS
+/// and Linux still start `open` and `xdg-open`, with the target as the one
+/// argument.
 pub(crate) fn open_externally(target: &str) -> Result<(), AppError> {
-    #[cfg(target_os = "windows")]
-    let mut cmd = windows_open_command(target);
-    #[cfg(target_os = "macos")]
-    let mut cmd = {
-        let mut c = std::process::Command::new("open");
-        c.arg(target);
-        c
-    };
-    #[cfg(all(unix, not(target_os = "macos")))]
-    let mut cmd = {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(target);
-        c
-    };
-
-    cmd.spawn().map(|_| ()).map_err(|e| {
+    let failed = |detail: String| {
         AppError::new("err.open.failed")
             .with("target", target)
-            .detail(e)
-    })
+            .detail(detail)
+    };
+    #[cfg(target_os = "windows")]
+    {
+        crate::shellopen::open(target).map_err(failed)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut cmd = std::process::Command::new(if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        });
+        cmd.arg(target);
+        cmd.spawn().map(|_| ()).map_err(|e| failed(e.to_string()))
+    }
 }
 
 /// Open a project's map in the system browser.

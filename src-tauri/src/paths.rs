@@ -541,40 +541,79 @@ pub(crate) fn is_inert_document(path: &Path) -> bool {
 }
 
 /// Show `native` in the desktop's file manager instead of opening it.
+///
+/// On Windows the shell is asked directly (`shellopen::reveal`,
+/// `SHOpenFolderAndSelectItems`); it was `explorer /select,"<path>"`, a
+/// process of this app's own with a quoting rule of its own.
 pub(crate) fn reveal_in_file_manager(native: &str) -> Result<(), AppError> {
+    let failed = |detail: String| {
+        AppError::new("err.open.reveal")
+            .with("path", native)
+            .detail(detail)
+    };
     #[cfg(target_os = "windows")]
-    let mut cmd = {
-        use std::os::windows::process::CommandExt;
-        let mut c = std::process::Command::new("explorer");
-        // `raw_arg`: Explorer wants `/select,"<path>"` with the quotes around
-        // the path only; a whole-argument quote (what `arg` would add for a
-        // path with a space) makes it ignore the selection.
-        c.raw_arg(format!("/select,\"{native}\""));
-        c
-    };
+    {
+        crate::shellopen::reveal(native).map_err(failed)
+    }
     #[cfg(target_os = "macos")]
-    let mut cmd = {
-        let mut c = std::process::Command::new("open");
-        c.arg("-R").arg(native);
-        c
-    };
+    {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg("-R").arg(native);
+        cmd.spawn().map(|_| ()).map_err(|e| failed(e.to_string()))
+    }
     #[cfg(all(unix, not(target_os = "macos")))]
-    let mut cmd = {
+    {
         // `xdg-open` has no "select": the folder it is in is the nearest thing.
         let folder = Path::new(native)
             .parent()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| native.to_string());
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(folder);
-        c
-    };
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(folder);
+        cmd.spawn().map(|_| ()).map_err(|e| failed(e.to_string()))
+    }
+}
 
-    cmd.spawn().map(|_| ()).map_err(|e| {
-        AppError::new("err.open.reveal")
-            .with("path", native)
-            .detail(e)
-    })
+/// The Windows creation flags of the editor command: a console of its own
+/// (`CREATE_NEW_CONSOLE`) and a process group of its own
+/// (`CREATE_NEW_PROCESS_GROUP`).
+///
+/// Never `CREATE_NO_WINDOW` and never `DETACHED_PROCESS`. The command is
+/// whatever the user typed into the Editor setting; a terminal editor
+/// (`nvim {file}`) started without a window would run unseen until the
+/// machine shuts down, which is exactly the hidden process this app must not
+/// leave behind. With its own console it is a window the user ordered and
+/// works in (the named exception of the plan). A windowed editor ignores the
+/// console flag; a `.cmd` wrapper shows its console for as long as it runs.
+#[cfg(windows)]
+pub(crate) const fn editor_creation_flags() -> u32 {
+    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP
+}
+
+/// Start the editor command, detached on purpose: the editor is the user's
+/// program, it outlives the app, and nothing of the app's is handed to it —
+/// no pipe to its input or output, no console of the app's.
+pub(crate) fn start_editor(program: &str, args: &[String]) -> std::io::Result<()> {
+    use std::process::Stdio;
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(editor_creation_flags());
+    }
+    let mut child = cmd.spawn()?;
+    // Waited for on a thread of its own, so the editor's exit is collected
+    // whenever it comes and the command returns now.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Open a source file in an editor, at a line where one is known.
@@ -640,15 +679,7 @@ pub(crate) fn open_in_editor(
         .ok_or_else(|| AppError::new("err.editor.empty"))?;
     let args: Vec<String> = parts.collect();
 
-    let mut cmd = std::process::Command::new(&program);
-    cmd.args(&args);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    cmd.spawn().map(|_| ()).map_err(|e| {
+    start_editor(&program, &args).map_err(|e| {
         AppError::new("err.proc.run")
             .with("program", &program)
             .detail(e)

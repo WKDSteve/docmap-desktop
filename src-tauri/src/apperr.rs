@@ -396,6 +396,7 @@ mod tests {
         ("safe_read.rs", include_str!("safe_read.rs")),
         ("search.rs", include_str!("search.rs")),
         ("server.rs", include_str!("server.rs")),
+        ("shellopen.rs", include_str!("shellopen.rs")),
         ("stats.rs", include_str!("stats.rs")),
         ("telemetry.rs", include_str!("telemetry.rs")),
         ("testutil.rs", include_str!("testutil.rs")),

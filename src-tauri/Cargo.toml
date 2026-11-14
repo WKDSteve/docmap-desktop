@@ -43,6 +43,18 @@ ureq = { version = "3", default-features = false }
 sha2 = "0.10"
 gix = { version = "0.90.0", default-features = false, features = ["dirwalk", "sha1"] }
 
+# Opening a folder, a document or an address, and showing a file in its
+# folder, by asking the shell (src/shellopen.rs) instead of starting
+# `explorer.exe`. The version tauri already has in the tree: no new package.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_Common",
+] }
+
 [dev-dependencies]
 # `tauri::test::mock_app()` — a real AppHandle without a real window, so
 # the sidecar/resource resolution in engine_info() can be exercised by

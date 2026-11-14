@@ -395,6 +395,91 @@ const R = {
       }))
     };
   },
+  // The Rules tab, over a seeded ruleset: three families in two files, most
+  // rules manual (as in a real ruleset), two with a predicate so the trust
+  // row and its dialog have something to show. `p2` has no rules at all, to
+  // look at the message that takes the list's place. Trust lives in the page
+  // (`RULES_TRUSTED`), so trusting and revoking can be clicked through.
+  rules_catalog: (a) => {
+    if (a.id === "p2") {
+      return {
+        available: false,
+        reason: "no ruleset is configured: name one in the project's .rules.json (rulesets), or set a vault"
+      };
+    }
+    return {
+      available: true,
+      rulesets: [{
+        name: "../ruleset", origin: "project", path: RULESET, trusted: RULES_TRUSTED,
+        trust: {
+          state: RULES_TRUSTED ? "trusted" : "untrusted", real: RULESET, predicates: 2,
+          by: RULES_TRUSTED ? "steve" : null, at: RULES_TRUSTED ? 1794000000000 : null, problem: null
+        }
+      }],
+      gates: [{ name: "release", families: ["D", "L"] }],
+      rules: SEEDED_RULES,
+      counts: { rules: SEEDED_RULES.length, automated: 5, manual: SEEDED_RULES.length - 5, predicates: 2 },
+      errors: [`${RULESET}/style.md:162: rule L-99: invalid agent field (unknown key qustion) -- ignored`],
+      warnings: ["project .rules.json: a rulesets entry leaves the project folder; it is used, but its lua_predicate checks do not run, see trust"]
+    };
+  },
+  rules_run: (a) => {
+    const asked = String(a.selection || "").split(",");
+    const verdict = {
+      "D-01": ["fail", [
+        { file: "lua/docmap/core/deps.lua", line: 41, text: "require() inside a loop" },
+        { file: "lua/docmap/init.lua", line: 7, text: "require() inside a loop" }
+      ]],
+      "D-04": ["pass", []],
+      "L-01": RULES_TRUSTED
+        ? ["pass", []]
+        : ["error", [{ file: ".", text: "predicate not trusted: the host has not trusted this ruleset (--trust=<folder>)" }]],
+      "L-05": RULES_TRUSTED
+        ? ["fail", [{ file: "lua/docmap/health.lua", line: 3, text: "no health module" }]]
+        : ["error", [{ file: ".", text: "predicate not trusted: the host has not trusted this ruleset (--trust=<folder>)" }]],
+      "S-03": ["waived", []]
+    };
+    return {
+      available: true,
+      results: asked.filter((id) => verdict[id]).map((id) => ({
+        id, family: id.split("-")[0], status: verdict[id][0], findings: verdict[id][1]
+      }))
+    };
+  },
+  agent_preview: (a) => ({
+    destination: null, refused: null, models: [], batches: [], totals: {}, extra: {}, ignore: {},
+    skipped: String(a.selection || "").split(",").includes("S-02")
+      ? [{ id: "S-02", status: "manual", reason: "scope matches no file that may be sent (2 denied)" }]
+      : []
+  }),
+  rules_trust_preview: () => ({
+    path: RULESET, sha256: "3f9a5c0d1e7b42a68c1d0f6e9b7a3c5d2e4f60718293a4b5c6d7e8f9a0b1c2d3",
+    files: 2, bytes: 18432, state: RULES_TRUSTED ? "trusted" : "untrusted",
+    predicates: SEEDED_RULES.filter((r) => r.check === "lua_predicate").map((r) => ({
+      id: r.id, title: r.title, file: r.source_file, line: r.source_line
+    }))
+  }),
+  rules_trust_grant: () => { RULES_TRUSTED = true; return null; },
+  rules_trust_revoke: () => { RULES_TRUSTED = false; return null; },
+  rules_predicate_source: (a) => ({
+    id: a.rule, file: `${RULESET}/style.md`, line: 74, truncated: false,
+    text: [
+      "```rule",
+      `id = "${a.rule}",`,
+      'severity = "recommended",',
+      "check = {",
+      '  type = "lua_predicate",',
+      "  fn = function(root)",
+      '    local hits = vim.fn.glob(root .. "/lua/*/health.lua", false, true)',
+      "    if #hits > 0 then",
+      "      return true",
+      "    end",
+      '    return false, "no health module"',
+      "  end,",
+      "},",
+      "```"
+    ].join("\n")
+  }),
   import_many: (a) => ({
     found: (a.roots || []).length,
     added: (a.roots || []).map((r) => ({
@@ -405,6 +490,31 @@ const R = {
     errors: []
   })
 };
+
+// The seeded ruleset of the Rules tab (see `R.rules_catalog`).
+const RULESET = "E:/repos/shared-rules/lua";
+let RULES_TRUSTED = false;
+const SEEDED_RULES = [
+  ["D-01", "deps.md", "Loading", "grep", "`D-01` — no require() inside a loop"],
+  ["D-02", "deps.md", "Loading", null, "`D-02` — a module names every dependency it loads at its top"],
+  ["D-03", "deps.md", "Loading", null, "`D-03` — optional dependencies are probed, never required blindly"],
+  ["D-04", "deps.md", "Versions", "file_exists", "`D-04` — the lock file is committed"],
+  ["D-05", "deps.md", "Versions", null, "`D-05` — a version bump says in its commit what it was tested against, and a very long title like this one has to end in an ellipsis instead of pushing the result columns out of the window"],
+  ["L-01", "style.md", "Names", "lua_predicate", "`L-01` — module names match their path"],
+  ["L-02", "style.md", "Names", null, "`L-02` — a boolean is named as a question"],
+  ["L-03", "style.md", "Names", null, "`L-03` — no abbreviations in public names"],
+  ["L-04", "style.md", "Errors", null, "`L-04` — an error names the thing that failed"],
+  ["L-05", "style.md", "Errors", "lua_predicate", "`L-05` — a health module exists"],
+  ["S-01", "style.md", "Safety", null, "`S-01` — no shell string is built from input"],
+  ["S-02", "style.md", "Safety", null, "`S-02` — secrets never reach a log"],
+  ["S-03", "style.md", "Safety", "json_key_absent", "`S-03` — no token in a checked-in config"],
+  ["S-04", "style.md", "Safety", null, "`S-04` — a path from outside is resolved before it is used"]
+].map(([id, file, section, check, title], i) => ({
+  id, family: id.split("-")[0], title, section, severity: "recommended",
+  text: `The full text of ${id}, as the ruleset states it.\nA second line, so the detail shows how a longer rule wraps.`,
+  source_file: `${RULESET}/${file}`, source_line: 10 + i * 12,
+  has_check: !!check, check: check || undefined
+}));
 
 window.__stubListeners = {};
 window.__stubEmit = (name, payload) => {

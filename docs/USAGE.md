@@ -15,6 +15,7 @@ the code, not recalled.
 - [Workspaces](#workspaces)
 - [The window](#the-window)
 - [The project bar, search and statistics](#the-project-bar-search-and-statistics)
+- [Rules](#rules)
 - [Files on disk](#files-on-disk)
 - [Opening a file where an entity lives](#opening-a-file-where-an-entity-lives)
 - [Generate, Generate all, Generate the out-of-date ones](#generate-generate-all-generate-the-out-of-date-ones)
@@ -208,10 +209,11 @@ feature.
 | Part | What it is |
 |---|---|
 | **Sidebar** | The project picker, the per-project detail block, and the Engine and Neovim panels. Hidden with **View → Sidebar** (`Ctrl+B`). The pin in its corner (or **View → Auto-hide sidebar**) lets it fold to a thin edge and open as an overlay while the pointer is on it. |
-| **Project bar** | Above the main pane for a selected project: the **Map / Files / Statistics** switch and the search box — see below. |
+| **Project bar** | Above the main pane for a selected project: the **Map / Files / Statistics / Rules** switch and the search box — see below. |
 | **Main pane** | The generated map, embedded. Everything inside it is `docmap.nvim`'s surface, not this app's. With nothing selected it shows the whole workspace instead — see below. |
 | **Files pane** | The live file tree — see below. **View → Files on disk** (`Ctrl+Shift+F`). |
 | **Statistics pane** | What the project is made of, counted now. **View → Statistics**. |
+| **Rules pane** | The project's rules and the mechanical run of the automated ones — see [Rules](#rules). |
 | **Status bar** | Spans the bottom, carrying the project path and the progress of anything long-running. |
 
 **Zoom** is in **View** (`Ctrl+plus`, `Ctrl+-`, `Ctrl+0`). The map is a
@@ -386,6 +388,67 @@ language better than a line counter does. Generated and vendored folders and the
 map are left out; very large and binary files are counted as files and not
 read. **Count again** refreshes it. A count ends by itself after twenty seconds or
 a gigabyte of reading and says that its numbers are a lower bound.
+
+## Rules
+
+The **Rules** tab of the project bar lists every rule of the project's rulesets.
+Which rulesets those are is the project's own `.rules.json` (`rulesets`, paths
+relative to the project root, and `gates`); without that file it is the vault
+named by `RULES_VAULT`. With neither, or with a file that cannot be used, the tab
+says so in place of the list. The list comes from the engine, the same code
+`:Rules check` runs in Neovim; the first look at a project starts the engine,
+which takes a few seconds on Windows. **Read again** asks it anew.
+
+A rule is either **automated** (it has a check the engine can run: a grep, a
+file that must exist, a key that must be absent, a Lua predicate) or **manual**
+(somebody has to read the code). In a real ruleset most rules are manual, so the
+two are kept apart everywhere and never by colour alone: `◆ auto` and
+`○ manual` on every row, a filter chip with a count for each, both counts in
+every group header and in the selection bar.
+
+- **By file / By family** groups the list by rule file and section, or by family
+  (`DEP`, `SEC`…). A ruleset with one file per rule opens by family.
+- The checkbox of a group has three states and only ever touches what the filter
+  shows: with **manual** chosen, ticking a family selects its manual rules and
+  nothing hidden. Shift-click selects the range from the last click. **Select
+  all manual** adds the manual rules of a group.
+- A click on a title shows the rule's text and where it is written.
+
+**Start** runs the automated rules of the selection in the engine on this
+machine. Nothing is sent anywhere and no model is asked. Each gets a result in
+the **Mechanical** column (`✓ pass`, `✕ fail`, `! error`, `– waived`), and a
+failed rule lists its findings; a finding opens the file at its line. A run that
+does not come back within two minutes is stopped, and its rules show that as an
+error. The manual rules of the selection are not run: they are marked as left for
+an agent run, which is a separate step you start yourself, and a rule that could
+not be sent says why. Results of an agent appear in the **Agent** column, never
+in the mechanical one.
+
+Once a project's rules have been read, the sidebar shows two numbers for it:
+manual rules still open, and automated ones whose last run did not pass.
+
+### Trusting a ruleset
+
+A `lua_predicate` check is code from the ruleset, and it would run with your
+rights. So it runs only for a ruleset you have trusted on this machine. Until
+then such a rule reports `predicate not trusted` as an error, visibly, and the
+rest of the ruleset runs as usual.
+
+**Trust…** in the Rules tab opens a dialog that shows what would be trusted: the
+real folder (a link is followed to where it points), how many files it holds,
+and every rule that brings code, with **Show code**. Trusting is never the
+default: the button works only after you tick that you have looked at the code,
+and Enter closes the dialog.
+
+The trust is for exactly that content. It is stored as the folder and the
+SHA-256 of everything in it; when a file is added, removed or changed, the
+ruleset is `changed since it was trusted`, its predicates stop running, and
+**Look again…** asks anew. **Revoke trust** takes it back. The list lives in
+`rules-trust.json` in the settings folder and goes nowhere else. If that file
+cannot be read, the tab says so and no ruleset is trusted.
+
+The engine process of a run may hold one gigabyte at most on Windows and Linux;
+on macOS only the time limit applies.
 
 ## Files on disk
 

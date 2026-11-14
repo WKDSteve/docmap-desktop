@@ -107,6 +107,10 @@
              plugin and an opted-out project all leave these two hidden, so a
              machine without the plugin looks exactly as it did before. Filled
              with textContent — every string here can come from a file. -->
+        <!-- The project's rules in two numbers, once they have been read:
+             manual rules nobody has answered, automated ones whose last run
+             did not pass. Opens the Rules tab. -->
+        <button id="proj-rules" class="rules-count" type="button" hidden></button>
         <p id="proj-traffic" class="meta traffic" hidden></p>
         <p id="proj-traffic-age" class="meta traffic-age" hidden></p>
         <button
@@ -184,6 +188,7 @@
           <button type="button" role="tab" class="on" data-pane="map" data-i18n="pane.map">Map</button>
           <button type="button" role="tab" data-pane="files" data-i18n="pane.files">Files</button>
           <button type="button" role="tab" data-pane="stats" data-i18n="pane.stats">Statistics</button>
+          <button type="button" role="tab" data-pane="rules" data-i18n="pane.rules">Rules</button>
         </div>
 
         <!-- One box for three questions: text in files, file names, and what
@@ -266,6 +271,54 @@
           <h3 data-i18n="stats.largest">Longest source files</h3>
           <ul id="stats-largest" class="ov-deps-list"></ul>
           <p id="stats-foot" class="stats-note"></p>
+        </div>
+      </section>
+
+      <!-- The project's rules: every rule of the rulesets its `.rules.json`
+           (or the vault) names, grouped, with the automated and the manual
+           ones kept apart everywhere -- most rules of a real ruleset have no
+           check, so the manual ones are the list and not its leftover. Start
+           runs the automated ones in the engine on this machine; nothing
+           here sends anything, and no model is asked. The list comes from
+           the engine (`rules_catalog`), never from the map. -->
+      <section id="rules" class="rules" hidden>
+        <header class="rules-head">
+          <h2 id="rules-title">Rules</h2>
+          <button id="rules-refresh" type="button" class="addbox-secondary" data-i18n="rules.refresh">Read again</button>
+        </header>
+        <p id="rules-state" class="rules-note" role="status"></p>
+        <!-- The rulesets whose predicate checks are code, and whether this
+             machine trusts them. Only there when a ruleset has such rules. -->
+        <div id="rules-trust" class="rules-trust" hidden></div>
+        <ul id="rules-problems" class="rules-problems" hidden></ul>
+        <div id="rules-body" class="rules-body" hidden>
+          <div class="rules-tools">
+            <div class="rules-seg" role="group" data-i18n-aria="rules.group.label" aria-label="Group by">
+              <button id="rules-by-file" type="button" aria-pressed="true" data-i18n="rules.group.file">By file</button>
+              <button id="rules-by-family" type="button" aria-pressed="false" data-i18n="rules.group.family">By family</button>
+            </div>
+            <!-- Filter chips with counts. The lane is said by a shape and a
+                 word, never by colour alone. -->
+            <div id="rules-chips" class="rules-chips" role="group" data-i18n-aria="rules.filter.label" aria-label="Show"></div>
+            <div id="rules-gates" class="rules-gates" role="group" data-i18n-aria="rules.gate.label" aria-label="Gates" hidden></div>
+            <input id="rules-query" class="rules-query" type="search" autocomplete="off" spellcheck="false"
+                   data-i18n-placeholder="rules.query" data-i18n-aria="rules.query" placeholder="Filter rules…" />
+          </div>
+          <div class="rules-cols" aria-hidden="true">
+            <span data-i18n="rules.col.rule">Rule</span>
+            <span data-i18n="rules.col.mechanical">Mechanical</span>
+            <span data-i18n="rules.col.agent">Agent</span>
+          </div>
+          <div id="rules-list" class="rules-list"></div>
+          <footer class="rules-bar">
+            <div class="rules-bar-counts">
+              <span id="rules-sel-auto" class="rules-lane auto"></span>
+              <span id="rules-sel-manual" class="rules-lane manual"></span>
+              <button id="rules-clear" type="button" class="addbox-secondary" data-i18n="rules.clear">Clear selection</button>
+            </div>
+            <p id="rules-start-note" class="rules-note"></p>
+            <button id="rules-start" type="button" class="addbox-go" disabled></button>
+          </footer>
         </div>
       </section>
 
@@ -589,6 +642,37 @@
       <p id="traffic-paths-empty" class="addbox-note" hidden data-i18n="traffic.detail.paths.empty">
         Nothing yet.
       </p>
+    </dialog>
+
+    <!-- Trusting a ruleset: its `lua_predicate` checks are code that runs
+         with the user's rights. The dialog says what would be trusted (the
+         real folder, how much is in it, every rule that brings code, the
+         code on request), and trusting is never the default: the button is
+         off until the box is ticked, and Enter closes the dialog. -->
+    <dialog id="trustbox" class="addbox trustbox">
+      <form method="dialog" class="addbox-close-form">
+        <button class="addbox-x" value="cancel" aria-label="Close">&times;</button>
+      </form>
+
+      <h2 class="addbox-title" data-i18n="rules.trust.title">Trust this ruleset?</h2>
+      <p class="addbox-lead" data-i18n="rules.trust.lead">
+        The rules below bring Lua code. Trusted, that code runs on this machine with your rights whenever you run these rules.
+      </p>
+      <p id="trust-path" class="trust-path"></p>
+      <p id="trust-facts" class="addbox-note"></p>
+      <p id="trust-state" class="addbox-note" role="status"></p>
+      <ul id="trust-predicates" class="trust-predicates"></ul>
+      <label class="trust-confirm">
+        <input id="trust-seen" type="checkbox" />
+        <span data-i18n="rules.trust.seen">I have looked at this code and want it to run</span>
+      </label>
+      <p class="addbox-note" data-i18n="rules.trust.note">
+        The trust is kept on this machine for exactly this content. If a file of the ruleset changes, you are asked again.
+      </p>
+      <div class="trust-actions">
+        <button id="trust-cancel" type="button" class="addbox-secondary" autofocus data-i18n="rules.trust.cancel">Do not trust</button>
+        <button id="trust-go" type="button" class="addbox-secondary trust-go" disabled data-i18n="rules.trust.go">Trust this ruleset</button>
+      </div>
     </dialog>
 
     <!-- What changed since the map was made: the evidence behind the

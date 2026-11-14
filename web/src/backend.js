@@ -38,6 +38,15 @@ export const UNAVAILABLE = [
   'traffic_set_dir',
   'traffic_ask_neovim',
   'traffic_set_hidden',
+  // The Rules tab: the catalog, the run and the trust store need the engine as a program and files outside the
+  // picked folder (the rulesets). The tab is hidden here (hidden.js).
+  'rules_catalog',
+  'rules_run',
+  'rules_trust_preview',
+  'rules_trust_grant',
+  'rules_trust_revoke',
+  'rules_predicate_source',
+  'agent_preview',
 ];
 
 const DEFAULT_WORKSPACE = 'Default';

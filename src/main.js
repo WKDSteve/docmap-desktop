@@ -66,6 +66,28 @@ import {
   engineLanguageText,
   engineVerdict,
 } from "./lib/languages.js";
+import {
+  list as rulesList,
+  titleOf,
+  laneOf,
+  visibleRules,
+  laneCounts,
+  groupRules,
+  orderedIds,
+  checkState,
+  toggleGroup,
+  toggleRule,
+  selectRange,
+  selectManual,
+  selectFamilies,
+  splitSelection,
+  runSelections,
+  mergeRun,
+  mechanicalCounts,
+  sidebarCounts,
+  notSendable,
+  untrustedRulesets,
+} from "./lib/rules.js";
 
 function fatal(what, err) {
   const box = document.getElementById("placeholder");
@@ -323,7 +345,7 @@ function showPlaceholder(title, body) {
  */
 function showTaskPlaceholder(title, body) {
   showPlaceholder(title, body);
-  if (view.selectedId && (filesOpen || statsOpen)) setPane("map");
+  if (view.selectedId && (filesOpen || statsOpen || rulesOpen)) setPane("map");
 }
 
 // =====================================================================
@@ -673,7 +695,7 @@ async function render() {
     // A mark inside the option, because the closed control shows exactly one
     // line and this is the one thing worth carrying into it.
     const f = freshness.get(p.id);
-    o.textContent = (f && f.stale ? "• " : "") + p.name;
+    o.textContent = (f && f.stale ? "• " : "") + p.name + rulesMark(p.id);
     els.list.append(o);
   }
 
@@ -1107,6 +1129,7 @@ async function renderDetail() {
 
   refreshFreshness(p.id);
   renderTraffic(p);
+  countRulesFor();
 }
 
 /**
@@ -3545,6 +3568,7 @@ async function exportCurrentView() {
 
 let filesOpen = false;
 let statsOpen = false;
+let rulesOpen = false;
 let filesPath = "";
 
 function formatSize(n) {
@@ -3706,7 +3730,7 @@ async function renderFiles() {
  * page, so coming back costs no reload), which is why they are one function:
  * showing one hides the other and the frame stays put underneath.
  *
- * @param {"map"|"files"|"stats"} name
+ * @param {"map"|"files"|"stats"|"rules"} name
  */
 function setPane(name) {
   // The panes belong to a project; with none selected the overview is the
@@ -3715,9 +3739,11 @@ function setPane(name) {
   if (!view.selectedId) name = "map";
   filesOpen = name === "files";
   statsOpen = name === "stats";
-  const overlay = filesOpen || statsOpen;
+  rulesOpen = name === "rules";
+  const overlay = filesOpen || statsOpen || rulesOpen;
   document.getElementById("files").hidden = !filesOpen;
   document.getElementById("stats").hidden = !statsOpen;
+  document.getElementById("rules").hidden = !rulesOpen;
   // The map keeps its src: coming back should not cost a reload of a
   // two-megabyte page that has not changed.
   els.frame.hidden = overlay || !view.mapBase;
@@ -3728,6 +3754,7 @@ function setPane(name) {
     renderFiles();
   }
   if (statsOpen) renderStats();
+  if (rulesOpen) renderRules();
   syncPaneTabs();
   syncMenu();
 }
@@ -3736,8 +3763,10 @@ function setPane(name) {
 function closePanes() {
   filesOpen = false;
   statsOpen = false;
+  rulesOpen = false;
   document.getElementById("files").hidden = true;
   document.getElementById("stats").hidden = true;
+  document.getElementById("rules").hidden = true;
   syncPaneTabs();
 }
 
@@ -3757,13 +3786,14 @@ function refreshPanes(keepPath = false) {
     renderFiles();
   }
   if (statsOpen) renderStats();
+  if (rulesOpen) renderRules();
   syncPaneTabs();
 }
 
 const paneTabs = [...document.querySelectorAll(".viewtabs button")];
 
 function syncPaneTabs() {
-  const now = statsOpen ? "stats" : filesOpen ? "files" : "map";
+  const now = rulesOpen ? "rules" : statsOpen ? "stats" : filesOpen ? "files" : "map";
   for (const b of paneTabs) {
     const on = b.dataset.pane === now;
     b.classList.toggle("on", on);
@@ -3772,6 +3802,747 @@ function syncPaneTabs() {
 }
 
 for (const b of paneTabs) b.addEventListener("click", () => setPane(b.dataset.pane));
+
+// =====================================================================
+// Rules
+//
+// A project's rules, from the engine (`rules_catalog`), and the mechanical
+// run of the ones that have a check (`rules_run`). The list logic is in
+// `lib/rules.js`; this is the drawing and the clicks.
+//
+// Nothing here asks a model. Start runs the automated rules in the engine on
+// this machine. The manual ones of a selection are left for an agent run,
+// which is a separate, explicit step: for them the engine is only asked what
+// it *would* send (`agent_preview`, which sends nothing), so a rule that
+// could not be sent says why in its row.
+// =====================================================================
+
+/** Per project id: catalog, results, selection and how the list is shown. */
+const rulesState = new Map();
+
+function rulesOf(id) {
+  let st = rulesState.get(id);
+  if (!st) {
+    st = {
+      catalog: null,
+      loading: null,
+      results: new Map(),
+      selected: new Set(),
+      notes: new Map(),
+      collapsed: new Set(),
+      open: new Set(),
+      lane: "all",
+      query: "",
+      grouping: null,
+      anchor: null,
+      running: false,
+    };
+    rulesState.set(id, st);
+  }
+  return st;
+}
+
+const rulesUi = {
+  title: document.getElementById("rules-title"),
+  state: document.getElementById("rules-state"),
+  trust: document.getElementById("rules-trust"),
+  problems: document.getElementById("rules-problems"),
+  body: document.getElementById("rules-body"),
+  byFile: document.getElementById("rules-by-file"),
+  byFamily: document.getElementById("rules-by-family"),
+  chips: document.getElementById("rules-chips"),
+  gates: document.getElementById("rules-gates"),
+  query: document.getElementById("rules-query"),
+  list: document.getElementById("rules-list"),
+  selAuto: document.getElementById("rules-sel-auto"),
+  selManual: document.getElementById("rules-sel-manual"),
+  clear: document.getElementById("rules-clear"),
+  note: document.getElementById("rules-start-note"),
+  start: document.getElementById("rules-start"),
+  refresh: document.getElementById("rules-refresh"),
+  count: document.getElementById("proj-rules"),
+};
+
+/** The shape that goes with a lane's word, so the lane is never colour alone. */
+const LANE_SHAPE = { auto: "◆", manual: "○" };
+/** And with a mechanical status. */
+const STATUS_SHAPE = { pass: "✓", fail: "✕", error: "!", waived: "–" };
+/** And with the trust of a ruleset. */
+const TRUST_SHAPE = { trusted: "✓", untrusted: "○", changed: "!", unreadable: "✕" };
+
+function laneLabel(lane, n) {
+  const word = lane === "auto" ? t("rules.filter.auto") : t("rules.filter.manual");
+  return `${LANE_SHAPE[lane]} ${fill(word, { n })}`;
+}
+
+/**
+ * Read the project's catalog, once at a time per project. The answer is kept:
+ * the sidebar's count and the tab read the same one.
+ */
+function loadRules(id) {
+  const st = rulesOf(id);
+  if (!st.loading) {
+    st.loading = invoke("rules_catalog", { id })
+      .then((catalog) => {
+        st.catalog = catalog;
+        const rules = rulesList(catalog.rules);
+        const known = new Set(rules.map((r) => r.id));
+        st.selected = new Set([...st.selected].filter((rid) => known.has(rid)));
+        if (!st.grouping) {
+          // A ruleset with one file per rule makes "by file" a list of single
+          // rules; its families are the readable grouping then.
+          const files = new Set(rules.map((r) => r.source_file)).size;
+          st.grouping = files * 2 > rules.length && rules.length > 8 ? "family" : "file";
+        }
+        return catalog;
+      })
+      .finally(() => {
+        st.loading = null;
+      });
+  }
+  return st.loading;
+}
+
+async function renderRules(force = false) {
+  const id = view.selectedId;
+  if (!rulesOpen || !id) return;
+  const p = view.projects.find((x) => x.id === id);
+  rulesUi.title.textContent = p ? fill(t("rules.titleFor"), { name: p.name }) : t("rules.title");
+  const st = rulesOf(id);
+  if (force) st.catalog = null;
+  if (!st.catalog) {
+    rulesUi.body.hidden = true;
+    rulesUi.trust.hidden = true;
+    rulesUi.problems.hidden = true;
+    rulesUi.state.textContent = t("rules.reading");
+    rulesUi.refresh.disabled = true;
+    try {
+      await loadRules(id);
+    } catch (e) {
+      if (id === view.selectedId) rulesUi.state.textContent = errorText(e);
+      return;
+    } finally {
+      rulesUi.refresh.disabled = false;
+    }
+  }
+  // The answer can arrive after the reader moved on or left the pane.
+  if (id !== view.selectedId || !rulesOpen) return;
+  drawRules(id);
+  renderRulesCount();
+  // the picker's mark for this project, now that there is something to say
+  void render();
+}
+
+/**
+ * Draw the tab for project `id`. The list is rebuilt on every change, so what
+ * the reader holds on to is carried over the rebuild: how far the pane is
+ * scrolled (an emptied list would otherwise let it snap back to the top) and
+ * which control has the keyboard (`data-fk`, so Space on a checkbox can be
+ * followed by Tab).
+ */
+function drawRules(id) {
+  const pane = document.getElementById("rules");
+  const top = pane.scrollTop;
+  const held = document.activeElement && pane.contains(document.activeElement)
+    ? document.activeElement.dataset.fk
+    : undefined;
+  drawRulesNow(id);
+  pane.scrollTop = top;
+  if (held) {
+    const again = [...pane.querySelectorAll("[data-fk]")].find((el) => el.dataset.fk === held);
+    if (again) again.focus({ preventScroll: true });
+  }
+}
+
+function drawRulesNow(id) {
+  const st = rulesOf(id);
+  const catalog = st.catalog;
+  if (!catalog || catalog.available !== true) {
+    rulesUi.body.hidden = true;
+    rulesUi.trust.hidden = true;
+    rulesUi.problems.hidden = true;
+    rulesUi.state.textContent = fill(t("rules.unavailable"), {
+      reason: (catalog && catalog.reason) || "",
+    });
+    return;
+  }
+  const rules = rulesList(catalog.rules);
+  const all = laneCounts(rules);
+  rulesUi.state.textContent = fill(t("rules.summary"), {
+    rules: all.total,
+    auto: all.auto,
+    manual: all.manual,
+  });
+  drawRulesProblems(catalog);
+  drawRulesTrust(id, catalog);
+  rulesUi.body.hidden = false;
+
+  for (const [button, grouping] of [
+    [rulesUi.byFile, "file"],
+    [rulesUi.byFamily, "family"],
+  ]) {
+    const on = st.grouping === grouping;
+    button.classList.toggle("on", on);
+    button.setAttribute("aria-pressed", String(on));
+  }
+  if (rulesUi.query.value !== st.query) rulesUi.query.value = st.query;
+
+  // The chips count what the query leaves, so a chip never promises rows the
+  // list will not show.
+  const queried = visibleRules(rules, { query: st.query });
+  const lanes = laneCounts(queried);
+  rulesUi.chips.replaceChildren();
+  for (const [lane, label] of [
+    ["all", fill(t("rules.filter.all"), { n: lanes.total })],
+    ["auto", laneLabel("auto", lanes.auto)],
+    ["manual", laneLabel("manual", lanes.manual)],
+  ]) {
+    const chip = node("button", "rules-chip-filter" + (lane === "all" ? "" : " " + lane), label);
+    chip.type = "button";
+    chip.classList.toggle("on", st.lane === lane);
+    chip.setAttribute("aria-pressed", String(st.lane === lane));
+    chip.dataset.fk = "lane:" + lane;
+    chip.addEventListener("click", () => {
+      st.lane = lane;
+      drawRules(id);
+    });
+    rulesUi.chips.append(chip);
+  }
+
+  const shown = visibleRules(rules, { lane: st.lane, query: st.query });
+  // The gates of `.rules.json`: one click selects the shown rules of a gate's
+  // families. Absent when the project names none.
+  const gates = rulesList(catalog.gates);
+  rulesUi.gates.replaceChildren();
+  rulesUi.gates.hidden = gates.length === 0;
+  for (const gate of gates) {
+    const pick = node("button", "rules-pick", fill(t("rules.gate"), { name: gate.name }));
+    pick.type = "button";
+    pick.title = fill(t("rules.gate.title"), { families: rulesList(gate.families).join(", ") });
+    pick.dataset.fk = "gate:" + gate.name;
+    pick.addEventListener("click", () => {
+      st.selected = selectFamilies(st.selected, shown, gate.families);
+      drawRules(id);
+    });
+    rulesUi.gates.append(pick);
+  }
+  const groups = groupRules(shown, st.grouping, rulesList(catalog.rulesets));
+  const order = orderedIds(groups);
+  rulesUi.list.replaceChildren();
+  if (!shown.length) rulesUi.list.append(node("p", "rules-note", t("rules.noMatch")));
+  for (const group of groups) rulesUi.list.append(ruleGroup(id, st, group, order));
+  drawRulesBar(id);
+}
+
+/** What the engine could not read of the rulesets, and what it warns about. */
+function drawRulesProblems(catalog) {
+  const lines = [...rulesList(catalog.warnings), ...rulesList(catalog.errors)].map(String);
+  if (catalog.trustStoreError) lines.unshift(errorText(catalog.trustStoreError));
+  rulesUi.problems.replaceChildren();
+  rulesUi.problems.hidden = lines.length === 0;
+  const SHOWN = 8;
+  for (const line of lines.slice(0, SHOWN)) rulesUi.problems.append(node("li", null, line));
+  if (lines.length > SHOWN) {
+    rulesUi.problems.append(
+      node("li", "more", fill(t("rules.more"), { n: lines.length - SHOWN }))
+    );
+  }
+}
+
+/** The rulesets that bring code, and what this machine thinks of each. */
+function drawRulesTrust(id, catalog) {
+  const withCode = rulesList(catalog.rulesets).filter(
+    (r) => (r.trust?.predicates ?? 0) > 0 || r.trust?.state === "changed"
+  );
+  rulesUi.trust.replaceChildren();
+  rulesUi.trust.hidden = withCode.length === 0;
+  if (!withCode.length) return;
+  if (untrustedRulesets(catalog).length) {
+    rulesUi.trust.append(node("p", "rules-note", t("rules.trust.effect")));
+  }
+  for (const ruleset of withCode) {
+    const state = ruleset.trust?.state ?? "untrusted";
+    const row = node("div", "rules-trust-row " + state);
+    const mark = node(
+      "span",
+      "rules-trust-state",
+      `${TRUST_SHAPE[state] ?? "○"} ${t("rules.trust.state." + state)}`
+    );
+    const what = node(
+      "span",
+      "rules-trust-what",
+      fill(t("rules.trust.row"), {
+        path: ruleset.trust?.real ?? ruleset.path,
+        n: ruleset.trust?.predicates ?? 0,
+      })
+    );
+    row.append(mark, what);
+    if (state === "trusted" && ruleset.trust?.by) {
+      const at = ruleset.trust.at ? new Date(ruleset.trust.at).toLocaleDateString(locale) : "";
+      row.append(
+        node("span", "rules-trust-by", fill(t("rules.trust.byAt"), { by: ruleset.trust.by, date: at }))
+      );
+    }
+    if (ruleset.trust?.problem) row.append(node("span", "rules-trust-by", errorText(ruleset.trust.problem)));
+    if (state === "trusted") {
+      const revoke = node("button", "addbox-secondary", t("rules.trust.revoke"));
+      revoke.type = "button";
+      revoke.addEventListener("click", async () => {
+        revoke.disabled = true;
+        try {
+          await invoke("rules_trust_revoke", { id, path: ruleset.path });
+        } catch (e) {
+          say(errorText(e));
+        }
+        renderRules(true);
+      });
+      row.append(revoke);
+    } else if (state !== "unreadable") {
+      const open = node(
+        "button",
+        "addbox-secondary",
+        state === "changed" ? t("rules.trust.again") : t("rules.trust.open")
+      );
+      open.type = "button";
+      open.addEventListener("click", () => openTrust(id, ruleset));
+      row.append(open);
+    }
+    rulesUi.trust.append(row);
+  }
+}
+
+/** A checkbox that can be all, some or none. */
+function triBox(state, label) {
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = state === "all";
+  box.indeterminate = state === "some";
+  box.setAttribute("aria-label", label);
+  if (state === "some") box.setAttribute("aria-checked", "mixed");
+  return box;
+}
+
+function ruleGroup(id, st, group, order) {
+  const wrap = node("section", "rules-group");
+  const head = node("div", "rules-group-head");
+  const folded = st.collapsed.has(group.key);
+
+  const fold = node("button", "rules-fold", folded ? "▸" : "▾");
+  fold.type = "button";
+  fold.setAttribute("aria-expanded", String(!folded));
+  fold.setAttribute("aria-label", t("rules.fold"));
+  fold.dataset.fk = "fold:" + group.key;
+  fold.addEventListener("click", () => {
+    if (st.collapsed.has(group.key)) st.collapsed.delete(group.key);
+    else st.collapsed.add(group.key);
+    drawRules(id);
+  });
+
+  const box = triBox(
+    checkState(group.rules, st.selected),
+    fill(t("rules.select.group"), { name: group.label })
+  );
+  box.dataset.fk = "group:" + group.key;
+  box.addEventListener("change", () => {
+    st.selected = toggleGroup(st.selected, group.rules);
+    drawRules(id);
+  });
+
+  const counts = laneCounts(group.rules);
+  const name = node("span", "rules-group-name", group.label);
+  name.title = group.label;
+  head.append(fold, box, name);
+  if (counts.auto) head.append(node("span", "rules-lane auto", laneLabel("auto", counts.auto)));
+  if (counts.manual) {
+    head.append(node("span", "rules-lane manual", laneLabel("manual", counts.manual)));
+    const pick = node("button", "rules-pick", t("rules.pickManual"));
+    pick.type = "button";
+    pick.dataset.fk = "pick:" + group.key;
+    pick.addEventListener("click", () => {
+      st.selected = selectManual(st.selected, group.rules);
+      drawRules(id);
+    });
+    head.append(pick);
+  }
+  wrap.append(head);
+  if (folded) return wrap;
+
+  const subs = group.subgroups.length ? group.subgroups : [{ key: group.key, label: "", rules: group.rules }];
+  for (const sub of subs) {
+    if (sub.label) {
+      const subHead = node("div", "rules-sub-head");
+      const subBox = triBox(
+        checkState(sub.rules, st.selected),
+        fill(t("rules.select.group"), { name: sub.label })
+      );
+      subBox.dataset.fk = "sub:" + sub.key;
+      subBox.addEventListener("change", () => {
+        st.selected = toggleGroup(st.selected, sub.rules);
+        drawRules(id);
+      });
+      subHead.append(subBox, node("span", "rules-sub-name", sub.label));
+      wrap.append(subHead);
+    }
+    for (const rule of sub.rules) wrap.append(ruleRow(id, st, rule, order));
+  }
+  return wrap;
+}
+
+function ruleRow(id, st, rule, order) {
+  const lane = laneOf(rule);
+  const wrap = node("div", "rules-item");
+  const row = node("div", "rules-row " + lane);
+  row.dataset.rule = rule.id;
+
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = st.selected.has(rule.id);
+  box.setAttribute("aria-label", fill(t("rules.select.rule"), { id: rule.id }));
+  box.dataset.fk = "rule:" + rule.id;
+  box.addEventListener("click", (ev) => {
+    st.selected = ev.shiftKey
+      ? selectRange(st.selected, order, st.anchor, rule.id)
+      : toggleRule(st.selected, rule.id);
+    st.anchor = rule.id;
+    drawRules(id);
+  });
+
+  const mark = node(
+    "span",
+    "rules-lane " + lane,
+    `${LANE_SHAPE[lane]} ${lane === "auto" ? t("rules.lane.auto") : t("rules.lane.manual")}`
+  );
+  const title = node("button", "rules-title", "");
+  title.type = "button";
+  title.append(node("span", "rules-id", rule.id), node("span", "rules-text", titleOf(rule)));
+  title.setAttribute("aria-expanded", String(st.open.has(rule.id)));
+  title.dataset.fk = "title:" + rule.id;
+  title.addEventListener("click", () => {
+    if (st.open.has(rule.id)) st.open.delete(rule.id);
+    else st.open.add(rule.id);
+    drawRules(id);
+  });
+
+  // Two slots that never share: what a check on this machine found, and what
+  // an agent proposed (empty until there is a run to show).
+  const mech = node("span", "rules-mech");
+  const result = st.results.get(rule.id);
+  if (result) {
+    // The chip carries the status; whose result it is, is the column's head
+    // (which stays in view) and the chip's own full name for a reader that
+    // does not see columns.
+    const word = t("rules.status." + result.status);
+    const chip = node("span", "rules-status " + result.status, `${STATUS_SHAPE[result.status] ?? "?"} ${word}`);
+    const full = fill(t("rules.mechanical"), { status: word });
+    chip.title = full;
+    chip.setAttribute("aria-label", full);
+    mech.append(chip);
+  }
+  const agent = node("span", "rules-agent");
+  const note = st.notes.get(rule.id);
+  if (note) agent.append(node("span", "rules-left", t("rules.left")));
+
+  row.append(box, mark, title, mech, agent);
+  wrap.append(row);
+
+  const detail = node("div", "rules-detail");
+  if (st.open.has(rule.id)) {
+    if (rule.text) detail.append(node("p", "rules-rule-text", rule.text));
+    detail.append(
+      node(
+        "p",
+        "rules-source",
+        fill(t("rules.source"), { file: rule.source_file ?? "", line: rule.source_line ?? "" })
+      )
+    );
+  }
+  if (note && note.why) {
+    detail.append(node("p", "rules-blocked", fill(t("rules.blocked"), { reason: note.why })));
+  }
+  if (result && (result.status === "fail" || result.status === "error")) {
+    const findings = rulesList(result.findings);
+    const SHOWN = 20;
+    const ul = node("ul", "rules-findings");
+    for (const f of findings.slice(0, SHOWN)) {
+      const li = node("li");
+      const where = f.file && f.file !== "." ? `${f.file}${f.line ? ":" + f.line : ""}` : "";
+      if (where) {
+        const open = node("button", "rules-finding-file", where);
+        open.type = "button";
+        open.addEventListener("click", () => {
+          invoke("open_in_editor", { id, path: f.file, line: f.line ?? null }).catch((err) =>
+            say(errorText(err))
+          );
+        });
+        li.append(open);
+      }
+      li.append(node("span", "rules-finding-text", f.text ?? ""));
+      ul.append(li);
+    }
+    if (findings.length > SHOWN) {
+      ul.append(node("li", "more", fill(t("rules.more"), { n: findings.length - SHOWN })));
+    }
+    if (findings.length) detail.append(ul);
+  }
+  if (detail.childNodes.length) wrap.append(detail);
+  return wrap;
+}
+
+/** The selection bar: the two lanes counted apart, and what Start will do. */
+function drawRulesBar(id) {
+  const st = rulesOf(id);
+  const { auto, manual } = splitSelection(rulesList(st.catalog?.rules), st.selected);
+  rulesUi.selAuto.textContent = `${LANE_SHAPE.auto} ${fill(t("rules.sel.auto"), { n: auto.length })}`;
+  rulesUi.selManual.textContent = `${LANE_SHAPE.manual} ${fill(t("rules.sel.manual"), { n: manual.length })}`;
+  rulesUi.clear.disabled = st.running || auto.length + manual.length === 0;
+  rulesUi.start.disabled = st.running || auto.length === 0;
+  rulesUi.start.textContent = st.running
+    ? t("rules.start.running")
+    : auto.length
+      ? plural("rules.start", auto.length)
+      : t("rules.start.none");
+  rulesUi.note.textContent = manual.length
+    ? plural("rules.note.mixed", manual.length)
+    : t("rules.note.local");
+}
+
+/**
+ * Start: the automated rules of the selection run in the engine, in as many
+ * calls as the engine's limits ask for. A call that dies marks its rules as
+ * errors instead of leaving them blank. The manual rules are marked as left
+ * for an agent run, with the reason where one could not be sent.
+ */
+async function startRules() {
+  const id = view.selectedId;
+  if (!id) return;
+  const st = rulesOf(id);
+  if (st.running || !st.catalog) return;
+  const { auto, manual } = splitSelection(rulesList(st.catalog.rules), st.selected);
+  if (!auto.length) return;
+  st.running = true;
+  st.notes = new Map(manual.map((rid) => [rid, {}]));
+  const redraw = () => {
+    if (id === view.selectedId && rulesOpen) drawRules(id);
+  };
+  redraw();
+  try {
+    for (const selection of runSelections(auto)) {
+      const asked = selection.split(",");
+      let answer;
+      try {
+        answer = await invoke("rules_run", { id, selection });
+        if (!answer || answer.available !== true) {
+          answer = { failed: (answer && answer.reason) || t("err.rules.shape") };
+        }
+      } catch (e) {
+        answer = { failed: errorText(e) };
+      }
+      st.results = mergeRun(st.results, asked, answer);
+      redraw();
+    }
+    for (const selection of runSelections(manual)) {
+      try {
+        const plan = await invoke("agent_preview", { id, selection, model: "" });
+        for (const [rid, why] of notSendable(plan.skipped)) st.notes.set(rid, { why });
+      } catch (e) {
+        // An engine without the agent half cannot say what would be sent; the
+        // rows keep "left for an agent run" and the reason goes to the status.
+        say(errorText(e));
+        break;
+      }
+    }
+  } finally {
+    st.running = false;
+    redraw();
+    renderRulesCount();
+    void render();
+  }
+  const counts = mechanicalCounts(
+    rulesList(st.catalog.rules).filter((r) => auto.includes(r.id)),
+    st.results
+  );
+  say(fill(t("rules.done"), counts));
+}
+
+/**
+ * The sidebar's line for the selected project: manual rules still open and
+ * automated ones whose last run did not pass. Hidden until the catalog has
+ * been read, and for a project without rules.
+ */
+function renderRulesCount() {
+  const id = view.selectedId;
+  const counts = id ? sidebarCounts(rulesState.get(id)?.catalog ?? null, rulesOf(id).results) : null;
+  rulesUi.count.hidden = !counts;
+  if (!counts) return;
+  rulesUi.count.textContent = counts.failed
+    ? fill(t("rules.count.failed"), counts)
+    : fill(t("rules.count"), counts);
+  rulesUi.count.title = t("rules.count.title");
+  rulesUi.count.classList.toggle("failed", counts.failed > 0);
+}
+
+/** The same two numbers as a short mark in the project picker, when known. */
+function rulesMark(id) {
+  const st = rulesState.get(id);
+  const counts = st ? sidebarCounts(st.catalog, st.results) : null;
+  if (!counts) return "";
+  return ` (${LANE_SHAPE.manual}${counts.manual}${counts.failed ? ` ${STATUS_SHAPE.fail}${counts.failed}` : ""})`;
+}
+
+/**
+ * The sidebar line of the project that was just selected: what is known of
+ * its rules, and nothing when they have not been read yet. Reading them is
+ * not done here: it starts the engine, which takes seconds on Windows, and a
+ * project switch is not a request to do that. Opening the tab is.
+ */
+function countRulesFor() {
+  renderRulesCount();
+}
+
+rulesUi.count.addEventListener("click", () => setPane("rules"));
+rulesUi.refresh.addEventListener("click", () => renderRules(true));
+rulesUi.start.addEventListener("click", () => startRules());
+rulesUi.clear.addEventListener("click", () => {
+  const id = view.selectedId;
+  if (!id) return;
+  rulesOf(id).selected = new Set();
+  drawRules(id);
+});
+for (const [button, grouping] of [
+  [rulesUi.byFile, "file"],
+  [rulesUi.byFamily, "family"],
+]) {
+  button.addEventListener("click", () => {
+    const id = view.selectedId;
+    if (!id) return;
+    rulesOf(id).grouping = grouping;
+    drawRules(id);
+  });
+}
+rulesUi.query.addEventListener("input", () => {
+  const id = view.selectedId;
+  if (!id) return;
+  rulesOf(id).query = rulesUi.query.value;
+  drawRules(id);
+  // Drawing replaced the chips, not the box: the caret stays where it was.
+});
+
+// ---------------------------------------------------------------------
+// Trusting a ruleset. The dialog shows what the backend would trust and
+// hands back the hash it showed; the backend refuses if the content is no
+// longer that. Trusting is never the default action.
+// ---------------------------------------------------------------------
+
+const trustUi = {
+  box: document.getElementById("trustbox"),
+  path: document.getElementById("trust-path"),
+  facts: document.getElementById("trust-facts"),
+  state: document.getElementById("trust-state"),
+  predicates: document.getElementById("trust-predicates"),
+  seen: document.getElementById("trust-seen"),
+  cancel: document.getElementById("trust-cancel"),
+  go: document.getElementById("trust-go"),
+};
+
+/** What the open dialog showed: `{ id, path, sha256 }`, or null. */
+let trustShown = null;
+
+function syncTrustGo() {
+  trustUi.go.disabled = !trustShown || !trustUi.seen.checked;
+}
+
+async function openTrust(id, ruleset) {
+  trustShown = null;
+  trustUi.path.textContent = ruleset.trust?.real ?? ruleset.path;
+  trustUi.facts.textContent = t("rules.trust.reading");
+  trustUi.state.textContent = "";
+  trustUi.predicates.replaceChildren();
+  trustUi.seen.checked = false;
+  trustUi.seen.disabled = true;
+  syncTrustGo();
+  trustUi.box.showModal();
+  let shown;
+  try {
+    shown = await invoke("rules_trust_preview", { id, path: ruleset.path });
+  } catch (e) {
+    trustUi.facts.textContent = "";
+    trustUi.state.textContent = errorText(e);
+    return;
+  }
+  if (!trustUi.box.open) return;
+  trustUi.path.textContent = shown.path;
+  trustUi.facts.textContent = fill(t("rules.trust.facts"), {
+    files: shown.files,
+    size: formatBytes(shown.bytes),
+    n: shown.predicates.length,
+    hash: shown.sha256.slice(0, 12),
+  });
+  if (shown.state === "changed") trustUi.state.textContent = t("rules.trust.changedNote");
+  if (!shown.predicates.length) {
+    trustUi.state.textContent = t("rules.trust.none");
+    return;
+  }
+  for (const rule of shown.predicates) {
+    const li = node("li");
+    const head = node("div", "trust-rule");
+    head.append(node("span", "rules-id", rule.id), node("span", "rules-text", titleOf(rule)));
+    const show = node("button", "addbox-secondary", t("rules.trust.show"));
+    show.type = "button";
+    show.setAttribute("aria-expanded", "false");
+    const code = node("pre", "trust-code");
+    code.hidden = true;
+    show.addEventListener("click", async () => {
+      if (!code.hidden) {
+        code.hidden = true;
+        show.textContent = t("rules.trust.show");
+        show.setAttribute("aria-expanded", "false");
+        return;
+      }
+      if (!code.dataset.read) {
+        try {
+          const src = await invoke("rules_predicate_source", { id, rule: rule.id });
+          code.textContent = src.text + (src.truncated ? "\n" + t("rules.trust.truncated") : "");
+        } catch (e) {
+          code.textContent = errorText(e);
+        }
+        code.dataset.read = "1";
+      }
+      code.hidden = false;
+      show.textContent = t("rules.trust.hide");
+      show.setAttribute("aria-expanded", "true");
+    });
+    head.append(show);
+    li.append(head, code);
+    trustUi.predicates.append(li);
+  }
+  trustShown = { id, path: ruleset.path, sha256: shown.sha256 };
+  trustUi.seen.disabled = false;
+  syncTrustGo();
+}
+
+trustUi.seen.addEventListener("change", syncTrustGo);
+trustUi.cancel.addEventListener("click", () => trustUi.box.close());
+trustUi.box.addEventListener("close", () => {
+  trustShown = null;
+});
+trustUi.go.addEventListener("click", async () => {
+  if (!trustShown || !trustUi.seen.checked) return;
+  const { id, path, sha256 } = trustShown;
+  trustUi.go.disabled = true;
+  try {
+    await invoke("rules_trust_grant", { id, path, sha256 });
+  } catch (e) {
+    // The content changed under the dialog, or the store cannot be written:
+    // nothing was trusted, and the dialog stays to say so.
+    trustUi.state.textContent = errorText(e);
+    trustShown = null;
+    trustUi.seen.checked = false;
+    syncTrustGo();
+    return;
+  }
+  trustUi.box.close();
+  renderRules(true);
+});
 
 // =====================================================================
 // Project statistics
@@ -4174,7 +4945,7 @@ function renderViewHits(res) {
       const target = mapTarget(h);
       if (target) {
         // The map has to be what is showing for it to go anywhere.
-        if (filesOpen || statsOpen) setPane("map");
+        if (filesOpen || statsOpen || rulesOpen) setPane("map");
         gotoMap(target);
         closeFinder();
       } else if (h.file) {
@@ -4764,6 +5535,7 @@ function chooseLocale(code) {
   renderEngine();
   renderNvim();
   if (statsOpen) renderStats();
+  if (rulesOpen) renderRules();
   void render();
   syncMenu();
   // The reports are drawn in script, with the words of the language that was

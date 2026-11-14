@@ -16,6 +16,9 @@ return {
           DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
           WEBVIEW2_USER_DATA_FOLDER = "${temp}/webview",
           LOCALAPPDATA = "${temp}/local",
+          -- The rulesets of a sheet are the fixture's, never a vault or a trusted folder of whoever runs it.
+          RULES_VAULT = "",
+          RULES_TRUST = "",
         },
       },
     },

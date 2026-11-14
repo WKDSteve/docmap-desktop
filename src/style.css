@@ -2481,3 +2481,603 @@ body.has-bar {
   font-size: 10px;
   color: var(--muted);
 }
+
+/* ------------------------------------------------------------- rules
+
+   The Rules tab. Same pane family as Files and Statistics: it fills the main
+   pane, sits above the map's context note and scrolls on its own, as one
+   column: at the minimum window size (900x600) the notes above the list take
+   half the height, and a list that scrolled inside what was left showed three
+   rows. Only the selection bar stays put, at the foot of what scrolls.
+
+   A lane (auto, manual) and a status are always a shape and a word; this
+   window uses no colour for a meaning. */
+.rules {
+  /* In the column, but still above the map's context note (z-index 1). */
+  position: relative;
+  z-index: 2;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-width: thin;
+  /* No padding at the top: what scrolls would show through above the heads
+     that stay in view. The first block brings its own. */
+  padding: 0 16px;
+  background: var(--bg);
+}
+
+.rules[hidden] {
+  display: none;
+}
+
+.rules-head {
+  padding-top: 14px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rules h2 {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.rules-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rules-problems {
+  margin: 0 0 8px;
+  padding: 6px 10px 6px 26px;
+  max-height: 84px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--ink);
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.rules-problems[hidden],
+.rules-trust[hidden],
+.rules-body[hidden] {
+  display: none;
+}
+
+.rules-trust {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+
+.rules-trust .rules-note {
+  margin-bottom: 6px;
+}
+
+.rules-trust-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.rules-trust-state {
+  flex: none;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.rules-trust-row.trusted .rules-trust-state {
+  border-color: var(--muted);
+  color: var(--muted);
+}
+
+.rules-trust-row.changed .rules-trust-state {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.rules-trust-row.unreadable .rules-trust-state {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.rules-trust-what {
+  flex: 1 1 220px;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.rules-trust-by {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.rules-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.rules-seg,
+.rules-chips {
+  display: flex;
+  gap: 2px;
+}
+
+.rules-gates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.rules-gates[hidden] {
+  display: none;
+}
+
+.rules-gates .rules-pick {
+  margin-left: 0;
+}
+
+.rules-seg button,
+.rules-chip-filter {
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rules-seg button.on,
+.rules-chip-filter.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.rules-query {
+  flex: 1 1 160px;
+  min-width: 120px;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+/* One grid for the column heads and every row, so the two result columns
+   line up down the list: what a check found, and what an agent proposed.
+   The heads stay in view while the list scrolls, because they are what says
+   whose result a chip is. Measured at 900x600: the list is 524px wide there,
+   so the fixed columns are kept narrow and a title wraps to two lines rather
+   than ending after two words. */
+.rules-cols,
+.rules-row {
+  display: grid;
+  grid-template-columns: 18px 62px minmax(0, 1fr) 104px minmax(0, 124px);
+  align-items: center;
+  gap: 0 8px;
+}
+
+.rules-cols {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 24px;
+  padding: 0 8px 0 30px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+  font-size: 11px;
+  line-height: 24px;
+  color: var(--muted);
+}
+
+.rules-cols span:first-child {
+  grid-column: 1 / 4;
+}
+
+.rules-list {
+  min-height: 120px;
+}
+
+.rules-group {
+  border-bottom: 1px solid var(--line);
+}
+
+.rules-group-head,
+.rules-sub-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 4px;
+  font-size: 12.5px;
+}
+
+.rules-group-head {
+  position: sticky;
+  top: 24px;
+  z-index: 1;
+  background: var(--panel);
+}
+
+.rules-sub-head {
+  padding-left: 30px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rules-fold {
+  flex: none;
+  width: 22px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.rules-group-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.rules-sub-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rules-lane {
+  flex: none;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.rules-lane.auto {
+  color: var(--accent);
+}
+
+.rules-pick {
+  flex: none;
+  margin-left: auto;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rules-pick:hover,
+.rules-fold:hover {
+  color: var(--ink);
+}
+
+.rules-row {
+  padding: 3px 8px 3px 30px;
+  font-size: 12.5px;
+}
+
+.rules-row:hover {
+  background: var(--panel);
+}
+
+.rules-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rules-id {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.rules-text {
+  flex: 1 1 0;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.rules-mech,
+.rules-agent {
+  min-width: 0;
+  font-size: 11px;
+}
+
+.rules-status {
+  display: inline-block;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  line-height: 1.6;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.rules-status.pass {
+  border-color: var(--muted);
+  color: var(--muted);
+}
+
+.rules-status.fail {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.rules-status.error {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.rules-left {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.rules-detail {
+  padding: 0 8px 6px 126px;
+  font-size: 12px;
+}
+
+.rules-rule-text {
+  margin: 2px 0 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.rules-source,
+.rules-blocked {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.rules-blocked {
+  color: var(--ink);
+}
+
+.rules-findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules-findings li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 0;
+  overflow-wrap: anywhere;
+}
+
+.rules-findings .more,
+.rules-problems .more {
+  color: var(--muted);
+}
+
+.rules-finding-file {
+  flex: none;
+  max-width: 50%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.rules-finding-file:hover {
+  text-decoration: underline;
+}
+
+/* The selection bar: the two lanes are counted side by side, never summed. */
+.rules-bar {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 4px 16px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  padding: 8px 0 10px;
+  border-top: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.rules-bar-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+}
+
+.rules-bar .rules-lane {
+  font-size: 12.5px;
+}
+
+.rules-bar .rules-note {
+  grid-column: 1;
+  margin: 0;
+}
+
+.rules-bar .addbox-go {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  white-space: nowrap;
+}
+
+.rules-bar .addbox-go:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* The sidebar's line for the selected project. */
+.proj-detail .rules-count {
+  display: block;
+  margin: 2px 0 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.proj-detail .rules-count:hover {
+  color: var(--ink);
+}
+
+.proj-detail .rules-count.failed::before {
+  content: "✕ ";
+  color: var(--ink);
+}
+
+.proj-detail .rules-count[hidden] {
+  display: none;
+}
+
+/* The trust dialog. */
+.trustbox {
+  width: min(680px, 94vw);
+}
+
+.trust-path {
+  margin: 0 0 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.trust-predicates {
+  margin: 8px 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.trust-predicates:empty {
+  display: none;
+}
+
+.trust-predicates li {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.trust-predicates li:last-child {
+  border-bottom: none;
+}
+
+.trust-rule {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.trust-rule .rules-text {
+  flex: 1 1 0;
+}
+
+.trust-code {
+  margin: 6px 0 2px;
+  padding: 8px;
+  max-height: 220px;
+  overflow: auto;
+  border-radius: var(--radius);
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: pre;
+}
+
+.trust-confirm {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 10px 0 6px;
+  font-size: 12.5px;
+}
+
+.trust-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.trust-go:not(:disabled) {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+/* No meaning colours in this window: a status is its shape and its word. What
+   differs is weight, so a row that needs a look stands out from one that
+   passed without a hue having to carry it. */
+.rules-status.fail,
+.rules-status.error {
+  font-weight: 600;
+}
+
+.rules-status.error,
+.rules-trust-row.changed .rules-trust-state,
+.rules-trust-row.unreadable .rules-trust-state {
+  border-style: dashed;
+}

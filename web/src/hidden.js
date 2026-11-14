@@ -1,6 +1,6 @@
 // What has nothing behind it in a browser is not offered: the shell marks these controls of src/index.html, and
 // web.css hides what carries the mark. The Neovim panel; the two ways to add a project that need a program (the plugin
-// list of a Neovim config, a URL to clone); the statistics pane; the links that open GitHub; and in the settings the
+// list of a Neovim config, a URL to clone); the statistics pane and the rules pane; the links that open GitHub; and in the settings the
 // choice of an engine and of grammars, telemetry, traffic, the editor and Neovim, and in the settings of a project
 // "always generate fully" (the enrichment by lua-language-server).
 //
@@ -15,6 +15,7 @@ export const HIDDEN = {
     '[data-pane="pane-nvim"]',
     '[data-pane="pane-url"]',
     '[data-pane="stats"]',
+    '[data-pane="rules"]',
     '#proj-traffic-detail',
     '#about-repo',
     '#about-license',

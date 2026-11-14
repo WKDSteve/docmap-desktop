@@ -1,0 +1,4 @@
+{
+  "rulesets": ["../ruleset"],
+  "gates": { "release": ["P", "Q"] }
+}

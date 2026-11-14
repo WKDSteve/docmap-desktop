@@ -21,7 +21,8 @@ Lua. The format reads Markdown, not a language.
   the engine is found.
 - **[VIEWING](VIEWING.md)** — the window: the overview screen, the map view
   and the server behind it, the project bar with search and statistics, the
-  files pane, and opening a file where an entity lives.
+  files pane, the Rules tab with its mechanical run, and opening a file where
+  an entity lives.
 - **[SETTINGS](SETTINGS.md)** — global and per-project settings, and where
   everything is stored.
 - **[TRAFFIC](TRAFFIC.md)** — GitHub traffic from `github_stats.nvim`'s digest: the

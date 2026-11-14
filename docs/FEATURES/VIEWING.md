@@ -82,6 +82,33 @@ folders are skipped, binaries and very large files counted but not read.
 - **Usercmds:** View → Statistics
 - **Docs:** [USAGE.md](../USAGE.md#the-project-bar-search-and-statistics)
 
+## The Rules tab
+
+Every rule of the project's rulesets (`.rules.json`, else the vault), grouped by
+file and section or by family, with the automated rules (those with a check) and
+the manual ones kept apart everywhere: a shape and a word on every row, filter
+chips with counts, counts in every group header, two counts in the selection
+bar. **Start** runs the automated rules of the selection in the engine on this
+machine and sends nothing; the manual ones are left for an agent run and say why
+when one of them could not be sent. A mechanical result and an agent's proposal
+have a column each and never share one.
+
+- **Module:** `src-tauri/src/rules/`, `src/lib/rules.js`
+- **Usercmds:** the **Rules** tab of the project bar
+- **Docs:** [USAGE.md](../USAGE.md#rules)
+
+## Trusting a ruleset
+
+A ruleset can bring Lua code (`lua_predicate` checks). That code runs only for a
+ruleset this machine trusts, by its real folder and the SHA-256 of its content;
+a file that changes makes it untrusted again. Until then such a rule reports
+`predicate not trusted` instead of running. The engine process of a run has a
+time limit and, on Windows and Linux, a memory limit.
+
+- **Module:** `src-tauri/src/rules/trust.rs`, `src-tauri/src/proc.rs`
+- **Usercmds:** **Trust…** in the Rules tab
+- **Docs:** [USAGE.md](../USAGE.md#trusting-a-ruleset)
+
 ## Files on disk
 
 A pane in the app rather than a tab in the map, and that fork was decided by

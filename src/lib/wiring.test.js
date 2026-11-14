@@ -150,6 +150,8 @@ test("no English catalog key is dead", () => {
     "scope.lang.",
     "grammars.diag.",
     "ph.",
+    "rules.status.", // a mechanical status, by the engine's word for it
+    "rules.trust.state.", // the trust of a ruleset, by the backend's word for it
   ];
   const dead = keys().filter((k) => {
     if (RUNTIME.some((p) => k.startsWith(p))) return false;
@@ -209,11 +211,45 @@ test("task messages are brought in front of the Files and Statistics panes", () 
 
 test("the opaque panes sit above the map's context note", () => {
   const css = read("../style.css");
-  for (const sel of [".files", ".stats"]) {
+  for (const sel of [".files", ".stats", ".rules"]) {
     const start = css.indexOf(`\n${sel} {`);
     assert.ok(start > 0, `${sel} should exist`);
     assert.match(css.slice(start, css.indexOf("}", start)), /z-index:\s*2/);
   }
+});
+
+test("the words the Rules tab builds from a status or a trust state exist for every one", () => {
+  const catalog = new Set(keys());
+  const wanted = [
+    ...["pass", "fail", "error", "waived", "manual"].map((s) => `rules.status.${s}`),
+    ...["trusted", "untrusted", "changed", "unreadable"].map((s) => `rules.trust.state.${s}`),
+  ];
+  assert.deepEqual(wanted.filter((k) => !catalog.has(k)), []);
+  // the trust states are the backend's: `State` in rules/trust.rs, lowercased
+  const trust = read("../../src-tauri/src/rules/trust.rs");
+  const states = trust.slice(trust.indexOf("pub enum State {"), trust.indexOf("/// The verdict on one ruleset."));
+  const named = [...states.matchAll(/^\s{4}([A-Z][a-z]+),/gm)].map((m) => m[1].toLowerCase());
+  assert.deepEqual(named, ["trusted", "untrusted", "changed", "unreadable"]);
+});
+
+test("Start in the Rules tab asks no model: it runs the engine and only previews what an agent run would send", () => {
+  const start = MAIN.indexOf("async function startRules(");
+  const body = MAIN.slice(start, MAIN.indexOf("\n}\n", start));
+  assert.match(body, /invoke\("rules_run"/);
+  assert.match(body, /invoke\("agent_preview"/);
+  assert.doesNotMatch(body, /agent_start|agent_resume/);
+  // and nothing else in the tab starts a run either
+  const tab = MAIN.slice(MAIN.indexOf("// Rules\n"), MAIN.indexOf("// Project statistics\n"));
+  assert.doesNotMatch(tab, /agent_start|agent_resume/);
+});
+
+test("trusting a ruleset is never the dialog's default action", () => {
+  const box = HTML.slice(HTML.indexOf('<dialog id="trustbox"'), HTML.indexOf("</dialog>", HTML.indexOf('<dialog id="trustbox"')));
+  const go = box.match(/<button id="trust-go"[^>]*>/)[0];
+  assert.match(go, /type="button"/, "not a submit button: Enter must not trust");
+  assert.match(go, /disabled/, "off until the box is ticked");
+  assert.match(box.match(/<button id="trust-cancel"[^>]*>/)[0], /autofocus/);
+  assert.match(MAIN, /trustUi\.go\.disabled = !trustShown \|\| !trustUi\.seen\.checked;/);
 });
 
 test("a result about a project is shown wherever that project is shown", () => {

@@ -104,7 +104,7 @@ already lies in the folder is shown as it is. After a restart of the browser one
 read your folders again.
 
 What it has not, because there is no program behind it: function-level facts in a map generated there (no parser),
-the git history, telemetry of a Neovim session, rule runs with an agent, statistics, opening a file in your editor,
+the git history, telemetry of a Neovim session, the Rules tab and rule runs with an agent, statistics, opening a file in your editor,
 cloning from a URL and anything from GitHub. The page says so itself, in the strip under its menu bar.
 [docs/WEB.md](docs/WEB.md) has the whole comparison, the limits, what the page can reach, and how it is built.
 

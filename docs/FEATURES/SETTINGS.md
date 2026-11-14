@@ -103,6 +103,7 @@ Nothing is stored inside a project you add.
 | `workspace.json` | The settings, and which workspace is active |
 | `workspaces/<name>.json` | One workspace's project list |
 | `repos/` | Repositories cloned by the URL tab |
+| `rules-trust.json` | The rulesets whose code this machine trusts: real path, content hash, who and when |
 
 All of it in the OS's own per-app config directory — not beside the
 executable, so an installed copy and a portable one find the same list on the

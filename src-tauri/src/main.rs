@@ -26,6 +26,7 @@ mod menu;
 mod nvim;
 mod paths;
 mod proc;
+mod rules;
 mod safe_read;
 mod search;
 mod server;
@@ -199,7 +200,13 @@ fn main() {
             agent::commands::agent_status,
             agent::commands::agent_running,
             agent::commands::agent_freshness,
-            agent::commands::agent_ignore
+            agent::commands::agent_ignore,
+            rules::commands::rules_catalog,
+            rules::commands::rules_run,
+            rules::commands::rules_trust_preview,
+            rules::commands::rules_trust_grant,
+            rules::commands::rules_trust_revoke,
+            rules::commands::rules_predicate_source
         ])
         .build(tauri::generate_context!())
         .expect("docmap-desktop failed to start")

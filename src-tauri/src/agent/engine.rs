@@ -138,6 +138,33 @@ pub trait Engine: Send + Sync {
     fn validate(&self, root: &Path, rule: &str, answer: &str) -> Result<Value, AppError>;
 }
 
+/// The engine binary as a process to start: its grammars named, no console
+/// window. Shared with the Rules tab's own calls (`rules/engine.rs`).
+pub(crate) fn command(program: &str, grammars: Option<&str>) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    if let Some(g) = grammars {
+        cmd.env("DOCMAP_TS_DIR", g);
+    }
+    crate::server::no_window(&mut cmd);
+    cmd
+}
+
+/// What `--capabilities` of the engine lists; nothing when it does not answer
+/// the question (an engine from before it exits 2 without doing anything).
+pub(crate) fn capabilities(program: &str, grammars: Option<&str>) -> Result<Vec<String>, AppError> {
+    let mut cmd = command(program, grammars);
+    cmd.arg("--capabilities");
+    let out = proc::run_with_timeout(&mut cmd, PROBE_TIMEOUT).map_err(|e| e.into_app(program))?;
+    Ok(out
+        .status
+        .success()
+        .then(|| serde_json::from_slice::<Value>(&out.stdout).ok())
+        .flatten()
+        .and_then(|v| v.get("capabilities").cloned())
+        .and_then(|c| serde_json::from_value(c).ok())
+        .unwrap_or_default())
+}
+
 /// The standalone `docmap` binary, one process per call.
 pub struct CliEngine {
     program: String,
@@ -151,32 +178,15 @@ impl CliEngine {
     /// every version (an old one exits 2 before doing anything), and the run
     /// needs `api` and `rules-agent`.
     pub fn new(program: String, grammars: Option<String>) -> Result<CliEngine, AppError> {
-        let engine = CliEngine { program, grammars };
-        let mut cmd = engine.command();
-        cmd.arg("--capabilities");
-        let out = proc::run_with_timeout(&mut cmd, PROBE_TIMEOUT)
-            .map_err(|e| e.into_app(&engine.program))?;
-        let caps: Vec<String> = out
-            .status
-            .success()
-            .then(|| serde_json::from_slice::<Value>(&out.stdout).ok())
-            .flatten()
-            .and_then(|v| v.get("capabilities").cloned())
-            .and_then(|c| serde_json::from_value(c).ok())
-            .unwrap_or_default();
+        let caps = capabilities(&program, grammars.as_deref())?;
         if !(caps.iter().any(|c| c == "api") && caps.iter().any(|c| c == "rules-agent")) {
-            return Err(AppError::new("err.agent.engineOld").with("engine", &engine.program));
+            return Err(AppError::new("err.agent.engineOld").with("engine", &program));
         }
-        Ok(engine)
+        Ok(CliEngine { program, grammars })
     }
 
     fn command(&self) -> std::process::Command {
-        let mut cmd = std::process::Command::new(&self.program);
-        if let Some(g) = &self.grammars {
-            cmd.env("DOCMAP_TS_DIR", g);
-        }
-        crate::server::no_window(&mut cmd);
-        cmd
+        command(&self.program, self.grammars.as_deref())
     }
 
     fn call(&self, root: &Path, route: &str, flags: &[String]) -> Result<Value, AppError> {
@@ -230,7 +240,7 @@ impl Engine for CliEngine {
 /// the engine's "cannot be read" stops the run ([`answer_unreadable`]). A relative name beside a working directory
 /// does not help: the engine changes its directory while it walks the project and finds its way back through the
 /// same code page.
-fn answer_arg(path: &Path) -> std::path::PathBuf {
+pub(crate) fn answer_arg(path: &Path) -> std::path::PathBuf {
     if path.to_str().is_some_and(str::is_ascii) {
         return path.to_path_buf();
     }

@@ -17,6 +17,7 @@ mod engine;
 mod feedback;
 mod filetree;
 mod freshness;
+mod gitcfg;
 mod github;
 mod icon;
 mod import;

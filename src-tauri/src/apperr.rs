@@ -383,6 +383,7 @@ mod tests {
         ("feedback.rs", include_str!("feedback.rs")),
         ("filetree.rs", include_str!("filetree.rs")),
         ("freshness.rs", include_str!("freshness.rs")),
+        ("gitcfg.rs", include_str!("gitcfg.rs")),
         ("github.rs", include_str!("github.rs")),
         ("icon.rs", include_str!("icon.rs")),
         ("import.rs", include_str!("import.rs")),

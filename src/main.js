@@ -3555,7 +3555,7 @@ function formatSize(n) {
 }
 
 /// Which `renderFiles` call is the latest. The listing runs off the main thread
-/// and `git status` inside it takes anywhere from milliseconds to seconds, so
+/// and reading git's state inside it takes anywhere from milliseconds to seconds, so
 /// answers arrive in the order they finish: only the newest one may draw, and
 /// not after the pane was closed. Bumped before the early return, so a call
 /// that finds nothing to show retires whatever is still on its way as well.

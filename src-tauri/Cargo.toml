@@ -41,6 +41,7 @@ ureq = { version = "3", default-features = false }
 # Neovim side uses for its answer cache. Already in the tree through Tauri, so
 # naming it adds no crate.
 sha2 = "0.10"
+gix = { version = "0.90.0", default-features = false, features = ["dirwalk", "sha1"] }
 
 [dev-dependencies]
 # `tauri::test::mock_app()` — a real AppHandle without a real window, so

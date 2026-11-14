@@ -441,32 +441,15 @@ pub(crate) fn imported_name(url: &str, projects: &[Project]) -> Option<String> {
 
 /// The `origin` URL in the git config of the clone at `dir`, if it has one.
 ///
-/// `git config --file` reads that one file and nothing else: no repository is
-/// opened, so neither its hooks nor a `safe.directory` check play a part. The
-/// path goes in [`portable`] form: git for Windows cannot open a `\\?\` path,
-/// which is what a canonical path is there.
+/// That one file is read and nothing else (`gitcfg`): no `git` is started
+/// and no repository is opened, so neither its hooks nor a `safe.directory`
+/// check play a part. With several URLs the last one counts, as it did for
+/// `git config --file <config> --get remote.origin.url`, which this replaces.
 pub(crate) fn origin_url(dir: &Path) -> Option<String> {
     let config = dir.join(".git").join("config");
-    if !config.is_file() {
-        return None;
-    }
-    let mut cmd = std::process::Command::new("git");
-    cmd.arg("config")
-        .arg("--file")
-        .arg(portable(&config))
-        .args(["--get", "remote.origin.url"]);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let url = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    (!url.is_empty()).then_some(url)
+    crate::gitcfg::remote_urls(&config, "origin")
+        .pop()
+        .filter(|url| !url.is_empty())
 }
 
 /// `CON`, `NUL`, `COM1` … : names Windows opens as a device, with or without an

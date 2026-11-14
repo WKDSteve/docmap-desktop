@@ -425,8 +425,9 @@ what tells you before you go looking for a bug.
 At most one note per row, in that order: a folder that is not scanned at all
 makes what git thinks of it beside the point.
 
-The two git notes are read from `git status` once per directory listed, not
-once per file. **A project that is not a git repository shows neither** —
+The two git notes are what `git status` would say, read from the repository's
+index and ignore rules by the app itself (no `git` is started), once per
+directory listed, not once per file. **A project that is not a git repository shows neither** —
 absence of git is not evidence about a file, and calling every file in a
 non-repository "not in git" would be confidently wrong about all of them.
 

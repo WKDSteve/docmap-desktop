@@ -378,7 +378,7 @@ fn valid_repo_name(s: &str) -> bool {
 }
 
 /// Origin remembered per project root, so a list of thirty projects costs one
-/// `git` process each **once**, never one per render.
+/// read of a config file each **once**, never one per render.
 static REPOS: Mutex<Option<HashMap<String, Option<String>>>> = Mutex::new(None);
 
 /// Forget what is known about one project's origin (after it was edited).
@@ -394,31 +394,25 @@ fn normalise_root(root: &str) -> String {
     root.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
-/// `git remote get-url origin` in `root`, as a GitHub `owner/name`.
+/// The `origin` of the repository `root` lies in, as a GitHub `owner/name`.
+///
+/// Read from the repository's config file (`gitcfg`), not asked of `git`:
+/// this runs for every project when the app opens, and was one process each.
+/// The first URL counts, as it does for `git remote get-url origin`. Unlike
+/// that command the reader applies no `url.<base>.insteadOf` and follows no
+/// `include`: the address written in the file is the one that is parsed.
 fn origin_repo(root: &str) -> Option<String> {
-    let mut cmd = std::process::Command::new("git");
-    cmd.args(["-C", root, "remote", "get-url", "origin"]);
-    // No prompts, ever: this runs in the background for every project.
-    cmd.env("GIT_TERMINAL_PROMPT", "0");
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-    let out = cmd.output().ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    parse_github_repo(String::from_utf8_lossy(&out.stdout).lines().next()?)
+    let config = crate::gitcfg::config_above(Path::new(root))?;
+    let urls = crate::gitcfg::remote_urls(&config, "origin");
+    parse_github_repo(urls.first()?)
 }
 
 /// The GitHub repository a project is, or `None`.
 ///
 /// `repo_url` (a URL-imported project already carries one) is tried first and
-/// costs no process; failing that, the project's `origin`, remembered per
-/// root. "No GitHub remote" is remembered too — asking again would spawn the
-/// same process for the same answer on every render.
+/// costs nothing; failing that, the project's `origin`, remembered per
+/// root. "No GitHub remote" is remembered too — asking again would read the
+/// same file for the same answer on every render.
 pub fn repo_of(root: &str, repo_url: Option<&str>) -> Option<String> {
     if let Some(repo) = repo_url.and_then(parse_github_repo) {
         return Some(repo);

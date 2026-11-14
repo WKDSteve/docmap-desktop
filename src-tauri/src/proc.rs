@@ -58,13 +58,62 @@ pub fn run_with_timeout(
     cmd: &mut std::process::Command,
     limit: Duration,
 ) -> Result<std::process::Output, ProcError> {
+    run_limited(cmd, limit, None)
+}
+
+/// [`run_with_timeout`], and with `memory` the child may not hold more than
+/// that many bytes.
+///
+/// For a child that runs somebody else's code: the engine evaluating the
+/// `lua_predicate` checks of a ruleset. Its sandbox counts instructions, not
+/// bytes, so one call can ask for gigabytes; with the limit that allocation
+/// fails inside the child (Lua reports "not enough memory", the rule is an
+/// `error` row) or the child dies, and neither takes the machine with it.
+///
+/// What the limit is, per platform:
+///
+/// - **Windows**: a job object with a memory limit for the whole job, so a
+///   grandchild counts too, and `KILL_ON_JOB_CLOSE`: nothing of the job
+///   outlives this call. The child is assigned right after it starts; the few
+///   milliseconds before that are not covered.
+/// - **Linux**: `RLIMIT_AS`, set in the child before it becomes the program.
+///   It bounds address space, which is more than what is used; the limit has
+///   to leave room for that.
+/// - **macOS and the rest**: none. The kernel there does not enforce an
+///   address-space limit a process sets for itself, so only the time limit
+///   holds; saying otherwise would be a promise nothing keeps.
+///
+/// A limit that cannot be set is a failure, not a run without one.
+pub fn run_limited(
+    cmd: &mut std::process::Command,
+    limit: Duration,
+    memory: Option<u64>,
+) -> Result<std::process::Output, ProcError> {
     use std::process::Stdio;
     use std::sync::mpsc;
 
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    #[cfg(target_os = "linux")]
+    if let Some(bytes) = memory {
+        limit::before_exec(cmd, bytes);
+    }
     let mut child = cmd.spawn().map_err(|e| ProcError::Failed(e.to_string()))?;
+    #[cfg(windows)]
+    let _job = match memory {
+        Some(bytes) => match limit::Job::around(&child, bytes) {
+            Ok(job) => Some(job),
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ProcError::Failed(e));
+            }
+        },
+        None => None,
+    };
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let _ = memory;
 
     fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
         let (tx, rx) = mpsc::channel();
@@ -118,9 +167,210 @@ pub fn run_with_timeout(
     }
 }
 
+/// The memory limit of [`run_limited`], Windows: a job object.
+#[cfg(windows)]
+mod limit {
+    use std::ffi::c_void;
+    use std::os::windows::io::AsRawHandle;
+
+    type Handle = *mut c_void;
+
+    const EXTENDED_LIMIT_INFORMATION: u32 = 9;
+    const LIMIT_JOB_MEMORY: u32 = 0x0000_0200;
+    const LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct BasicLimits {
+        per_process_user_time: i64,
+        per_job_user_time: i64,
+        limit_flags: u32,
+        minimum_working_set: usize,
+        maximum_working_set: usize,
+        active_process_limit: u32,
+        affinity: usize,
+        priority_class: u32,
+        scheduling_class: u32,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct IoCounters([u64; 6]);
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct ExtendedLimits {
+        basic: BasicLimits,
+        io: IoCounters,
+        process_memory_limit: usize,
+        job_memory_limit: usize,
+        peak_process_memory: usize,
+        peak_job_memory: usize,
+    }
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> Handle;
+        fn SetInformationJobObject(job: Handle, class: u32, info: *const c_void, len: u32) -> i32;
+        fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
+        fn CloseHandle(handle: Handle) -> i32;
+    }
+
+    /// A job that holds one child. Closing it (the drop) ends whatever of the
+    /// job is still running.
+    pub struct Job(Handle);
+
+    impl Job {
+        /// A job with a memory limit of `bytes`, and `child` in it.
+        pub fn around(child: &std::process::Child, bytes: u64) -> Result<Job, String> {
+            let last = || std::io::Error::last_os_error().to_string();
+            // SAFETY: no attributes and no name are valid arguments; the handle is checked below.
+            let handle = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
+            if handle.is_null() {
+                return Err(last());
+            }
+            let job = Job(handle);
+            let mut info = ExtendedLimits::default();
+            info.basic.limit_flags = LIMIT_JOB_MEMORY | LIMIT_KILL_ON_JOB_CLOSE;
+            info.job_memory_limit = usize::try_from(bytes).unwrap_or(usize::MAX);
+            let len =
+                u32::try_from(std::mem::size_of::<ExtendedLimits>()).map_err(|e| e.to_string())?;
+            // SAFETY: `info` is the structure class 9 asks for, alive for the call, `len` its size.
+            let set = unsafe {
+                SetInformationJobObject(
+                    job.0,
+                    EXTENDED_LIMIT_INFORMATION,
+                    (&info as *const ExtendedLimits).cast(),
+                    len,
+                )
+            };
+            if set == 0 {
+                return Err(last());
+            }
+            // SAFETY: both handles are open: the job above, the child for as long as `child` lives.
+            if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle().cast()) } == 0 {
+                return Err(last());
+            }
+            Ok(job)
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            // SAFETY: the handle came from `CreateJobObjectW` and is closed nowhere else.
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+/// The memory limit of [`run_limited`], Linux: `RLIMIT_AS` in the child.
+#[cfg(target_os = "linux")]
+mod limit {
+    use std::os::unix::process::CommandExt;
+
+    const RLIMIT_AS: i32 = 9;
+
+    #[repr(C)]
+    struct RLimit {
+        cur: u64,
+        max: u64,
+    }
+
+    extern "C" {
+        fn setrlimit(resource: i32, limit: *const RLimit) -> i32;
+    }
+
+    /// Have the child lower its own address-space limit to `bytes` before it
+    /// becomes the program; a child that cannot does not start.
+    pub fn before_exec(cmd: &mut std::process::Command, bytes: u64) {
+        // SAFETY: the closure runs between fork and exec and only calls `setrlimit`, which is
+        // async-signal-safe; it allocates nothing and touches no lock.
+        unsafe {
+            cmd.pre_exec(move || {
+                let limit = RLimit {
+                    cur: bytes,
+                    max: bytes,
+                };
+                if setrlimit(RLIMIT_AS, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Not a test of its own: the child of the two memory tests below. Started
+    /// as this test binary with `DOCMAP_TEST_HOLD_MB` set, it takes that much
+    /// memory, touches every page and says so; without the variable it does
+    /// nothing.
+    #[test]
+    fn child_holds_memory() {
+        let Some(mb) = std::env::var("DOCMAP_TEST_HOLD_MB")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+        else {
+            return;
+        };
+        let mut held: Vec<Vec<u8>> = Vec::new();
+        for _ in 0..mb {
+            let mut block = vec![0u8; 1024 * 1024];
+            for page in block.chunks_mut(4096) {
+                page[0] = 1;
+            }
+            held.push(block);
+        }
+        println!("held {} MB", held.len());
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    fn holding(mb: usize) -> std::process::Command {
+        let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+        cmd.args([
+            "--exact",
+            "proc::tests::child_holds_memory",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("DOCMAP_TEST_HOLD_MB", mb.to_string());
+        cmd
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn a_child_within_its_memory_limit_runs() {
+        let out = run_limited(
+            &mut holding(8),
+            Duration::from_secs(60),
+            Some(1024 * 1024 * 1024),
+        )
+        .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success(), "{text}");
+        assert!(text.contains("held 8 MB"), "{text}");
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn a_child_that_takes_more_than_its_limit_does_not_get_it() {
+        // 2 GB asked for under a limit of 256 MB: the allocation fails in the child (the Rust
+        // runtime aborts on that), so it neither succeeds nor says it held the memory.
+        let out = run_limited(
+            &mut holding(2048),
+            Duration::from_secs(60),
+            Some(256 * 1024 * 1024),
+        )
+        .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(!out.status.success(), "{text}");
+        assert!(!text.contains("held 2048 MB"), "{text}");
+    }
 
     #[cfg(windows)]
     fn shell(line: &str) -> std::process::Command {

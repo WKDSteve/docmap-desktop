@@ -58,7 +58,7 @@ jobs:
       sha: ${{ steps.prepare.outputs.sha }}
     steps:
       - id: prepare
-        uses: WKDSteve/appkit/release-kit/prepare@22039af47757bb4ba69770600fc647cd304d3b30 # v0.47.0
+        uses: WKDSteve/appkit/release-kit/prepare@865e2067aa88562dd3451b4123082ba63b6557e3 # v0.50.1
         with:
           sha: ${{ github.event.workflow_run.head_sha }}
           token: ${{ github.token }}
@@ -153,7 +153,7 @@ jobs:
           pattern: rolling-*
           path: dist
           merge-multiple: true
-      - uses: WKDSteve/appkit/release-kit/publish@22039af47757bb4ba69770600fc647cd304d3b30 # v0.47.0
+      - uses: WKDSteve/appkit/release-kit/publish@865e2067aa88562dd3451b4123082ba63b6557e3 # v0.50.1
         with:
           token: ${{ github.token }}
           tag: latest

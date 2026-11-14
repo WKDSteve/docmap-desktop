@@ -307,7 +307,11 @@ commands do is looked at in the installed app.
 
 **Uses**
 
+- [ai-desktop](https://github.com/WKDSteve/ai-desktop): The agent of docmap-desktop asks a local ai-desktop server (`GET /health`, `POST /ask`). ([picture](assets/graphs/pair/docmap-desktop--ai-desktop.png))
+- [appkit](https://github.com/WKDSteve/appkit): The web form of docmap-desktop is assembled and checked with the page kit `appkit-web` (`pack`, `e2e`). ([picture](assets/graphs/pair/docmap-desktop--appkit.png))
 - [docmap.nvim](https://github.com/WKDSteve/docmap.nvim): The engine of docmap-desktop is docmap.nvim, pinned in `engine.lock`: the map is the same one, browsed in a window of its own. ([picture](assets/graphs/pair/docmap-desktop--docmap.nvim.png))
+- [github_stats.nvim](https://github.com/WKDSteve/github_stats.nvim): The traffic view of docmap-desktop reads the traffic digest github_stats.nvim writes. ([picture](assets/graphs/pair/docmap-desktop--github_stats.nvim.png))
+- [runtime-analysis.nvim](https://github.com/WKDSteve/runtime-analysis.nvim): docmap-desktop shows the telemetry runtime-analysis.nvim collects inside Neovim and can switch collection on for a project; it never measures itself. ([picture](assets/graphs/pair/docmap-desktop--runtime-analysis.nvim.png))
 
 **Used by**
 

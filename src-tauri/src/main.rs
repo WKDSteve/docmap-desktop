@@ -53,7 +53,6 @@ use std::sync::Mutex;
 use apperr::AppError;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
-use tauri_plugin_shell::ShellExt;
 
 // The backend lives in the modules above; their items are re-exported so that `crate::name` and the tests keep one
 // namespace. main.rs itself only wires the commands.
@@ -115,7 +114,6 @@ fn main() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_shell::init())
         // Every command here fails with an `apperr::AppError` and nothing
         // else: a catalog key, named params and the untranslated detail (the
         // OS error, git's, gh's or Neovim's own words), plus the English
@@ -2029,25 +2027,21 @@ mod tests {
     #[test]
     fn bundled_sidecar_and_grammars_resolve_to_real_files() {
         let app = tauri::test::mock_builder()
-            .plugin(tauri_plugin_shell::init())
             .build(tauri::generate_context!())
             .expect("failed to build mock app from this crate's real tauri.conf.json");
         let handle = app.handle();
 
-        // `engine_sidecar` resolves correctly even run from here:
-        // `tauri_plugin_shell`'s own path arithmetic special-cases
-        // `cargo test`'s `target/debug/deps/` binaries, going up one level
-        // to land back in `target/debug/` where the sidecar is actually
-        // staged.
-        let sidecar = engine_sidecar(handle);
+        // `engine_sidecar` resolves correctly even run from here: a
+        // `cargo test` binary lives in `target/debug/deps/`, and the lookup
+        // goes up one level to `target/debug/`, where the sidecar is staged.
+        let sidecar = engine_sidecar();
         assert!(
             sidecar.is_some(),
-            "expected src-tauri/binaries/docmap-<this platform's target triple> to resolve \
-             as a real sidecar file -- see README.md, 'The engine'"
+            "expected src-tauri/binaries/docmap-<this platform's target triple> to resolve              as a real sidecar file -- see README.md, 'The engine'"
         );
-        let program = sidecar.unwrap().get_program().to_os_string();
+        let program = sidecar.unwrap();
         assert!(
-            Path::new(&program).is_file(),
+            program.is_file(),
             "resolved sidecar path {program:?} is not a real file"
         );
 
@@ -2058,7 +2052,7 @@ mod tests {
         // correctly from `target/debug/`, and only a `cargo test` binary
         // itself (running from `target/debug/deps/`) sees the offset. So
         // this recomputes the same "if I'm in `deps/`, my sibling files
-        // are one level up" adjustment tauri_plugin_shell already applies
+        // are one level up" adjustment `sidecar_beside` already applies
         // for the sidecar, purely to give this assertion the same real
         // exe-relative directory a genuine run would use -- not a second,
         // separately-trusted implementation of `resolve_grammars` itself.
@@ -2090,6 +2084,63 @@ mod tests {
         assert!(
             via_configured.is_some(),
             "resolve_grammars did not accept a real, existing configured dir"
+        );
+    }
+
+    #[test]
+    fn the_sidecar_is_looked_up_beside_the_executable() {
+        let dir = std::env::temp_dir().join(format!("docmap-sidecar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let deps = dir.join("deps");
+        let other = dir.join("other");
+        fs::create_dir_all(&deps).unwrap();
+        let name = if cfg!(windows) {
+            "docmap.exe"
+        } else {
+            "docmap"
+        };
+        let exe = dir.join("docmap-desktop.exe");
+        assert_eq!(sidecar_beside(&exe), None, "nothing staged, nothing found");
+
+        fs::write(dir.join(name), b"").unwrap();
+        assert_eq!(sidecar_beside(&exe), Some(dir.join(name)));
+
+        // A test binary runs from `deps/`, one level below the staged file.
+        assert_eq!(
+            sidecar_beside(&deps.join("docmap_desktop-0123.exe")),
+            Some(dir.join(name))
+        );
+
+        // A directory of that name is not an engine.
+        fs::create_dir_all(other.join(name)).unwrap();
+        assert_eq!(sidecar_beside(&other.join("app.exe")), None);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The page starts no process: the engine is started by the backend
+    /// alone, so no capability may grant the window anything of a shell
+    /// plugin, and the plugin itself is not a dependency.
+    #[test]
+    fn no_capability_grants_the_page_a_shell() {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut seen = 0;
+        for entry in fs::read_dir(manifest.join("capabilities")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            seen += 1;
+            let text = fs::read_to_string(&path).unwrap();
+            assert!(
+                !text.contains("shell:"),
+                "{path:?} names a shell permission"
+            );
+        }
+        assert!(seen > 0, "no capability file was read");
+        let cargo = fs::read_to_string(manifest.join("Cargo.toml")).unwrap();
+        assert!(
+            !cargo.contains("tauri-plugin-shell"),
+            "Cargo.toml depends on tauri-plugin-shell again"
         );
     }
 }

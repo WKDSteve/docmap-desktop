@@ -6,15 +6,6 @@
   "permissions": [
     "core:default",
     "dialog:allow-open",
-    "dialog:allow-save",
-    {
-      "identifier": "shell:allow-execute",
-      "allow": [
-        {
-          "name": "binaries/docmap",
-          "sidecar": true
-        }
-      ]
-    }
+    "dialog:allow-save"
   ]
 }

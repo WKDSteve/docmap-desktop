@@ -126,37 +126,46 @@ pub(crate) fn engine_on_path() -> Option<String> {
 /// The engine bundled as a Tauri sidecar (#7, `HANDOVER.md`), if this
 /// build actually shipped one for the platform it is running on.
 ///
-/// `externalBin` in `tauri.conf.json` declares the *name* `docmap` is
-/// allowed to resolve as a sidecar; it is not a promise the file exists —
-/// a dev build, or a target this session's own CI never staged a binary
-/// for, both leave `sidecar()` resolving to a path with nothing there. So
-/// this is checked the same way `engine_on_path` checks PATH candidates:
-/// resolve, then verify, never assume.
+/// `externalBin` in `tauri.{windows,linux}.conf.json` names the file the
+/// bundle carries; it is not a promise the file exists at run time — a
+/// target without `externalBin` (macOS) has nothing there. So this is
+/// checked the same way `engine_on_path` checks PATH candidates: resolve,
+/// then verify, never assume.
 ///
-/// Returns the already-configured `std::process::Command` (via
-/// `tauri_plugin_shell`'s own `From<shell::Command> for
-/// std::process::Command`) rather than just a path, so every existing
-/// caller downstream of `EngineInfo.path` — `generate`, `serve_project`,
-/// `server.rs`'s subprocess calls — needs no changes at all: a sidecar
-/// resolves to a real, existing, absolute path exactly like a configured
-/// or PATH-found one, and `Command::new(&that_path)` behaves identically
-/// either way.
+/// Returns the path, resolved by this program itself: the bundle puts the
+/// sidecar next to the executable under its plain name (`docmap`, plus
+/// `.exe` on Windows; the target triple of `binaries/docmap-<triple>` is
+/// only the name of the source file), and so does `tauri-build` for a dev
+/// build (`target/debug/`). No plugin is needed to find a neighbour of the
+/// executable, and the page gets no permission to start anything: the
+/// engine is only ever started by this backend. Every caller downstream of
+/// `EngineInfo.path` treats the result like a configured or PATH-found one.
+pub(crate) fn engine_sidecar() -> Option<PathBuf> {
+    // `tauri::utils::platform::current_exe` refuses a symlinked executable
+    // path that could point the lookup at someone else's directory.
+    let exe = tauri::utils::platform::current_exe().ok()?;
+    sidecar_beside(&exe)
+}
+
+/// The sidecar next to `exe`, if the file is there.
 ///
-/// Generic over `R: tauri::Runtime` rather than the concrete app alias,
-/// specifically so `cargo test` can exercise it against
-/// `tauri::test::mock_app()` — a real `AppHandle`, real path resolution,
-/// no window, which is the only way this environment can verify sidecar
-/// resolution at all: there is no way to see a native window's sidebar
-/// from here.
-pub(crate) fn engine_sidecar<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-) -> Option<std::process::Command> {
-    let cmd: std::process::Command = app.shell().sidecar("docmap").ok()?.into();
-    if Path::new(cmd.get_program()).is_file() {
-        Some(cmd)
+/// A `cargo test` binary runs from `target/<profile>/deps/`, one level below
+/// the directory the sidecar is staged in; that one step up is the only
+/// special case.
+pub(crate) fn sidecar_beside(exe: &Path) -> Option<PathBuf> {
+    let dir = exe.parent()?;
+    let dir = if dir.ends_with("deps") {
+        dir.parent()?
     } else {
-        None
-    }
+        dir
+    };
+    let name = if cfg!(windows) {
+        "docmap.exe"
+    } else {
+        "docmap"
+    };
+    let candidate = dir.join(name);
+    candidate.is_file().then_some(candidate)
 }
 
 /// A grammars directory: configured, or the bundled resource directory if
@@ -331,8 +340,8 @@ pub(crate) fn engine_info(app: tauri::AppHandle) -> Result<EngineInfo, AppError>
     // hatch: someone who genuinely wants their own build points at it in
     // Settings, which is an act of intent rather than a coincidence of
     // environment.
-    if let Some(cmd) = engine_sidecar(&app) {
-        let path = portable(Path::new(cmd.get_program()));
+    if let Some(sidecar) = engine_sidecar() {
+        let path = portable(&sidecar);
         return Ok(EngineInfo {
             path: Some(path),
             from_path: false,

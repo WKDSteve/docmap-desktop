@@ -57,10 +57,12 @@ runs nothing that does not match). In your own PowerShell, not elevated:
 
 ```powershell
 # the newest state of main (the pre-release "latest", Windows x86-64)
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/WKDSteve/docmap-desktop/releases/download/latest/install.ps1 | iex"
+irm https://github.com/WKDSteve/docmap-desktop/releases/download/latest/install.ps1 | iex
 
 # a release: the same with the tag in place of latest, e.g. .../releases/download/v0.6.0/install.ps1
 ```
+
+Type the line into the PowerShell session as it is. Wrapped in a new `powershell -ExecutionPolicy Bypass -c "..."`, Microsoft Defender reports the command line as a trojan (`Trojan:Win32/Commando.B!ml`) and nothing is installed.
 
 The script of a release installs exactly that release, the script of `latest`
 the rolling build ([`rolling.yml`](.github/workflows/rolling.yml), rebuilt after

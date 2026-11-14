@@ -8,11 +8,13 @@ it against `SHA256SUMS` and runs it silently. Run it in your own terminal (Power
 
 ```
 # Windows
-powershell -ExecutionPolicy Bypass -c "irm https://github.com/WKDSteve/docmap-desktop/releases/download/{tag}/install.ps1 | iex"
+irm https://github.com/WKDSteve/docmap-desktop/releases/download/{tag}/install.ps1 | iex
 
 # Linux x86-64
 curl -fsSL https://github.com/WKDSteve/docmap-desktop/releases/download/{tag}/install.sh | sh
 ```
+
+Type the line into the PowerShell session as it is. Wrapped in a new `powershell -ExecutionPolicy Bypass -c "..."`, Microsoft Defender reports the command line as a trojan (`Trojan:Win32/Commando.B!ml`) and nothing is installed.
 
 The Linux script puts the AppImage in `~/.local/bin/docmap-desktop` (it needs FUSE 2, or run it with
 `--appimage-extract-and-run`). On macOS take the `.dmg`; the scripts stop there rather than fetch a file that

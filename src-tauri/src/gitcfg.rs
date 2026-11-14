@@ -51,11 +51,38 @@ pub(crate) fn git_dir_at(dir: &Path) -> Option<PathBuf> {
     }
     let text = read_capped(&dot, MAX_POINTER_BYTES)?;
     let target = text.lines().next()?.strip_prefix("gitdir:")?.trim();
-    if target.is_empty() {
+    if target.is_empty() || !names_this_machine(target) {
         return None;
     }
     let git_dir = dir.join(target);
     git_dir.is_dir().then_some(git_dir)
+}
+
+/// Does a path written in a `.git` or `commondir` file stay on this machine?
+///
+/// Such a file comes with the checkout, which somebody else may have
+/// prepared. A share (`\\host\share\...`), a device path or a root without a
+/// drive is not looked at: merely asking whether it is a directory makes
+/// Windows contact the host it names, with the user's credentials. A relative
+/// path and a drive path are what git writes there.
+fn names_this_machine(target: &str) -> bool {
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let path = Path::new(target);
+        match path.components().next() {
+            Some(Component::Prefix(p)) => {
+                matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) && path.has_root()
+            }
+            // `\foo` and `/foo`: a root on whatever drive is current.
+            _ => !path.has_root(),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = target;
+        true
+    }
 }
 
 /// The directory that holds what all worktrees of a repository share, the
@@ -66,7 +93,9 @@ pub(crate) fn git_dir_at(dir: &Path) -> Option<PathBuf> {
 /// directory, a submodule's `.git/modules/<name>` included, is its own.
 pub(crate) fn common_dir(git_dir: &Path) -> PathBuf {
     match read_capped(&git_dir.join("commondir"), MAX_POINTER_BYTES) {
-        Some(text) if !text.trim().is_empty() => git_dir.join(text.trim()),
+        Some(text) if !text.trim().is_empty() && names_this_machine(text.trim()) => {
+            git_dir.join(text.trim())
+        }
         _ => git_dir.to_path_buf(),
     }
 }
@@ -531,6 +560,55 @@ mod tests {
             remote_urls(&config_above(&stray).unwrap(), "origin"),
             ["https://github.com/o/super.git"]
         );
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    /// A `.git` file is part of a checkout somebody else may have made: one
+    /// that names a share or a device is not followed, not even to ask
+    /// whether it is there.
+    #[cfg(windows)]
+    #[test]
+    fn a_pointer_to_another_machine_is_not_followed() {
+        for remote in [
+            r"\\host\share\repo.git",
+            "//host/share/repo.git",
+            r"\\?\UNC\host\share\repo.git",
+            r"\\.\pipe\x",
+            r"\rooted\without\drive",
+            "/rooted/without/drive",
+            "C:relative-to-the-drive",
+        ] {
+            assert!(!names_this_machine(remote), "{remote}");
+        }
+        for local in [
+            r"C:\repos\x\.git",
+            "C:/repos/x/.git",
+            "../.git/modules/sub",
+            ".git",
+        ] {
+            assert!(names_this_machine(local), "{local}");
+        }
+
+        let base = tmp("remote-pointer");
+        let top = base.join("top");
+        let inner = top.join("inner");
+        fs::create_dir_all(top.join(".git")).unwrap();
+        fs::create_dir_all(&inner).unwrap();
+        fs::write(
+            top.join(".git").join("config"),
+            "[remote \"origin\"]\n\turl = https://github.com/o/top.git\n",
+        )
+        .unwrap();
+        fs::write(inner.join(".git"), "gitdir: //host/share/repo.git\n").unwrap();
+        assert_eq!(git_dir_at(&inner), None);
+        // The search goes on above it, as for any `.git` that is no checkout.
+        assert_eq!(
+            remote_urls(&config_above(&inner).unwrap(), "origin"),
+            ["https://github.com/o/top.git"]
+        );
+        // A `commondir` that names a share leaves the git directory its own.
+        fs::write(top.join(".git").join("commondir"), "//host/share/common\n").unwrap();
+        assert_eq!(common_dir(&top.join(".git")), top.join(".git"));
         let _ = fs::remove_dir_all(&base);
     }
 

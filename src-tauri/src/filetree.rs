@@ -133,8 +133,10 @@ fn secs(t: SystemTime) -> Option<u64> {
 /// actually shows. A report of `dir` itself reduces to the empty string,
 /// which is what the two booleans carry instead of being dropped.
 fn git_states(root: &Path, dir: &Path) -> GitStates {
-    // Looked at, not followed: see `languages::is_nested_checkout`.
-    if !crate::languages::has_git_entry(root) {
+    // Looked at, not followed: see `languages::is_nested_checkout`. And a
+    // `.git` file that points at another machine is no repository to open
+    // (`gitcfg::git_dir_at`).
+    if !crate::languages::has_git_entry(root) || crate::gitcfg::git_dir_at(root).is_none() {
         return GitStates::default();
     }
 

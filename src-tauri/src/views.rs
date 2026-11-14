@@ -258,6 +258,12 @@ pub(crate) fn open_externally(target: &str) -> Result<(), AppError> {
     };
     #[cfg(target_os = "windows")]
     {
+        // A path must be there as written. The shell completes a name that
+        // is not (`C:\x\notes` becomes `C:\x\notes.exe` or `.bat` if one lies
+        // next to where the folder was) and would run what it found.
+        if !is_web_address(target) && !Path::new(target).exists() {
+            return Err(failed("there is no such file or folder".to_string()));
+        }
         crate::shellopen::open(target).map_err(failed)
     }
     #[cfg(not(target_os = "windows"))]
@@ -270,6 +276,13 @@ pub(crate) fn open_externally(target: &str) -> Result<(), AppError> {
         cmd.arg(target);
         cmd.spawn().map(|_| ()).map_err(|e| failed(e.to_string()))
     }
+}
+
+/// An `http://` or `https://` address, the only kind of target that is not a
+/// path on this machine.
+pub(crate) fn is_web_address(target: &str) -> bool {
+    let lower = target.to_ascii_lowercase();
+    lower.starts_with("http://") || lower.starts_with("https://")
 }
 
 /// Open a project's map in the system browser.

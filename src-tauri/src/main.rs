@@ -638,6 +638,25 @@ mod tests {
 
         let err = open_externally(&missing).unwrap_err();
         assert_eq!(err.key(), "err.open.failed");
+
+        // A name that is not there is not completed to a program that is:
+        // `notes` must not run `notes.bat`, which the shell would find.
+        fs::create_dir_all(&dir).unwrap();
+        let marker = dir.join("ran.txt");
+        fs::write(
+            dir.join("notes.bat"),
+            format!("@echo ran> \"{}\"\r\n", marker.display()),
+        )
+        .unwrap();
+        let err = open_externally(&dir.join("notes").to_string_lossy()).unwrap_err();
+        assert_eq!(err.key(), "err.open.failed");
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!marker.exists(), "the shell ran notes.bat for `notes`");
+        assert!(is_web_address("HTTPS://github.com/x"));
+        assert!(is_web_address("http://127.0.0.1:4000/index.html"));
+        assert!(!is_web_address(r"C:\http://x"));
+        assert!(!is_web_address("file:///C:/x.html"));
+        let _ = fs::remove_dir_all(&dir);
         let err = reveal_in_file_manager(&missing).unwrap_err();
         assert_eq!(err.key(), "err.open.reveal");
     }

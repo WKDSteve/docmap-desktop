@@ -264,6 +264,10 @@ pub fn run_cancellable(
     limit: Duration,
     cancel: Option<&Cancel>,
 ) -> Result<Output, ProcError> {
+    // Stopped before it started: nothing is started at all.
+    if cancel.is_some_and(Cancel::is_cancelled) {
+        return Err(ProcError::Cancelled);
+    }
     let start = cmd.start()?;
     let call = child::run(child::Run {
         start,
@@ -306,6 +310,10 @@ impl Default for Cancel {
 impl Cancel {
     pub fn cancel(&self) {
         self.0.send_replace(true);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        *self.0.borrow()
     }
 
     fn watch(&self) -> tokio::sync::watch::Receiver<bool> {
@@ -495,6 +503,18 @@ mod tests {
         assert_eq!(err, ProcError::Cancelled);
         assert!(started.elapsed() < Duration::from_secs(10));
         assert_eq!(err.into_app("git").key(), "err.proc.cancelled");
+    }
+
+    #[test]
+    fn a_call_stopped_before_it_starts_starts_nothing() {
+        let cancel = Cancel::default();
+        cancel.cancel();
+        let missing = Cmd::new("docmap-desktop test", "docmap-desktop-no-such-program-x");
+        // Not "not found": the program is never looked for.
+        assert_eq!(
+            run_cancellable(&missing, Duration::from_secs(5), Some(&cancel)).unwrap_err(),
+            ProcError::Cancelled
+        );
     }
 
     // The same, from a thread of Tauri's blocking pool, where every command of

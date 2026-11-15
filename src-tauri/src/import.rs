@@ -509,6 +509,10 @@ pub(crate) async fn import_from_url(
     if let Some(problem) = clone_url_problem(&url) {
         return Err(AppError::new(problem));
     }
+    // Stop can be pressed from the moment the window asked: a Stop before git
+    // starts keeps it from starting. Forgotten however this command ends.
+    let cancel = proc::Cancel::default();
+    let _cloning = Cloning::set(&cancel);
     let cache = repos_cache_dir(&app)?;
     let (cache_for_lookup, url_for_lookup) = (cache.clone(), url.clone());
     let target = tauri::async_runtime::spawn_blocking(move || {
@@ -530,18 +534,12 @@ pub(crate) async fn import_from_url(
     }
 
     let cmd = clone_command(&url, &portable(&dest));
-    let cancel = proc::Cancel::default();
-    *CLONING.lock().unwrap_or_else(PoisonError::into_inner) = Some(cancel.clone());
     let out = tauri::async_runtime::spawn_blocking(move || {
         proc::run_cancellable(&cmd, CLONE_TIMEOUT, Some(&cancel)).map_err(|e| e.into_app("git"))
     })
     .await
     .map_err(AppError::task)
     .and_then(|r| r);
-    CLONING
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .take();
 
     // A partial clone would otherwise permanently occupy `dest`, so every
     // retry after a failure, a timeout or a Cancel would hit "directory
@@ -580,8 +578,27 @@ pub(crate) fn clone_command(url: &str, dest: &str) -> proc::Cmd {
     cmd
 }
 
-/// The clone that runs now, to end it from [`cancel_import`].
+/// The import that runs now, to end its clone from [`cancel_import`].
 static CLONING: Mutex<Option<proc::Cancel>> = Mutex::new(None);
+
+/// [`CLONING`] for as long as one import runs.
+struct Cloning;
+
+impl Cloning {
+    fn set(cancel: &proc::Cancel) -> Cloning {
+        *CLONING.lock().unwrap_or_else(PoisonError::into_inner) = Some(cancel.clone());
+        Cloning
+    }
+}
+
+impl Drop for Cloning {
+    fn drop(&mut self) {
+        CLONING
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+}
 
 /// End the running clone of an import, with everything it started (git's
 /// remote helper, ssh, a credential helper): the window's Stop, or the dialog

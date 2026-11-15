@@ -437,6 +437,112 @@ mod tests {
         assert!(!text.contains("held 2048 MB"), "{text}");
     }
 
+    /// Not a test of its own: the sleeping child of the test below. Started as this test binary with
+    /// `DOCMAP_TEST_SLEEP_PID` set, it writes its process id to that file and sleeps; without the
+    /// variable it does nothing.
+    #[test]
+    fn child_sleeps() {
+        let Ok(file) = std::env::var("DOCMAP_TEST_SLEEP_PID") else {
+            return;
+        };
+        std::fs::write(&file, std::process::id().to_string()).unwrap();
+        std::thread::sleep(Duration::from_secs(120));
+    }
+
+    /// Not a test of its own: the app of the test below. Started as this test binary with
+    /// `DOCMAP_TEST_HOST_PID` set, it starts [`child_sleeps`] through [`run`], the way the app starts
+    /// the engine, Neovim or git, and waits for it.
+    #[test]
+    fn host_starts_a_sleeping_child() {
+        let Ok(file) = std::env::var("DOCMAP_TEST_HOST_PID") else {
+            return;
+        };
+        let mut cmd = Cmd::new("docmap-desktop test", std::env::current_exe().unwrap());
+        cmd.args([
+            "--exact",
+            "proc::tests::child_sleeps",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("DOCMAP_TEST_SLEEP_PID", file);
+        let _ = run(&cmd, Duration::from_secs(120));
+    }
+
+    #[cfg(windows)]
+    fn alive(pid: u32) -> bool {
+        let out = std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).contains(&format!("\"{pid}\""))
+    }
+    #[cfg(target_os = "linux")]
+    fn alive(pid: u32) -> bool {
+        // A process that ended and was not reaped yet is a zombie: gone as far as this question goes.
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .map(|s| {
+                !s.rsplit(')')
+                    .next()
+                    .unwrap_or("")
+                    .trim_start()
+                    .starts_with('Z')
+            })
+            .unwrap_or(false)
+    }
+
+    // What stays when the app ends without its own exit path: a crash, or `taskkill /F` of the app.
+    // Every child goes through `run` (tools/check-process-starts.py), so it is in the job object of
+    // the app (Windows) and ends with it. Closing the window ends the process the same way, after
+    // `RunEvent::Exit`.
+    #[cfg(any(windows, target_os = "linux"))]
+    #[test]
+    fn a_child_ends_when_the_app_is_killed() {
+        let dir = crate::testutil::fresh_dir("docmap-proc-host-killed");
+        let file = dir.join("child.pid");
+        let mut host = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "proc::tests::host_starts_a_sleeping_child",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("DOCMAP_TEST_HOST_PID", &file)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let pid = loop {
+            if let Some(pid) = std::fs::read_to_string(&file)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "the child never started");
+            std::thread::sleep(Duration::from_millis(100));
+        };
+        assert!(alive(pid), "the child runs while the app does");
+        host.kill().unwrap();
+        host.wait().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while alive(pid) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let left = alive(pid);
+        if left {
+            #[cfg(windows)]
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .output();
+            #[cfg(not(windows))]
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .output();
+        }
+        assert!(!left, "the child {pid} outlived the killed app");
+    }
+
     #[cfg(windows)]
     fn shell(line: &str) -> Cmd {
         let mut c = Cmd::new("docmap-desktop test", "cmd");

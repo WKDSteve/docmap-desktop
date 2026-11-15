@@ -342,10 +342,10 @@
               <button id="rules-clear" type="button" class="addbox-secondary" data-i18n="rules.clear">Clear selection</button>
               <!-- The only way an agent run starts: this button, then a dialog
                    that says what would leave the machine. -->
-              <button id="rules-agent" type="button" class="addbox-secondary" disabled></button>
+              <button id="rules-agent" type="button" class="addbox-secondary" disabled data-i18n="rules.agent.none">Agent run…</button>
             </div>
             <p id="rules-start-note" class="rules-note"></p>
-            <button id="rules-start" type="button" class="addbox-go" disabled></button>
+            <button id="rules-start" type="button" class="addbox-go" disabled data-i18n="rules.start.none">No automated rule selected</button>
           </footer>
         </div>
       </section>
@@ -757,7 +757,7 @@
       <p id="run-egress" class="run-egress" role="status"></p>
       <div class="trust-actions">
         <button id="run-cancel" type="button" class="addbox-secondary" autofocus data-i18n="rules.run.dontStart">Do not start</button>
-        <button id="run-go" type="button" class="addbox-secondary run-go" disabled></button>
+        <button id="run-go" type="button" class="addbox-secondary run-go" disabled data-i18n="rules.run.go">Start</button>
       </div>
     </dialog>
 

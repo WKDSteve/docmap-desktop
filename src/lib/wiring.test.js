@@ -276,6 +276,19 @@ test("the run dialog does not start by default, and its button names where the f
   assert.match(box, /data-i18n="rules\.run\.notesStay"/);
 });
 
+test("a button of a dialog has a name in the markup, before any script fills it", () => {
+  // A dialog is on screen the moment it opens, and its script may still be waiting for an answer: a button whose
+  // text only arrives then has no name for a screen reader in between (axe: button-name, found on #run-go by the
+  // CI's page check). A button that starts hidden is named by the script that shows it.
+  const nameless = [];
+  for (const dialog of HTML.matchAll(/<dialog\b[\s\S]*?<\/dialog>/g)) {
+    for (const b of dialog[0].matchAll(/<button\b([^>]*)>\s*<\/button>/g)) {
+      if (!/\bhidden\b|aria-label=|data-i18n-aria=/.test(b[1])) nameless.push(b[0]);
+    }
+  }
+  assert.deepEqual(nameless, []);
+});
+
 test("the words built from a run's state or a row's state exist for every one", () => {
   const catalog = new Set(keys());
   const wanted = [

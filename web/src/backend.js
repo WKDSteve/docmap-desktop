@@ -174,8 +174,22 @@ export function createBackend(deps) {
 
   // ------------------------------------------------------------------ state
 
-  async function load() {
-    if (state) return state;
+  /** The first read of the store, shared by every command that comes while it runs. @type {Promise<State> | null} */
+  let loading = null;
+
+  // One read of IndexedDB, once: the window starts with several commands at once, and a second read that came back
+  // after the first would replace the state the first had handed out, and with it whatever a command had changed in it
+  // meanwhile (a folder added a second after the page opened was gone when Generate looked for it).
+  function load() {
+    if (state) return Promise.resolve(state);
+    loading ??= readState().finally(() => {
+      loading = null;
+    });
+    return loading;
+  }
+
+  /** @returns {Promise<State>} */
+  async function readState() {
     const stored = /** @type {any} */ (await deps.kv.get(STATE_KEY).catch(() => null));
     if (stored && stored.version === 1 && Array.isArray(stored.workspaces) && stored.workspaces.length > 0) {
       // What IndexedDB holds is not trusted (every local page shares the origin file:// and could have written it):

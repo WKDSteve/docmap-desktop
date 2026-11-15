@@ -22,13 +22,21 @@ const GIT = { '.git/HEAD': 'ref: refs/heads/main\n' };
 const sample = (name = 'sample', extra = {}) => fakeFolder(name, { ...fixtureFiles(), ...GIT, ...extra });
 
 /** A page: a backend over `store` (what IndexedDB kept) that picks from `folders` in turn. */
-function page({ store = new Map(), folders = [], clock = { now: 1_800_000_000_000 } } = {}) {
+function page({ store = new Map(), folders = [], clock = { now: 1_800_000_000_000 }, beforeGet = async () => {} } = {}) {
   const ui = { menus: [], titles: [], zooms: [], downloads: [], opened: [], blobs: new Map(), revoked: [], notices: [] };
   let nextBlob = 1;
   const queue = [...folders];
   const backend = createBackend({
     client,
-    kv: { get: async (key) => structuredCloneKeepingHandles(store.get(key)), put: async (key, value) => void store.set(key, value) },
+    kv: {
+      // A read answers with what the store held when it began, however long it then takes (an IndexedDB transaction).
+      get: async (key) => {
+        const value = structuredCloneKeepingHandles(store.get(key));
+        await beforeGet(key);
+        return value;
+      },
+      put: async (key, value) => void store.set(key, value),
+    },
     pick: async () => {
       const next = queue.shift();
       if (next === undefined) return { kind: 'cancelled' };
@@ -80,6 +88,34 @@ async function addPicked(p) {
   assert.equal(scan.isGit, true);
   return p.backend.invoke('add_project', { root: token });
 }
+
+// The window asks several things at once when it starts; a folder added meanwhile (a person, or a test, a second after
+// the page opened) must not be lost when the first read of IndexedDB comes back later than the second (web e2e under
+// load: "/w/p1/sample is not a folder" on Generate, the map never came).
+test('a project added while the first read of the store is still under way is kept', async () => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let reads = 0;
+  const p = page({
+    folders: [sample()],
+    beforeGet: async () => {
+      reads += 1;
+      if (reads === 1) await held;
+    },
+  });
+  const first = p.backend.invoke('list_projects');
+  const adding = addPicked(p);
+  // The add may run on its own read of the store (as it did) or wait for the first one: either way it gets time.
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  release();
+  await first;
+  const shown = await adding;
+  assert.ok(shown.some((x) => x.name === 'sample'));
+  // Generate finds the project by its root later: it is still in the list.
+  assert.deepEqual((await p.backend.invoke('list_projects')).map((x) => x.name), ['sample']);
+});
 
 test('every command the page calls has an answer here, or a refusal by name', async () => {
   const sources = [readFileSync(join(web, '..', 'src', 'main.js'), 'utf8')];

@@ -15,6 +15,8 @@ on:
 
 permissions:
   contents: read
+  # gh attestation verify in install.ps1 reads the attestations of the published file.
+  attestations: read
 
 concurrency:
   group: published
@@ -50,10 +52,15 @@ jobs:
             Where-Object { (Get-ItemProperty $_.PSPath).DisplayName -like '*docmap*' }
           if ($entry) { throw 'the app was installed all the same' }
 
+      # The attestation is required here: the gh of the VM checks it with the token of the job. Without a token gh fails,
+      # install.ps1 only notes that, and gh's exit code stays in $LASTEXITCODE, which the shell of the step then returns
+      # as the step's own (red from 2026-11-14 on, without a message): the step therefore ends with its own `exit 0`.
       - name: Install from latest, start, uninstall
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          & ([scriptblock]::Create((Invoke-RestMethod -Uri "$env:BASE/install.ps1"))) -AllowElevated
+          & ([scriptblock]::Create((Invoke-RestMethod -Uri "$env:BASE/install.ps1"))) -AllowElevated -RequireAttestation
           $entry = Get-ChildItem 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall' |
             ForEach-Object { Get-ItemProperty $_.PSPath } |
             Where-Object { $_.DisplayName -like '*docmap*' } | Select-Object -First 1
@@ -73,3 +80,5 @@ jobs:
           $deadline = [DateTime]::UtcNow.AddSeconds(60)
           while ([DateTime]::UtcNow -lt $deadline -and (Test-Path $app.FullName)) { Start-Sleep -Seconds 1 }
           if (Test-Path $app.FullName) { throw "the uninstall left $($app.FullName)" }
+          Write-Host 'installed, started, still running after 15 s, uninstalled'
+          exit 0

@@ -525,6 +525,52 @@ pub fn send(
     })
 }
 
+/// Whether `v` is the engine's answer format: an object with a `results` list.
+fn is_judgement(v: &Value) -> bool {
+    v.get("results").is_some_and(Value::is_array)
+}
+
+/// The judgement of a chat answer, as `rules/validate` takes it. The engine
+/// reads an answer that is JSON and nothing else (or one fenced block that is
+/// all of it); a chat answer is prose that ends with the JSON object the
+/// system prompt asks for. So the part handed over is the last fenced block
+/// that is a judgement, else the JSON object the answer ends with. An answer
+/// with neither goes as it is, and the engine calls it what it is: `unclear`,
+/// with the text kept. Nothing is made up here: what is handed over is a part
+/// of the answer, word for word, and the engine checks every quote of it.
+pub fn judgement_of(text: &str) -> &str {
+    // The last fenced block whose inside is a judgement.
+    let mut best: Option<&str> = None;
+    let mut rest = text;
+    while let Some(open) = rest.find("```") {
+        let after = &rest[open + 3..];
+        let Some(nl) = after.find('\n') else { break };
+        let body = &after[nl + 1..];
+        let Some(close) = body.find("```") else { break };
+        let inner = body[..close].trim();
+        if serde_json::from_str::<Value>(inner).is_ok_and(|v| is_judgement(&v)) {
+            best = Some(inner);
+        }
+        rest = &body[close + 3..];
+    }
+    if let Some(inner) = best {
+        return inner;
+    }
+    // Else the JSON object the answer ends with: tried from the last `{`
+    // backwards, a bounded number of times.
+    let trimmed = text.trim_end();
+    for (pos, _) in trimmed.match_indices('{').rev().take(200) {
+        let tail = &trimmed[pos..];
+        let mut values = serde_json::Deserializer::from_str(tail).into_iter::<Value>();
+        if let Some(Ok(v)) = values.next() {
+            if values.byte_offset() == tail.len() && is_judgement(&v) {
+                return tail;
+            }
+        }
+    }
+    text
+}
+
 /// Turn one answer of the chat about `rule` into a proposal of run `run_id`:
 /// checked by `rules/validate` like every answer of a run, stored with
 /// `proposed = true`, `verified = false` and `source = "chat"`, in place of
@@ -564,7 +610,7 @@ pub fn propose(
     // block of one rule ends where the next one starts.
     let ids: Vec<String> = batch.rules.iter().map(|r| r.id.clone()).collect();
     let hash = rule_hashes(&batch.prompt, &ids).get(rule).cloned();
-    let outcome = engine.validate(root, rule, text);
+    let outcome = engine.validate(root, rule, judgement_of(text));
     if let Err(e) = &outcome {
         if e.key() == "err.agent.answerUnreadable" {
             return Err(e.clone());
@@ -688,8 +734,8 @@ mod tests {
             if self.unreadable {
                 return Err(AppError::new("err.agent.answerUnreadable"));
             }
-            let json_part = answer.find('{').map(|i| &answer[i..]).unwrap_or("");
-            let entry = serde_json::from_str::<Value>(json_part)
+            // As strictly as the engine: JSON and nothing else.
+            let entry = serde_json::from_str::<Value>(answer)
                 .ok()
                 .and_then(|v| v.get("results").cloned())
                 .and_then(|r| r.as_array()?.iter().find(|e| e["rule"] == rule).cloned());
@@ -1129,8 +1175,11 @@ mod tests {
         let after = propose(&engine, &root, &run.id, "R1-1", answer).unwrap();
         assert_eq!(
             *engine.validated.lock().unwrap(),
-            vec![("R1-1".to_string(), answer.to_string())],
-            "the answer as it was, through rules/validate"
+            vec![(
+                "R1-1".to_string(),
+                "{\"results\":[{\"rule\":\"R1-1\",\"verdict\":\"violation\"}]}".to_string()
+            )],
+            "the judgement the answer ends with, word for word, through rules/validate"
         );
         let rec = after
             .proposals
@@ -1256,10 +1305,113 @@ mod tests {
     }
 
     #[test]
+    fn the_judgement_of_an_answer_is_the_json_it_ends_with_or_its_fenced_block() {
+        let j = r#"{"results":[{"rule":"A-1","verdict":"compliant"}]}"#;
+        assert_eq!(judgement_of(j), j, "an answer that is only JSON");
+        assert_eq!(judgement_of(&format!("Prose first.\n{j}\n")), j);
+        assert_eq!(
+            judgement_of(&format!("Prose.\n```json\n{j}\n```\nA closing line.")),
+            j,
+            "a fenced block, anywhere"
+        );
+        let other = r#"{"results":[{"rule":"A-1","verdict":"violation"}]}"#;
+        assert_eq!(
+            judgement_of(&format!(
+                "```json\n{j}\n```\nOn second thought:\n```json\n{other}\n```"
+            )),
+            other,
+            "the last one"
+        );
+        // JSON in the middle of prose, or JSON that is not the format, is not a judgement
+        for text in [
+            format!("{j}\nand then more prose"),
+            "The config is {\"a\": 1}".to_string(),
+            "No braces at all.".to_string(),
+            "Broken {\"results\": [".to_string(),
+        ] {
+            assert_eq!(judgement_of(&text), text, "{text}");
+        }
+        // a brace inside a string of the judgement does not cut it
+        let quoted = r#"Here: {"results":[{"rule":"A-1","verdict":"violation","findings":[{"quote":"if x { y }"}]}]}"#;
+        assert!(judgement_of(quoted).starts_with(r#"{"results""#));
+    }
+
+    #[test]
     fn the_estimate_is_four_characters_a_token() {
         assert_eq!(estimate_tokens(0), 0);
         assert_eq!(estimate_tokens(1), 1);
         assert_eq!(estimate_tokens(8), 2);
         assert_eq!(estimate_tokens(9), 3);
+    }
+
+    #[test]
+    fn with_the_real_engine_a_turn_attaches_through_the_deny_list_and_an_answer_becomes_a_proposal()
+    {
+        use super::super::decide::tests::{real_engine, real_project, real_run};
+        let Some((engine, _)) = real_engine() else {
+            eprintln!("skipped: no real engine in src-tauri/binaries");
+            return;
+        };
+        let project = real_project("docmap-chat-real");
+        std::fs::create_dir_all(project.join("notes")).unwrap();
+        std::fs::write(
+            project.join("notes/why.txt"),
+            "The word is kept for the old parser.\n",
+        )
+        .unwrap();
+        std::fs::write(project.join(".env"), "TOKEN=secret-value\n").unwrap();
+        let run = real_run(&project, &engine);
+
+        let answer = "Line 2 names it as a noun.\n{\"results\":[{\"rule\":\"M-02\",\"verdict\":\"violation\",\"checked\":[\"lua/a.lua\"],\"findings\":[{\"file\":\"lua/a.lua\",\"line\":2,\"quote\":\"M.word = \\\"FORBIDDEN\\\"\",\"why\":\"no question\"}]}]}";
+        let fake = Fake::start(move |_| Resp::deltas(&[answer]));
+        let reply = send(
+            &engine,
+            &client_of(&fake),
+            &project,
+            &args(
+                &run,
+                Some("M-02"),
+                vec![user("Is it a question?")],
+                &["notes/why.txt", ".env"],
+            ),
+            &Stop::default(),
+            &mut |_| {},
+        )
+        .unwrap();
+        let prompt: Value = serde_json::from_str(&fake.seen()[0].body).unwrap();
+        let prompt = prompt["prompt"].as_str().unwrap();
+        assert!(prompt.contains("=== lua/a.lua ==="), "the rule's own file");
+        assert!(
+            prompt.contains("=== notes/why.txt ===\n1: The word is kept"),
+            "the attached file, numbered"
+        );
+        assert!(!prompt.contains("secret-value"), "the deny list held");
+        let attached = &reply.sent.attached;
+        assert!(
+            attached[0].sent && !attached[1].sent && attached[1].denied,
+            "{attached:?}"
+        );
+
+        let after = propose(&engine, &project, &run.id, "M-02", &reply.text).unwrap();
+        let rec = after
+            .proposals
+            .iter()
+            .find(|p| p.rule_id == "M-02")
+            .unwrap();
+        assert_eq!(rec.status, "violation", "{rec:?}");
+        assert_eq!(rec.source.as_deref(), Some("chat"));
+        assert_eq!(
+            rec.proposal["findings"].as_array().unwrap().len(),
+            1,
+            "the quote held up"
+        );
+        assert_eq!(rec.proposal["verified"], false);
+        let plan = engine.plan(&project, &run.selection).unwrap();
+        assert_eq!(
+            super::super::store::outdated(&after, &plan).get("M-02"),
+            Some(&super::super::store::Freshness::Current),
+            "a chat proposal can be accepted like a run's own"
+        );
+        assert!(!project.join(".rules-verdicts.json").exists());
     }
 }

@@ -281,7 +281,7 @@ pub fn reject(root: &Path, run_id: &str, rule: &str, by: &str) -> Result<Decisio
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use crate::agent::client::Backend;
     use crate::agent::engine::{Plan, PlanBatch, PlanRule};
@@ -694,7 +694,7 @@ mod tests {
 
     /// The bundled engine of this checkout, when there is a real one (a developer's machine; CI stages an empty
     /// placeholder), as planner and as writer. `None` also for an engine without `rules-write`.
-    fn real_engine() -> Option<(
+    pub(in crate::agent) fn real_engine() -> Option<(
         crate::agent::engine::CliEngine,
         crate::agent::engine::CliJudge,
     )> {
@@ -716,7 +716,7 @@ mod tests {
 
     /// A project with a ruleset beside it: two manual rules with a scope, one with a check. Under the build
     /// folder, not the temp folder, for the reason `rules/tab.rs` gives.
-    fn real_project(name: &str) -> std::path::PathBuf {
+    pub(in crate::agent) fn real_project(name: &str) -> std::path::PathBuf {
         let base = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("rules-fixtures")
@@ -761,7 +761,7 @@ mod tests {
 
     /// A finished run over `M-01,M-02` of `project`, made as the runner makes one: the engine's plan, a canned
     /// answer through `rules/validate`, the request key for the run's destination.
-    fn real_run(project: &Path, engine: &dyn Engine) -> Run {
+    pub(in crate::agent) fn real_run(project: &Path, engine: &dyn Engine) -> Run {
         let plan = engine.plan(project, "M-01,M-02").unwrap();
         assert_eq!(plan.batches.len(), 1, "{plan:?}");
         let b = &plan.batches[0];

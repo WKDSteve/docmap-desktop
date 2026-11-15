@@ -503,8 +503,9 @@ says how many earlier messages no longer go.
   decides whether it may go, with the same deny list as a run (`rules/attach`): a file it keeps out is listed as not
   sent. When an answer asks for a file (`NEED FILE: <path>`), the window offers a button for it; nothing is attached
   by itself.
-- The chat decides nothing. **Make this a proposal** sends one answer through the same check as every answer of a run
-  (`rules/validate`: each quote against the files) and puts what comes out in place of the run's proposal for that
+- The chat decides nothing. **Make this a proposal** sends the judgement of one answer (the JSON object it ends with,
+  word for word, as the model is asked to give it) through the same check as every answer of a run (`rules/validate`:
+  each quote against the files) and puts what comes out in place of the run's proposal for that
   rule, marked as made from the chat. It is a proposal like any other, decided with the buttons above. An answer that
   does not take that step stays text. A proposal already decided, or a run that is still asking, is not changed.
 - The conversation lives in the window while the app runs; it is not stored.

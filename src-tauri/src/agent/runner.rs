@@ -1874,7 +1874,10 @@ mod tests {
     #[test]
     fn a_live_run_knows_its_project_and_a_held_one_is_not_cut_off() {
         let root = fresh_dir("docmap-agent-held");
-        let fake = Fake::start(|s| ok_reply(&prompt_of(s)).after(800));
+        // The answer comes late enough that the run is still working when the
+        // other runner asks: `resume` alone waits up to half a second for the
+        // hold (`hold_soon`), and a busy CI runner took the rest of 800 ms.
+        let fake = Fake::start(|s| ok_reply(&prompt_of(s)).after(3000));
         let engine = FakeEngine::new(plan_of(1, &[]));
         let runner = Runner::default();
         let run = runner

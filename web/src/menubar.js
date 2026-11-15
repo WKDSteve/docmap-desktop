@@ -24,6 +24,9 @@ export const WEB_UNAVAILABLE = new Set([
   'menu.help.feedback',
 ]);
 
+/** The items of the menu that are not there at all in a browser: what they open is hidden in the page (hidden.js). */
+export const WEB_HIDDEN = new Set(['menu.view.rules']);
+
 /** Whether an item shows a check mark (menu.rs, `is_checked`). @param {string} id @param {any} state */
 export function isChecked(id, state) {
   switch (id) {
@@ -68,10 +71,11 @@ export function menuRows(model, args) {
           depth,
         }));
       }
+      if (WEB_HIDDEN.has(n.id)) return [];
       if (n.type === 'sub') return [{ kind: /** @type {const} */ ('head'), label: label(n.id), depth }, ...rows(n.items, depth + 1)];
       const unavailable = WEB_UNAVAILABLE.has(n.id);
       if (n.type === 'check') {
-        return [{ kind: /** @type {const} */ ('check'), id: n.id, label: label(n.id), enabled: !unavailable, checked: isChecked(n.id, args.state ?? {}), unavailable, depth }];
+        return [{ kind: /** @type {const} */ ('check'), id: n.id, label: label(n.id), enabled: !unavailable && (!n.needsProject || args.hasProject), checked: isChecked(n.id, args.state ?? {}), unavailable, depth }];
       }
       return [{ kind: /** @type {const} */ ('item'), id: n.id, label: label(n.id), enabled: !unavailable && (!n.needsProject || args.hasProject), unavailable, depth }];
     });

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { menuIds, menuModel, parseMenu } from '../menu-model.mjs';
-import { LOCALE_ID, WEB_UNAVAILABLE, isChecked, menuRows } from '../src/menubar.js';
+import { LOCALE_ID, WEB_HIDDEN, WEB_UNAVAILABLE, isChecked, menuRows } from '../src/menubar.js';
 import { web } from './helpers.mjs';
 
 const RUST = readFileSync(join(web, '..', 'src-tauri', 'src', 'menu.rs'), 'utf8');
@@ -95,6 +95,10 @@ test('the rows show the labels, the checks and what cannot be chosen', () => {
   assert.equal(row('menu.help.about').enabled, true);
   assert.equal(row('menu.file.remove', menuRows(model, { ...args, hasProject: true })).enabled, true);
   assert.equal(isChecked('menu.view.sidebar_auto', { sidebarAuto: true }), true);
+  // The Rules tab is hidden in a browser, and so is its item.
+  assert.ok(WEB_HIDDEN.has('menu.view.rules') && menuIds(model).includes('menu.view.rules'));
+  assert.equal(row('menu.view.rules'), undefined);
+  assert.equal(row('menu.view.rules', menuRows(model, { ...args, hasProject: true })), undefined);
   // Nothing breaks before the page has sent its first labels.
   assert.equal(menuRows(model, { labels: {}, hasProject: false, state: {} }).length, 4);
 });

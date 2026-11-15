@@ -214,7 +214,7 @@ feature.
 | **Main pane** | The generated map, embedded. Everything inside it is `docmap.nvim`'s surface, not this app's. With nothing selected it shows the whole workspace instead — see below. |
 | **Files pane** | The live file tree — see below. **View → Files on disk** (`Ctrl+Shift+F`). |
 | **Statistics pane** | What the project is made of, counted now. **View → Statistics**. |
-| **Rules pane** | The project's rules and the mechanical run of the automated ones — see [Rules](#rules). |
+| **Rules pane** | The project's rules and the mechanical run of the automated ones. **View → Rules** — see [Rules](#rules). |
 | **Status bar** | Spans the bottom, carrying the project path and the progress of anything long-running. |
 
 **Zoom** is in **View** (`Ctrl+plus`, `Ctrl+-`, `Ctrl+0`). The map is a
@@ -392,7 +392,7 @@ a gigabyte of reading and says that its numbers are a lower bound.
 
 ## Rules
 
-The **Rules** tab of the project bar lists every rule of the project's rulesets.
+The **Rules** tab of the project bar (or **View → Rules**) lists every rule of the project's rulesets.
 Which rulesets those are is the project's own `.rules.json` (`rulesets`, paths
 relative to the project root, and `gates`); without that file it is the vault
 named by `RULES_VAULT`. With neither, or with a file that cannot be used, the tab

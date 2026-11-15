@@ -63,6 +63,9 @@ pub struct ViewState {
     pub files: bool,
     /// The main pane is showing the project statistics.
     pub stats: bool,
+    /// The main pane is showing the Rules tab.
+    #[serde(default)]
+    pub rules: bool,
     pub sidebar: bool,
     /// The sidebar is in auto-hide mode (not pinned).
     pub sidebar_auto: bool,
@@ -97,12 +100,13 @@ const fn item(id: &'static str, accel: Option<&'static str>, needs_project: bool
 }
 
 /// A checkable item. What it is checked *by* is decided in `is_checked`,
-/// which is the one place that reads `ViewState`.
-const fn check(id: &'static str, accel: Option<&'static str>) -> Node {
+/// which is the one place that reads `ViewState`; `needs_project` as for
+/// [`item`].
+const fn check(id: &'static str, accel: Option<&'static str>, needs_project: bool) -> Node {
     Node::Check(Item {
         id,
         accel,
-        needs_project: false,
+        needs_project,
     })
 }
 
@@ -173,9 +177,9 @@ const GROUPS: &[Group] = &[
             Node::Sub(
                 "menu.view.theme",
                 &[
-                    check("menu.view.theme.system", None),
-                    check("menu.view.theme.light", None),
-                    check("menu.view.theme.dark", None),
+                    check("menu.view.theme.system", None, false),
+                    check("menu.view.theme.light", None, false),
+                    check("menu.view.theme.dark", None, false),
                 ],
             ),
             Node::Sub("menu.view.language", &[Node::Locales]),
@@ -187,10 +191,14 @@ const GROUPS: &[Group] = &[
             item("menu.view.zoom_out", Some("CmdOrCtrl+-"), false),
             item("menu.view.zoom_reset", Some("CmdOrCtrl+0"), false),
             Node::Separator,
-            check("menu.view.files", Some("CmdOrCtrl+Shift+F")),
-            check("menu.view.stats", None),
-            check("menu.view.sidebar", Some("CmdOrCtrl+B")),
-            check("menu.view.sidebar_auto", None),
+            check("menu.view.files", Some("CmdOrCtrl+Shift+F"), false),
+            check("menu.view.stats", None, false),
+            // The tab reads the selected project's rulesets: nothing to show
+            // without one. No accelerator: Ctrl+Shift+R, the one that would
+            // pair with Ctrl+Shift+F, is a reload key of WebView2.
+            check("menu.view.rules", None, true),
+            check("menu.view.sidebar", Some("CmdOrCtrl+B"), false),
+            check("menu.view.sidebar_auto", None, false),
         ],
     },
     Group {
@@ -223,6 +231,7 @@ fn is_checked(id: &str, state: &ViewState) -> bool {
         "menu.view.theme.dark" => state.theme == "dark",
         "menu.view.files" => state.files,
         "menu.view.stats" => state.stats,
+        "menu.view.rules" => state.rules,
         "menu.view.sidebar" => state.sidebar,
         "menu.view.sidebar_auto" => state.sidebar_auto,
         _ => false,
@@ -288,6 +297,7 @@ fn fill<'a, R: Runtime>(
             }
             Node::Check(it) => {
                 let mut b = CheckMenuItemBuilder::with_id(it.id, &labels[it.id])
+                    .enabled(!it.needs_project || has_project)
                     .checked(is_checked(it.id, state));
                 if let Some(accel) = it.accel {
                     b = b.accelerator(accel);
@@ -409,6 +419,7 @@ mod tests {
             ],
             files: false,
             stats: false,
+            rules: false,
             sidebar: true,
             sidebar_auto: false,
         }
@@ -521,5 +532,24 @@ mod tests {
         s.theme = "dark".into();
         assert!(is_checked("menu.view.theme.dark", &s));
         assert!(!is_checked("menu.view.theme.system", &s));
+    }
+
+    #[test]
+    fn the_rules_tab_is_checked_while_open_and_needs_a_project() {
+        let mut s = state();
+        assert!(!is_checked("menu.view.rules", &s));
+        s.rules = true;
+        assert!(is_checked("menu.view.rules", &s));
+        let rules = GROUPS
+            .iter()
+            .find(|g| g.id == "menu.view")
+            .and_then(|g| {
+                g.items.iter().find_map(|n| match n {
+                    Node::Check(it) if it.id == "menu.view.rules" => Some(it),
+                    _ => None,
+                })
+            })
+            .expect("View has a Rules item");
+        assert!(rules.needs_project, "greyed out with no project selected");
     }
 }

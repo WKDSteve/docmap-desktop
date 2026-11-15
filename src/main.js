@@ -2908,6 +2908,7 @@ function viewState() {
     locales: LOCALES.map((l) => ({ code: l.code, label: l.label })),
     files: filesOpen,
     stats: statsOpen,
+    rules: rulesOpen,
     sidebar: sidebarShown,
     sidebarAuto: !sidebarPinned,
   };
@@ -6751,6 +6752,7 @@ const MENU_ACTIONS = {
   },
   "menu.view.files": () => setFiles(!filesOpen),
   "menu.view.stats": () => setStats(!statsOpen),
+  "menu.view.rules": () => setPane(rulesOpen ? "map" : "rules"),
   "menu.view.sidebar": () => {
     applySidebar(!sidebarShown);
     syncMenu();

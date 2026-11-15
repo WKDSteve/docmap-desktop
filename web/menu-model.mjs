@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
- * @typedef {{ type: 'item', id: string, needsProject: boolean } | { type: 'check', id: string }
+ * @typedef {{ type: 'item', id: string, needsProject: boolean } | { type: 'check', id: string, needsProject: boolean }
  *   | { type: 'sub', id: string, items: MenuNode[] } | { type: 'locales' } | { type: 'separator' }} MenuNode
  * @typedef {{ id: string, items: MenuNode[] }} MenuGroup
  */
@@ -37,10 +37,10 @@ export function parseMenu(source) {
   /** A list that the next `&[` opens. @type {MenuNode[] | null} */
   let next = null;
   const token =
-    /Group\s*\{\s*id:\s*"([^"]+)"\s*,\s*items:|item\(\s*"([^"]+)"\s*,\s*(?:Some\(\s*"[^"]*"\s*\)|None)\s*,\s*(true|false)\s*,?\s*\)|check\(\s*"([^"]+)"\s*,\s*(?:Some\(\s*"[^"]*"\s*\)|None)\s*,?\s*\)|Node::Sub\(\s*"([^"]+)"\s*,|Node::Separator|Node::Locales|&\[|\]|[A-Za-z_][A-Za-z0-9_:]*|"/g;
+    /Group\s*\{\s*id:\s*"([^"]+)"\s*,\s*items:|item\(\s*"([^"]+)"\s*,\s*(?:Some\(\s*"[^"]*"\s*\)|None)\s*,\s*(true|false)\s*,?\s*\)|check\(\s*"([^"]+)"\s*,\s*(?:Some\(\s*"[^"]*"\s*\)|None)\s*,\s*(true|false)\s*,?\s*\)|Node::Sub\(\s*"([^"]+)"\s*,|Node::Separator|Node::Locales|&\[|\]|[A-Za-z_][A-Za-z0-9_:]*|"/g;
   let depth = 0;
   for (const m of text.matchAll(token)) {
-    const [whole, group, item, needs, check, sub] = m;
+    const [whole, group, item, needs, check, checkNeeds, sub] = m;
     const here = open[open.length - 1];
     if (group !== undefined) {
       const g = { id: group, items: [] };
@@ -49,7 +49,7 @@ export function parseMenu(source) {
     } else if (item !== undefined) {
       here.push({ type: 'item', id: item, needsProject: needs === 'true' });
     } else if (check !== undefined) {
-      here.push({ type: 'check', id: check });
+      here.push({ type: 'check', id: check, needsProject: checkNeeds === 'true' });
     } else if (sub !== undefined) {
       /** @type {MenuNode & { type: 'sub' }} */
       const node = { type: 'sub', id: sub, items: [] };

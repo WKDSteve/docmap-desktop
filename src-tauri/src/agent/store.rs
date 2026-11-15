@@ -208,6 +208,60 @@ pub struct Run {
     pub skipped: Vec<Value>,
     pub usage: Usage,
     pub error: Option<Value>,
+    /// What a person decided about each proposal, by rule. Kept apart from the
+    /// record in `decisions.json`, which the run's thread never writes, so a
+    /// decision about a run that is still asking cannot be lost to its next save;
+    /// filled in by [`Store::load`] and never written into `run.json`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub decisions: BTreeMap<String, Decision>,
+}
+
+/// What a person made of one proposal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DecisionKind {
+    /// Became the rule's verdict in `.rules-verdicts.json`.
+    Accepted,
+    /// The rule got a waiver in `.rules-waivers.json`.
+    Waived,
+    /// Turned down: nothing was written outside the run.
+    Rejected,
+}
+
+/// One decision, as the run keeps it. What the engine wrote is the engine's
+/// answer; this is the run's memory that the proposal is dealt with.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Decision {
+    pub kind: DecisionKind,
+    /// The person, as they named themselves at the host. Never from the proposal.
+    pub by: String,
+    pub at_ms: u64,
+    /// Accepted: the verdict as the engine wrote it (`violation`, `compliant`).
+    pub verdict: Option<String>,
+    pub note: Option<String>,
+    /// Waived: the reason, the last day and the paths, as the engine wrote them.
+    pub reason: Option<String>,
+    pub expires: Option<String>,
+    pub paths: Vec<String>,
+    /// The file the engine wrote, relative to the project (none for a rejection).
+    pub file: Option<String>,
+}
+
+impl Default for Decision {
+    fn default() -> Self {
+        Decision {
+            kind: DecisionKind::Rejected,
+            by: String::new(),
+            at_ms: 0,
+            verdict: None,
+            note: None,
+            reason: None,
+            expires: None,
+            paths: Vec::new(),
+            file: None,
+        }
+    }
 }
 
 impl Default for Run {
@@ -231,6 +285,7 @@ impl Default for Run {
             skipped: Vec::new(),
             usage: Usage::default(),
             error: None,
+            decisions: BTreeMap::new(),
         }
     }
 }
@@ -468,10 +523,43 @@ impl Store {
         serde_json::from_str(&body).map_err(|e| path_err("err.agent.runUnreadable", path, e))
     }
 
+    /// Write `run.json`. The decisions are not part of it (see [`Run::decisions`]).
     pub fn save(&self, run: &Run) -> Result<(), AppError> {
         self.run_dir(&run.id)?;
         let dir = self.ensure_below(&run.id)?;
-        self.write_json(&dir.join("run.json"), run)
+        if run.decisions.is_empty() {
+            return self.write_json(&dir.join("run.json"), run);
+        }
+        let mut bare = run.clone();
+        bare.decisions.clear();
+        self.write_json(&dir.join("run.json"), &bare)
+    }
+
+    /// The decisions about the proposals of run `id`; none when there is no file.
+    pub fn load_decisions(&self, id: &str) -> Result<BTreeMap<String, Decision>, AppError> {
+        let path = self.run_dir(id)?.join("decisions.json");
+        if !path.exists() {
+            return Ok(BTreeMap::new());
+        }
+        self.read_json(&path)
+    }
+
+    /// Write the decisions of run `id`, all of them.
+    pub fn save_decisions(
+        &self,
+        id: &str,
+        decisions: &BTreeMap<String, Decision>,
+    ) -> Result<(), AppError> {
+        self.run_dir(id)?;
+        let dir = self.ensure_below(id)?;
+        self.write_json(&dir.join("decisions.json"), decisions)
+    }
+
+    /// The folder of run `id`, made if needed: the place for a file the engine
+    /// is handed during a decision about it.
+    pub fn scratch(&self, id: &str) -> Result<PathBuf, AppError> {
+        self.run_dir(id)?;
+        self.ensure_below(id)
     }
 
     pub fn save_plan(&self, id: &str, plan: &Plan) -> Result<(), AppError> {
@@ -485,7 +573,11 @@ impl Store {
         if !path.is_file() {
             return Err(AppError::new("err.agent.noRun").with("id", id));
         }
-        self.read_json(&path)
+        let mut run: Run = self.read_json(&path)?;
+        // A damaged decisions file hides the decisions, not the run; the next
+        // decision reads it strictly and refuses rather than write over it.
+        run.decisions = self.load_decisions(id).unwrap_or_default();
+        Ok(run)
     }
 
     pub fn load_plan(&self, id: &str) -> Result<Plan, AppError> {
@@ -974,6 +1066,36 @@ mod tests {
         store.save(&run).unwrap();
         assert_eq!(store.load("r1").unwrap(), run);
         assert!(store.hold("r1").unwrap().is_some());
+    }
+
+    #[test]
+    fn decisions_are_kept_beside_the_record_and_never_in_it() {
+        let root = fresh_dir("docmap-agent-decisions");
+        let store = Store::new(&root);
+        let mut run = Run {
+            id: "r1".into(),
+            ..Default::default()
+        };
+        store.save(&run).unwrap();
+        assert!(store.load_decisions("r1").unwrap().is_empty());
+        let mut d = BTreeMap::new();
+        d.insert(
+            "A-1".to_string(),
+            Decision {
+                kind: DecisionKind::Accepted,
+                by: "P".into(),
+                verdict: Some("violation".into()),
+                ..Default::default()
+            },
+        );
+        store.save_decisions("r1", &d).unwrap();
+        assert_eq!(store.load("r1").unwrap().decisions, d);
+        // a save of a record that carries them (a run read with `load`) leaves them out of run.json
+        run.decisions = d.clone();
+        store.save(&run).unwrap();
+        let raw = fs::read_to_string(root.join(DIR).join("r1").join("run.json")).unwrap();
+        assert!(!raw.contains("decisions"), "{raw}");
+        assert_eq!(store.load("r1").unwrap().decisions, d);
     }
 
     #[test]

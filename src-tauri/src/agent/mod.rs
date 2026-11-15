@@ -15,14 +15,17 @@
 //!   a record kept in the project so a restart finds it again, and the
 //!   commands a window will call ([`runner`], [`store`], [`commands`]).
 //!
-//! What it never does: turn an answer into a verdict. Every answer goes
+//! What the run never does: turn an answer into a verdict. Every answer goes
 //! through `rules/validate`, what comes out is a *proposal*
-//! (`proposed = true`, `verified = false`, forced again on the way to disk),
-//! and nothing here writes `.rules-verdicts.json` or `.rules-waivers.json`;
-//! accepting is a person's act and the next task's.
+//! (`proposed = true`, `verified = false`, forced again on the way to disk).
+//! A verdict or a waiver comes from a person, one proposal at a time
+//! ([`decide`]), and is written by the engine's own writers (`rules/accept`,
+//! `rules/waive`): no code of this app writes `.rules-verdicts.json` or
+//! `.rules-waivers.json`.
 
 pub mod client;
 pub mod commands;
+pub mod decide;
 pub mod engine;
 pub mod runner;
 pub mod store;

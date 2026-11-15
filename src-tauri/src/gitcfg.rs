@@ -128,6 +128,32 @@ pub(crate) fn remote_urls(config: &Path, name: &str) -> Vec<String> {
     }
 }
 
+/// The name the person gives git (`user.name`) for the checkout `start` lies
+/// in: the repository's config, else the user's (`~/.gitconfig`, then
+/// `$XDG_CONFIG_HOME/git/config` or `~/.config/git/config`), the last value of
+/// the first file that has one. A suggestion for a field the person can
+/// change, so the limits of this reader stand: no system config, no includes.
+pub(crate) fn user_name(start: &Path) -> Option<String> {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    let xdg = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|h| h.join(".config")));
+    let files = [
+        config_above(start),
+        home.as_ref().map(|h| h.join(".gitconfig")),
+        xdg.map(|x| x.join("git").join("config")),
+    ];
+    files.into_iter().flatten().find_map(|file| {
+        let text = read_capped(&file, MAX_CONFIG_BYTES)?;
+        values(&text, "user", None, "name")
+            .pop()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    })
+}
+
 /// The values of `section[.subsection].key` in the text of a git config file.
 ///
 /// The syntax is git's own (`git help config`, "Syntax"): section and key
@@ -402,6 +428,19 @@ mod tests {
         .is_empty());
         assert!(values("[remote \"origin\"", "remote", Some("origin"), "url").is_empty());
         assert!(values("= x\n[]\nurl", "remote", Some("origin"), "url").is_empty());
+    }
+
+    #[test]
+    fn the_name_of_the_person_comes_from_the_repository_first() {
+        let root = tmp("user-name");
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::write(
+            root.join(".git").join("config"),
+            "[user]\n\tname = First\n[user]\n\tname = \"A Person\"\n",
+        )
+        .unwrap();
+        fs::create_dir_all(root.join("sub")).unwrap();
+        assert_eq!(user_name(&root.join("sub")).as_deref(), Some("A Person"));
     }
 
     /// The reader against git itself, on a file git wrote and on spellings a

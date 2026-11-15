@@ -1,5 +1,5 @@
-//! The Tauri commands of the run: what a window calls. No window is opened
-//! here; the run dialog and the run window are the next task's.
+//! The Tauri commands of the run: what the run dialog and the run view call,
+//! and the three decisions a person takes about one proposal (`decide.rs`).
 //!
 //! A project is named by its `id` (its root path) as everywhere else; the
 //! commands never take a path. The blocking ones (an engine process, a
@@ -12,7 +12,8 @@ use serde::Serialize;
 use tauri::State;
 
 use super::client::{self, Client, Health};
-use super::engine::{CliEngine, Engine};
+use super::decide::{self, WaiveArgs};
+use super::engine::{CliEngine, CliJudge, Engine};
 use super::runner::{self, Preview, Runner, Running, StartArgs};
 use super::store::{self, Freshness, IgnoreState, Run, Summary};
 use crate::apperr::AppError;
@@ -198,6 +199,82 @@ pub fn agent_freshness(
 ) -> Result<std::collections::BTreeMap<String, Freshness>, AppError> {
     let root = project_root(&app, &id)?;
     runner.freshness(&root, &run_id, &*engine(&app)?)
+}
+
+/// The engine the app is set up with, checked to write verdicts and waivers.
+fn judge(app: &tauri::AppHandle) -> Result<CliJudge, AppError> {
+    let info = crate::engine_info(app.clone())?;
+    let path = info.path.ok_or_else(|| AppError::new("err.engine.none"))?;
+    CliJudge::new(path, info.grammars)
+}
+
+/// Accept the proposal about `rule` of run `run_id` as the rule's verdict:
+/// written by the engine into `.rules-verdicts.json`, and only while the
+/// proposal still matches the rule and the tree. Answers the run as it is then.
+#[tauri::command(async)]
+pub fn agent_accept(
+    app: tauri::AppHandle,
+    runner: State<'_, Runner>,
+    id: String,
+    run_id: String,
+    rule: String,
+    by: String,
+    note: Option<String>,
+) -> Result<Run, AppError> {
+    let root = project_root(&app, &id)?;
+    let judge = judge(&app)?;
+    decide::accept(
+        &root,
+        &run_id,
+        &rule,
+        &by,
+        note.as_deref(),
+        &*engine(&app)?,
+        &judge,
+    )?;
+    runner.status(&root, &run_id)
+}
+
+/// Waive `rule`, the rule of a proposal of run `run_id`: written by the engine
+/// into `.rules-waivers.json`.
+#[tauri::command(async)]
+pub fn agent_waive(
+    app: tauri::AppHandle,
+    runner: State<'_, Runner>,
+    id: String,
+    run_id: String,
+    rule: String,
+    args: WaiveArgs,
+) -> Result<Run, AppError> {
+    let root = project_root(&app, &id)?;
+    decide::waive(&root, &run_id, &rule, &args, &judge(&app)?)?;
+    runner.status(&root, &run_id)
+}
+
+/// Reject the proposal about `rule`: the run remembers it, nothing else is written.
+#[tauri::command(async)]
+pub fn agent_reject(
+    app: tauri::AppHandle,
+    runner: State<'_, Runner>,
+    id: String,
+    run_id: String,
+    rule: String,
+    by: String,
+) -> Result<Run, AppError> {
+    let root = project_root(&app, &id)?;
+    decide::reject(&root, &run_id, &rule, &by)?;
+    runner.status(&root, &run_id)
+}
+
+/// The name to offer for "decided by": git's `user.name` for the project, else
+/// the account's name. Only a suggestion; the person can write another.
+#[tauri::command(async)]
+pub fn agent_person(app: tauri::AppHandle, id: String) -> Result<String, AppError> {
+    let root = project_root(&app, &id)?;
+    Ok(crate::gitcfg::user_name(&root)
+        .or_else(|| std::env::var("USERNAME").ok())
+        .or_else(|| std::env::var("USER").ok())
+        .unwrap_or_default())
 }
 
 /// Whether `.rules-proposals/` is git-ignored, and with `add` the offer taken:

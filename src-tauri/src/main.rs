@@ -202,12 +202,17 @@ fn main() {
             agent::commands::agent_running,
             agent::commands::agent_freshness,
             agent::commands::agent_ignore,
+            agent::commands::agent_accept,
+            agent::commands::agent_waive,
+            agent::commands::agent_reject,
+            agent::commands::agent_person,
             rules::commands::rules_catalog,
             rules::commands::rules_run,
             rules::commands::rules_trust_preview,
             rules::commands::rules_trust_grant,
             rules::commands::rules_trust_revoke,
-            rules::commands::rules_predicate_source
+            rules::commands::rules_predicate_source,
+            rules::commands::rules_judged
         ])
         .build(tauri::generate_context!())
         .expect("docmap-desktop failed to start")

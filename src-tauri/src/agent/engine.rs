@@ -1,10 +1,17 @@
-//! What the run asks of the engine: `rules/plan` and `rules/validate`.
+//! What the run asks of the engine: `rules/plan` and `rules/validate`, and
+//! the two routes that write what a person decided: `rules/accept` and
+//! `rules/waive`.
 //!
-//! Both are pure routes of the standalone engine (`docmap.nvim`
+//! The first two are pure routes of the standalone engine (`docmap.nvim`
 //! `core/rules_api.lua`, wiring `rules.nvim`'s `engine/agent`), so the prompt a
 //! model receives and the check of every quote against the tree are the same
 //! code in Neovim and here. Nothing is rebuilt on this side. [`Engine`] is the
 //! seam: the real one starts the binary, the tests bring a canned one.
+//!
+//! The writers are `rules.nvim`'s own (`rules.engine.verdicts.accept` and the
+//! `waive` operation of `rules.ops`), run by the engine: this side never writes
+//! `.rules-verdicts.json` or `.rules-waivers.json` itself. [`Judge`] is their
+//! seam, apart from [`Engine`] because an engine that plans need not write.
 //!
 //! The engine's answers are read leniently where its JSON encoder is: an empty
 //! Lua table may arrive as `{}` instead of `[]`, so every list accepts both.
@@ -138,6 +145,35 @@ pub trait Engine: Send + Sync {
     fn validate(&self, root: &Path, rule: &str, answer: &str) -> Result<Value, AppError>;
 }
 
+/// The engine's two writers, as the run view uses them. Each call is one
+/// person's decision about one rule; there is no call for several.
+pub trait Judge: Send + Sync {
+    /// `rules/accept`: `proposal` (the object `rules/validate` gave, as it was
+    /// stored) becomes the verdict of `rule`, accepted by `by`. The engine's
+    /// answer on success; its refusal as `err.agent.refused` with the reason.
+    /// `scratch` is a folder of the project's own for the proposal file.
+    fn accept(
+        &self,
+        root: &Path,
+        rule: &str,
+        proposal: &Value,
+        by: &str,
+        note: Option<&str>,
+        scratch: &Path,
+    ) -> Result<Value, AppError>;
+
+    /// `rules/waive`: a waiver of `rule` with `reason`, until `expires`
+    /// (`YYYY-MM-DD`), limited to `paths` when there are any.
+    fn waive(
+        &self,
+        root: &Path,
+        rule: &str,
+        reason: &str,
+        expires: Option<&str>,
+        paths: &[String],
+    ) -> Result<Value, AppError>;
+}
+
 /// The engine binary as a process to start: its grammars named, no console
 /// window. Shared with the Rules tab's own calls (`rules/engine.rs`).
 pub(crate) fn command(program: &str, grammars: Option<&str>) -> std::process::Command {
@@ -232,6 +268,80 @@ impl Engine for CliEngine {
     }
 }
 
+/// The standalone binary as the writer of verdicts and waivers.
+pub struct CliJudge(CliEngine);
+
+impl CliJudge {
+    /// Checked like [`CliEngine::new`], and for `rules-write` on top: an engine
+    /// from before the two routes cannot write, and the person should learn
+    /// that in words before deciding, not from an engine's error.
+    pub fn new(program: String, grammars: Option<String>) -> Result<CliJudge, AppError> {
+        let caps = capabilities(&program, grammars.as_deref())?;
+        let has = |c: &str| caps.iter().any(|x| x == c);
+        if !(has("api") && has("rules") && has("rules-agent") && has("rules-write")) {
+            return Err(AppError::new("err.agent.engineNoWrite").with("engine", &program));
+        }
+        Ok(CliJudge(CliEngine { program, grammars }))
+    }
+}
+
+impl Judge for CliJudge {
+    fn accept(
+        &self,
+        root: &Path,
+        rule: &str,
+        proposal: &Value,
+        by: &str,
+        note: Option<&str>,
+        scratch: &Path,
+    ) -> Result<Value, AppError> {
+        let text = serde_json::to_string(proposal)
+            .map_err(|e| AppError::new("err.workspace.serialise").detail(e))?;
+        // A file, as `--answer=` is, in the run's own folder (`TempAnswer::write_in`). Removed when done.
+        let file = TempAnswer::write_in(scratch, "proposal", &text)?;
+        let mut flags = vec![
+            format!("--select={rule}"),
+            format!("--proposal={}", answer_arg(file.path()).display()),
+            format!("--by={by}"),
+        ];
+        if let Some(note) = note {
+            flags.push(format!("--note={note}"));
+        }
+        written(self.0.call(root, "rules/accept", &flags)?)
+    }
+
+    fn waive(
+        &self,
+        root: &Path,
+        rule: &str,
+        reason: &str,
+        expires: Option<&str>,
+        paths: &[String],
+    ) -> Result<Value, AppError> {
+        let mut flags = vec![format!("--select={rule}"), format!("--reason={reason}")];
+        if let Some(day) = expires {
+            flags.push(format!("--expires={day}"));
+        }
+        if !paths.is_empty() {
+            flags.push(format!("--paths={}", paths.join(",")));
+        }
+        written(self.0.call(root, "rules/waive", &flags)?)
+    }
+}
+
+/// A writer's answer: as it is when the engine wrote (or found the same entry
+/// there already), else its refusal, after which the file is as it was.
+fn written(v: Value) -> Result<Value, AppError> {
+    if v.get("available").and_then(Value::as_bool) == Some(true) {
+        return Ok(v);
+    }
+    let reason = v
+        .get("reason")
+        .and_then(Value::as_str)
+        .unwrap_or("the engine gave no reason");
+    Err(AppError::new("err.agent.refused").detail(reason))
+}
+
 /// The path the engine is told for the answer file.
 ///
 /// The bundled engine reads its arguments through the ANSI code page on Windows, so a temp folder with a character
@@ -293,10 +403,19 @@ pub struct TempAnswer(std::path::PathBuf);
 
 impl TempAnswer {
     pub fn write(text: &str) -> Result<TempAnswer, AppError> {
+        Self::write_in(&std::env::temp_dir(), "answer", text)
+    }
+
+    /// The same in `dir`. A proposal to accept goes into the folder of its run
+    /// inside the project rather than the temp folder: the standalone engine has
+    /// been seen not to come back from paths below `AppData\Local\Temp` on
+    /// Windows (`rules/tab.rs` measured it for a project there), and a decision a
+    /// person waits for should not depend on whether a file there is read.
+    pub fn write_in(dir: &Path, stem: &str, text: &str) -> Result<TempAnswer, AppError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "docmap-answer-{}-{}-{}.txt",
+        let path = dir.join(format!(
+            "docmap-{stem}-{}-{}-{}.txt",
             std::process::id(),
             super::now_ms(),
             N.fetch_add(1, Ordering::Relaxed)
@@ -401,6 +520,20 @@ mod tests {
         );
         let other = answer_unreadable(AppError::new("err.agent.engine").detail("no rule A-9"));
         assert_eq!(other.key(), "err.agent.engine");
+    }
+
+    #[test]
+    fn a_writer_that_says_no_is_a_refusal_with_its_reason() {
+        let ok = json!({"available": true, "written": true, "id": "M-1"});
+        assert_eq!(written(ok.clone()).unwrap(), ok);
+        let e = written(
+            json!({"available": false, "reason": "waived already", "code": "invalid_argument"}),
+        )
+        .unwrap_err();
+        assert_eq!(e.key(), "err.agent.refused");
+        assert_eq!(e.detail_text(), Some("waived already"));
+        let e = written(json!({"written": true})).unwrap_err();
+        assert_eq!(e.detail_text(), Some("the engine gave no reason"));
     }
 
     #[test]

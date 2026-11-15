@@ -393,7 +393,7 @@ impl Store {
     fn ensure_base(&self) -> Result<PathBuf, AppError> {
         let base = self.base();
         fs::create_dir_all(&base).map_err(|e| path_err("err.path.create", &base, e))?;
-        crate::resolve_inside(&self.root, DIR)?;
+        self.inside(DIR)?;
         Ok(base)
     }
 
@@ -403,8 +403,17 @@ impl Store {
         self.ensure_base()?;
         let dir = self.base().join(name);
         fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;
-        crate::resolve_inside(&self.root, &format!("{DIR}/{name}"))?;
+        self.inside(&format!("{DIR}/{name}"))?;
         Ok(dir)
+    }
+
+    /// `rel` checked to stay inside the project. `resolve_inside` takes a canonical root, and a project's root is
+    /// stored as the app shows it (`C:/repos/x`, no `\\?\`): compared as it is, every folder below it was "outside",
+    /// and no run could write its record.
+    fn inside(&self, rel: &str) -> Result<PathBuf, AppError> {
+        let root = fs::canonicalize(&self.root)
+            .map_err(|e| path_err("err.path.resolve", &self.root, e))?;
+        crate::resolve_inside(&root, rel)
     }
 
     /// Hold the run `id` for this thread until the file is dropped: `None` when another process has it. An app that
@@ -951,6 +960,20 @@ mod tests {
         }
         assert!(ignore_add(&root).is_err());
         assert_eq!(fs::read_to_string(&secret).unwrap(), "SECRET\n");
+    }
+
+    #[test]
+    fn a_root_as_the_app_stores_it_takes_a_record() {
+        // `add_project` keeps `C:/repos/x`: canonical, but without `\\?\` and with forward slashes.
+        let root = PathBuf::from(crate::portable(&fresh_dir("docmap-agent-portable-root")));
+        let store = Store::new(&root);
+        let run = Run {
+            id: "r1".into(),
+            ..Default::default()
+        };
+        store.save(&run).unwrap();
+        assert_eq!(store.load("r1").unwrap(), run);
+        assert!(store.hold("r1").unwrap().is_some());
     }
 
     #[test]

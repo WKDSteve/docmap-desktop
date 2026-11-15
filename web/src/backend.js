@@ -22,12 +22,14 @@ export const UNAVAILABLE = [
   'reveal_project',
   'reveal_settings',
   'import_from_url',
+  'cancel_import',
   'import_from_nvim_config',
   'list_github_repos',
   'set_engine',
   'set_grammars',
   'set_nvim_path',
   'set_nvim_config_dir',
+  'set_nvim_cache_dir',
   'set_telemetry',
   'telemetry_info',
   'project_stats',
@@ -737,7 +739,14 @@ export function createBackend(deps) {
 
     grammar_dir: async () => ({ dir: null, from_setting: false, exists: false, files: [], more: 0 }),
 
-    nvim_info: async () => ({ path: null, from_path: false, config_dir: null, config_dir_from_default: false }),
+    nvim_info: async () => ({
+      path: null,
+      from_path: false,
+      config_dir: null,
+      config_dir_from_default: false,
+      cache_dir: null,
+      cache_dir_from_default: false,
+    }),
 
     about_info: async () => ({
       appVersion: `${deps.info.version} (web${deps.info.build ? ', ' + deps.info.build : ''})`,

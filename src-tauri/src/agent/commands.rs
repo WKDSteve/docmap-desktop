@@ -149,6 +149,18 @@ pub fn agent_cancel(
     runner.cancel(&root, &run_id)
 }
 
+/// Pause one run; it stays resumable (`agent_resume`).
+#[tauri::command(async)]
+pub fn agent_pause(
+    app: tauri::AppHandle,
+    runner: State<'_, Runner>,
+    id: String,
+    run_id: String,
+) -> Result<Run, AppError> {
+    let root = root_of_run(&app, &runner, &id, &run_id)?;
+    runner.pause(&root, &run_id)
+}
+
 /// The runs of a project, newest first.
 #[tauri::command(async)]
 pub fn agent_list(

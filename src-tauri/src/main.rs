@@ -196,6 +196,7 @@ fn main() {
             agent::commands::agent_start,
             agent::commands::agent_resume,
             agent::commands::agent_cancel,
+            agent::commands::agent_pause,
             agent::commands::agent_list,
             agent::commands::agent_status,
             agent::commands::agent_running,

@@ -446,6 +446,22 @@ impl Runner {
         Ok(run)
     }
 
+    /// Pause one run: the queue stops, the request in flight is abandoned, and
+    /// the run stays resumable. What already came back is kept. A run with no
+    /// thread is answered as it is: paused already, or finished, and then there
+    /// is nothing to pause. A run that was asked to cancel first stays cancelled.
+    pub fn pause(&self, root: &Path, id: &str) -> Result<Run, AppError> {
+        let live = self.lock()?.get(id).map(|a| a.stop.clone());
+        if let Some(stop) = live {
+            stop.request(StopKind::Pause);
+            let deadline = Instant::now() + CANCEL_WAIT;
+            while self.lock()?.contains_key(id) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+        self.status(root, id)
+    }
+
     /// The runs of a project, newest first. A run that says `running` with no
     /// thread behind it was cut off (a crash, a kill) and is `paused`.
     pub fn list(&self, root: &Path) -> Vec<Summary> {
@@ -1214,6 +1230,56 @@ mod tests {
         assert_eq!(done.proposals.len(), 6);
         assert!(done.batches.iter().all(|b| b.state == BatchState::Done));
         wait_idle(&second);
+    }
+
+    #[test]
+    fn one_run_is_paused_by_itself_keeps_what_came_back_and_resumes() {
+        let root = fresh_dir("docmap-agent-run-pause-one");
+        let hang = Arc::new(AtomicBool::new(true));
+        let h2 = hang.clone();
+        let fake = Fake::start(move |s| {
+            let prompt = prompt_of(s);
+            let r = ok_reply(&prompt);
+            if prompt.contains("first rule 2") && h2.load(Ordering::SeqCst) {
+                r.after(30_000)
+            } else {
+                r
+            }
+        });
+        let engine = FakeEngine::new(plan_of(3, &[]));
+        let runner = Runner::default();
+        let run = runner
+            .start(
+                &root,
+                start_args("llama3"),
+                engine.clone(),
+                client_of(&fake),
+            )
+            .unwrap();
+        wait_asks(&fake, 2);
+        // Batch 2 is in flight: the pause does not wait for its answer.
+        let started = Instant::now();
+        let paused = runner.pause(&root, &run.id).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(paused.state, RunState::Paused);
+        assert_eq!(paused.batches[0].state, BatchState::Done);
+        assert_eq!(paused.batches[1].state, BatchState::Queued);
+        assert_eq!(paused.proposals.len(), 2, "what batch 1 brought is kept");
+        assert!(runner.running().is_empty());
+        // pausing again, or pausing what is not running, changes nothing
+        assert_eq!(
+            runner.pause(&root, &run.id).unwrap().state,
+            RunState::Paused
+        );
+
+        hang.store(false, Ordering::SeqCst);
+        runner
+            .resume(&root, &run.id, engine, client_of(&fake))
+            .unwrap();
+        let done = wait_state(&runner, &root, &run.id, RunState::Done);
+        assert_eq!(done.proposals.len(), 6);
+        assert_eq!(runner.pause(&root, &run.id).unwrap().state, RunState::Done);
+        wait_idle(&runner);
     }
 
     #[test]

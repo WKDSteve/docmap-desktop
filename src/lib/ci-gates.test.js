@@ -86,9 +86,14 @@ test("only a push reaches the self-hosted runner; every other event gets windows
   // A pull request from a fork must never run its own code on the author's machine. Every job picks its runner
   // with one matrix expression: self-hosted only when the event is `push`, otherwise the hosted VM.
   const yml = code(read(".github/workflows/ci.yml"));
-  const runsOn = [...yml.matchAll(/^\s*runs-on: (.*)$/gm)].map((m) => m[1].trim());
+  const all = [...yml.matchAll(/^\s*runs-on: (.*)$/gm)].map((m) => m[1].trim());
+  // A job may also name a throwaway VM of GitHub outright (the Linux lint): it never reaches the author's machine.
+  // Anything else goes through the matrix.
+  const HOSTED = ["ubuntu-latest"];
+  const fixed = all.filter((r) => r !== "${{ matrix.runs-on }}");
+  for (const r of fixed) assert.ok(HOSTED.includes(r), `a job runs on ${r}, not on the event's runner`);
+  const runsOn = all.filter((r) => r === "${{ matrix.runs-on }}");
   assert.ok(runsOn.length >= 3, "the jobs of ci.yml are gone");
-  for (const r of runsOn) assert.equal(r, "${{ matrix.runs-on }}", `a job runs on ${r}, not on the event's runner`);
   const includes = [...yml.matchAll(/^\s*include: (.*)$/gm)].map((m) => m[1].trim());
   assert.equal(includes.length, runsOn.length, "every job needs the runner matrix");
   for (const inc of includes) {
@@ -104,8 +109,12 @@ test("only a push reaches the self-hosted runner; every other event gets windows
     }
   }
   const names = [...yml.matchAll(/^ {4}name: (.*)$/gm)].map((m) => m[1].trim());
-  assert.equal(names.length, runsOn.length, "every job needs a name");
-  for (const n of names) assert.match(n, /^[a-z]+ \(\$\{\{ matrix\.leg \}\}\)$/, `job name ${n} does not show the leg`);
+  assert.equal(names.length, all.length, "every job needs a name");
+  const legs = names.filter((n) => /^[a-z]+ \(\$\{\{ matrix\.leg \}\}\)$/.test(n));
+  assert.equal(legs.length, runsOn.length, `a job of the matrix does not show the leg: ${names.join(", ")}`);
+  for (const n of names.filter((x) => !legs.includes(x))) {
+    assert.ok(HOSTED.includes(/^[a-z]+ \((.*)\)$/.exec(n)?.[1]), `job name ${n} does not show its runner`);
+  }
   const shells = [...yml.matchAll(/^\s*shell: (.*)$/gm)].map((m) => m[1].trim());
   for (const s of shells) assert.equal(s, "${{ matrix.shell }}", `a job pins the shell ${s} for both runners`);
 });

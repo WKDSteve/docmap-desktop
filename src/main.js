@@ -5347,6 +5347,9 @@ function openChat(id, rule) {
   const st = rulesOf(id);
   if (!st.openRun) return;
   if (!st.chats) st.chats = new Map();
+  // the draft of the conversation that was open stays with it
+  const before = openChatOf(st);
+  if (before) before.draft = chatUi.text.value;
   const key = chatKey(st.openRun, rule);
   if (!st.chats.has(key)) st.chats.set(key, newChat(st.openRun, rule, ++chatCount));
   st.chatKey = key;

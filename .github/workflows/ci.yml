@@ -21,7 +21,7 @@
 # own engine_triple: "" for macOS, same reasoning).
 
 # One pipeline, two kinds of runner. Windows is the only platform built and tested here; the Windows-only
-# placeholders below are what build.rs needs.
+# placeholders below are what build.rs needs. Linux is only linted, by the job `linux` on ubuntu-latest.
 #
 # - push: the self-hosted Windows runner of the author (its stable toolchain, node and python on PATH).
 # - every other event, pull_request from forks included: windows-latest, a throwaway VM with a read-only token and
@@ -97,9 +97,9 @@ jobs:
         run: cargo fmt --check
 
       # Needs the staged placeholders above (build.rs runs under clippy too).
-      # Runs on every platform of the matrix because the lints of
-      # `cfg(target_os = ...)` code are only visible on that target: a
-      # Windows-only clippy run would never see the Linux/macOS branches.
+      # The lints of `cfg(target_os = ...)` code are only visible on that
+      # target: this Windows run never sees the Unix branches, the job
+      # `linux` below lints them.
       - name: cargo clippy
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
@@ -135,6 +135,38 @@ jobs:
 
       - name: node --test
         run: node --test src/lib/*.test.js
+
+  # The cfg(unix) branches of the Rust code (paths::hand_to_system through appkit_core::launch, views.rs, the editor
+  # start, the proc tests with sh) are compiled by no Windows run. This job compiles and lints them on Linux: clippy
+  # only, no tests and no bundle, with Tauri's system packages and the same kind of placeholder sidecar as above.
+  # Always on ubuntu-latest, a throwaway VM, also for a push: the self-hosted runner is Windows. macOS is left to the
+  # release build.
+  linux:
+    name: clippy (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0 (node24)
+        with:
+          persist-credentials: false
+
+      - name: Tauri's system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libdbus-1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev libxdo-dev libssl-dev pkg-config build-essential
+
+      - name: stage a placeholder engine sidecar
+        run: |
+          mkdir -p src-tauri/binaries src-tauri/resources/grammars
+          touch src-tauri/binaries/docmap-x86_64-unknown-linux-gnu
+          chmod +x src-tauri/binaries/docmap-x86_64-unknown-linux-gnu
+          touch src-tauri/resources/grammars/placeholder.so
+
+      - name: cargo clippy
+        working-directory: src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
 
   # The design tokens come from appkit-ui as a checked-in copy (no package
   # manager in this frontend). The copy and its generated fallback must be

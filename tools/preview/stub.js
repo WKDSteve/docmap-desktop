@@ -494,6 +494,18 @@ const R = {
     run.state = "cancelled";
     for (const b of run.batches) if (b.state === "asking") b.state = "queued";
   }),
+  // Freshness and the three decisions, canned: the compliant proposal of the finished run is outdated (its files
+  // changed), the others are current. A decision lands in the run and, for accept and waive, in STUB_JUDGED, which the
+  // Rules tab's Agent column and the sidebar read. Nothing is written anywhere.
+  agent_freshness: (a) => {
+    const run = STUB_RUNS.find((r) => r.id === a.runId);
+    return Object.fromEntries((run ? run.proposals : []).map((p) => [p.ruleId, p.status === "compliant" ? "files" : "current"]));
+  },
+  agent_person: () => "A Person",
+  agent_accept: (a) => stubDecide(a, "accepted"),
+  agent_waive: (a) => stubDecide(a, "waived"),
+  agent_reject: (a) => stubDecide(a, "rejected"),
+  rules_judged: () => JSON.parse(JSON.stringify(STUB_JUDGED)),
   rules_trust_preview: () => ({
     path: RULESET, sha256: "3f9a5c0d1e7b42a68c1d0f6e9b7a3c5d2e4f60718293a4b5c6d7e8f9a0b1c2d3",
     files: 2, bytes: 18432, state: RULES_TRUSTED ? "trusted" : "untrusted",
@@ -621,6 +633,38 @@ function stubAdvance(run) {
   const next = run.batches.find((b) => b.state === "queued");
   if (next) next.state = "asking";
   else run.state = "done";
+}
+let STUB_JUDGED = {
+  verdicts: {},
+  waivers: { "D-03": { reason: "generated code", expires: null, expired: false, partial: false } },
+  unreadable: []
+};
+function stubDecide(a, kind) {
+  const run = STUB_RUNS.find((r) => r.id === a.runId);
+  const rec = run && run.proposals.find((p) => p.ruleId === a.rule);
+  if (!rec) throw { key: "err.agent.noProposal", params: { rule: a.rule }, message: "This run has no proposal about " + a.rule };
+  run.decisions = run.decisions || {};
+  if (run.decisions[a.rule]) throw { key: "err.agent.decided", params: { rule: a.rule }, message: "decided already" };
+  const by = kind === "waived" ? a.args.by : a.by;
+  if (!String(by || "").trim()) throw { key: "err.agent.by", params: {}, message: "Name the person who decides" };
+  const d = { kind, by, atMs: 1794700000000, verdict: null, note: a.note || null, reason: null, expires: null, paths: [], file: null };
+  if (kind === "accepted") {
+    if (rec.status !== "violation" && rec.status !== "compliant") {
+      throw { key: "err.agent.notAnswer", params: { rule: a.rule }, message: "no answer" };
+    }
+    d.verdict = rec.status;
+    d.file = ".rules-verdicts.json";
+    STUB_JUDGED.verdicts[a.rule] = { verdict: rec.status, date: "2026-11-15", by };
+  } else if (kind === "waived") {
+    if (!String(a.args.reason || "").trim()) throw { key: "err.agent.reason", params: {}, message: "A waiver needs a reason" };
+    if (STUB_JUDGED.waivers[a.rule]) {
+      throw { key: "err.agent.refused", params: {}, detail: `${a.rule} is waived already: renew it to change the expiry or the reason, or remove it first`, message: "refused" };
+    }
+    Object.assign(d, { reason: a.args.reason, expires: a.args.expires, paths: a.args.paths, file: ".rules-waivers.json" });
+    STUB_JUDGED.waivers[a.rule] = { reason: a.args.reason, expires: a.args.expires, expired: false, partial: a.args.paths.length > 0 };
+  }
+  run.decisions[a.rule] = d;
+  return JSON.parse(JSON.stringify(run));
 }
 function stubSet(runId, change) {
   const run = STUB_RUNS.find((r) => r.id === runId);

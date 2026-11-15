@@ -354,19 +354,47 @@ export function mechanicalCounts(rules, results) {
 }
 
 /**
- * The two numbers the sidebar shows for a project: manual rules that nobody
- * has answered yet, and automated ones whose last run did not pass (`fail`
- * or `error`). `null` when the project has no catalog to count.
+ * What a person decided about a manual rule, from `rules_judged` (the
+ * project's `.rules-verdicts.json` and `.rules-waivers.json`): its verdict,
+ * else its waiver while that has not expired, else `null`. A rule with a check
+ * gets `null` here: its waiver is the mechanical run's to show (`waived`), and
+ * a verdict is only ever written for a rule without one.
+ *
+ * @param {{id: string, has_check?: boolean}} rule
+ * @param {{verdicts?: object, waivers?: object}|null} judged
+ * @returns {{kind: "verdict", verdict: string, by: string, date: string}
+ *          |{kind: "waived", reason: string, expires: string|null}|null}
+ */
+export function judgedOf(rule, judged) {
+  if (!judged || laneOf(rule) !== "manual") return null;
+  const v = judged.verdicts && judged.verdicts[rule.id];
+  if (v && typeof v === "object") {
+    return { kind: "verdict", verdict: String(v.verdict), by: String(v.by ?? ""), date: String(v.date ?? "") };
+  }
+  const w = judged.waivers && judged.waivers[rule.id];
+  if (w && typeof w === "object" && !w.expired) {
+    return { kind: "waived", reason: String(w.reason ?? ""), expires: w.expires ?? null };
+  }
+  return null;
+}
+
+/**
+ * The two numbers the sidebar shows for a project: manual rules that are
+ * still open (no verdict and no waiver in force, see `judgedOf`), and
+ * automated ones whose last run did not pass (`fail` or `error`). `null` when
+ * the project has no catalog to count.
  *
  * @param {object|null} catalog
  * @param {Map<string, object>} results
+ * @param {{verdicts?: object, waivers?: object}|null} [judged]
  * @returns {{manual: number, failed: number}|null}
  */
-export function sidebarCounts(catalog, results) {
+export function sidebarCounts(catalog, results, judged = null) {
   if (!catalog || catalog.available !== true) return null;
   const rules = list(catalog.rules);
   const mech = mechanicalCounts(rules, results);
-  return { manual: laneCounts(rules).manual, failed: mech.fail + mech.error };
+  const open = rules.filter((r) => laneOf(r) === "manual" && !judgedOf(r, judged)).length;
+  return { manual: open, failed: mech.fail + mech.error };
 }
 
 /**

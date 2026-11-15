@@ -23,6 +23,7 @@ import {
   mergeRun,
   mechanicalCounts,
   sidebarCounts,
+  judgedOf,
   notSendable,
   untrustedRulesets,
 } from "./rules.js";
@@ -259,6 +260,35 @@ test("counts of the mechanical results, and the two numbers of the sidebar", () 
   assert.deepEqual(sidebarCounts(cat, new Map()), { manual: 4, failed: 0 });
   assert.equal(sidebarCounts({ available: false, reason: "no ruleset" }, results), null);
   assert.equal(sidebarCounts(null, results), null);
+});
+
+test("a manual rule with a verdict or a waiver in force is not open; an expired waiver is", () => {
+  const cat = catalog();
+  const judged = {
+    verdicts: { "D-02": { verdict: "violation", by: "A Person", date: "2026-11-15" }, "D-01": { verdict: "compliant" } },
+    waivers: {
+      "D-03": { reason: "generated", expires: null, expired: false },
+      "L-02": { reason: "until the rewrite", expires: "2026-11-01", expired: true },
+      "L-01": { reason: "a rule with a check", expired: false },
+    },
+    unreadable: [],
+  };
+  assert.deepEqual(sidebarCounts(cat, new Map(), judged), { manual: 2, failed: 0 });
+  assert.deepEqual(sidebarCounts(cat, new Map(), null), { manual: 4, failed: 0 });
+  const byId = Object.fromEntries(cat.rules.map((r) => [r.id, r]));
+  assert.deepEqual(judgedOf(byId["D-02"], judged), {
+    kind: "verdict",
+    verdict: "violation",
+    by: "A Person",
+    date: "2026-11-15",
+  });
+  assert.deepEqual(judgedOf(byId["D-03"], judged), { kind: "waived", reason: "generated", expires: null });
+  assert.equal(judgedOf(byId["L-02"], judged), null, "an expired waiver leaves the rule open");
+  // a rule with a check is the mechanical column's, verdict or not
+  assert.equal(judgedOf(byId["D-01"], judged), null);
+  assert.equal(judgedOf(byId["L-01"], judged), null);
+  assert.equal(judgedOf(byId["S-01"], judged), null);
+  assert.equal(judgedOf(byId["S-01"], null), null);
 });
 
 test("why a manual rule would not be sent, by rule", () => {

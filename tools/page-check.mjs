@@ -100,6 +100,36 @@ try {
       await page.evaluate((name) => document.getElementById(name).close(), id);
     }
   }
+  // The run view of an agent run, with the decision of one proposal open: its fields, its buttons, the waiver form,
+  // an outdated proposal and a decided one (the stub's run-0: D-02 a violation, D-03 outdated).
+  await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
+  await page.evaluate(() => {
+    const s = document.querySelector('#projects');
+    s.value = [...s.options].find((o) => o.value && o.value !== 'p2' && !o.disabled)?.value ?? s.value;
+    s.dispatchEvent(new Event('change'));
+  });
+  await page.locator(".viewtabs [data-pane='rules']").click();
+  await page.waitForSelector('[data-fk="run:run-0"]');
+  await page.locator('[data-fk="run:run-0"]').click();
+  await page.waitForSelector('[data-fk="runrow:D-02"]');
+  await page.locator('[data-fk="runrow:D-02"]').click();
+  await page.waitForSelector('[data-fk="decide:accept"]:not([disabled])');
+  await page.locator('[data-fk="decide:waive"]').click();
+  await page.waitForSelector('[data-fk="waive:reason"]');
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+    await check(`${theme}: the decision of a proposal, with the waiver form`);
+  }
+  await page.locator('[data-fk="runrow:D-03"]').click();
+  await page.waitForSelector('.rules-run-stale');
+  await check('dark: an outdated proposal');
+  await page.locator('[data-fk="runrow:D-02"]').click();
+  await page.locator('[data-fk="decide:reject"]').click();
+  await page.waitForSelector('.rules-run-decided');
+  await check('dark: a decided proposal');
+  await page.evaluate(() => document.documentElement.setAttribute('data-theme', 'light'));
+  await page.locator('#rules-run-back').click();
+
   // Behaviour, not only axe: a click beside a dialog closes it and one inside does not (src/lib/backdrop.js), and the
   // name at the top leads to the workspaces.
   const expectThat = (what, ok) => {

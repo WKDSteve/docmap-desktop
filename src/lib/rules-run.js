@@ -103,19 +103,32 @@ export const ROW_STATES = ["asking", "queued", "proposed", "unclear", "error", "
  * - `status` is what the model proposed (`violation`, `compliant`, `unclear`),
  *   absent until there is a proposal;
  * - `evidence` counts the findings that held up against the tree, the ones
- *   that were dropped, and the files the answer covered and left out.
+ *   that were dropped, and the files the answer covered and left out;
+ * - `decision` is what a person made of the proposal (`accepted`, `waived`,
+ *   `rejected`, with who and when), `null` while it is open;
+ * - `fresh` is whether the proposal still matches the rule and the tree
+ *   (`current`, `rule`, `files`, `gone`), `null` while that is not known.
  *
  * Rows come in the order of the batches, then the rules that were not sent.
  *
- * @param {object} run   a run as `agent_status` gives it
+ * @param {object} run    a run as `agent_status` gives it
+ * @param {object} [fresh] `agent_freshness` of the run, by rule
  */
-export function queueRows(run) {
+export function queueRows(run, fresh = null) {
   const proposals = new Map(list(run?.proposals).map((p) => [p.ruleId, p]));
   const rows = [];
   for (const batch of list(run?.batches)) {
     for (const id of list(batch.rules)) {
       const rec = proposals.get(id);
-      const row = { id, batch: batch.id, fromCache: !!batch.fromCache, state: "queued" };
+      const decided = run?.decisions && typeof run.decisions === "object" ? run.decisions[id] : null;
+      const row = {
+        id,
+        batch: batch.id,
+        fromCache: !!batch.fromCache,
+        state: "queued",
+        decision: decided && typeof decided === "object" ? decided : null,
+        fresh: (fresh && typeof fresh[id] === "string" && fresh[id]) || null,
+      };
       if (rec) {
         const p = rec.proposal && typeof rec.proposal === "object" ? rec.proposal : {};
         row.status = rec.status;
@@ -197,4 +210,61 @@ export function actionsFor(state) {
 /** Whether a run is still changing, so its view has to ask again. */
 export function isLive(state) {
   return state === "running";
+}
+
+/** The kinds of decision a person takes about one proposal. */
+export const DECISIONS = ["accepted", "waived", "rejected"];
+
+/** The catalog key that says what became of a proposal. */
+export function decisionKey(decision) {
+  const kind = decision && DECISIONS.includes(decision.kind) ? decision.kind : null;
+  return kind ? `rules.run.decided.${kind}` : null;
+}
+
+/**
+ * The catalog key that marks a proposal as outdated, or `null` for a current
+ * one and while it is not known: the rule was edited (`rule`), the files it
+ * was answered about changed (`files`), or it is no longer planned (`gone`).
+ */
+export function freshKey(fresh) {
+  if (fresh === "rule" || fresh === "files" || fresh === "gone") return `rules.run.fresh.${fresh}`;
+  return null;
+}
+
+/**
+ * What the detail of one row offers a person: accept, waive, reject, each
+ * with whether it can be taken now and, when not, why (a catalog key). `null`
+ * when there is nothing to decide: no proposal yet, or decided already. Never
+ * anything about more than this one row: there is no "accept all".
+ *
+ * - accept: an answer (`violation` or `compliant`) that is known to be
+ *   current; an `unclear` or failed one is not an answer, an outdated one was
+ *   about something else, and one whose freshness is not known yet waits;
+ * - waive: always, a waiver is about the rule, not about what was proposed;
+ * - reject: always.
+ *
+ * @param {object} row  a row of `queueRows`
+ */
+export function decideOffer(row) {
+  if (!row || row.decision || !row.status) return null;
+  let why = null;
+  if (row.status !== "violation" && row.status !== "compliant") why = "rules.run.accept.notAnswer";
+  else if (freshKey(row.fresh)) why = freshKey(row.fresh);
+  else if (row.fresh !== "current") why = "rules.run.accept.checking";
+  return {
+    accept: { ok: why === null, why },
+    waive: { ok: true, why: null },
+    reject: { ok: true, why: null },
+  };
+}
+
+/**
+ * A waiver's paths as typed (one per line, or comma separated), trimmed, the
+ * empty ones dropped.
+ */
+export function waiverPaths(text) {
+  return String(text ?? "")
+    .split(/[\n,]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
 }

@@ -155,6 +155,9 @@ test("no English catalog key is dead", () => {
     "rules.trust.state.", // the trust of a ruleset, by the backend's word for it
     "rules.run.state.", // a run's state, by the backend's word for it
     "rules.run.row.", // a rule's state in a run (lib/rules-run.js, ROW_STATES)
+    "rules.run.fresh.", // an outdated proposal, by the backend's word for it (lib/rules-run.js, freshKey)
+    "rules.run.decided.", // a decision, by its kind (lib/rules-run.js, DECISIONS)
+    "rules.judged.verdict.", // a verdict, by the engine's word for it
   ];
   const dead = keys().filter((k) => {
     if (RUNTIME.some((p) => k.startsWith(p))) return false;
@@ -262,6 +265,24 @@ test("a model is only ever asked from the Start button of the run dialog, or by 
   const poll = MAIN.slice(MAIN.indexOf("async function refreshRun("), MAIN.indexOf("function closeRun("));
   assert.match(poll, /invoke\("agent_status"/);
   assert.doesNotMatch(poll, /agent_start|agent_resume|agent_preview/);
+});
+
+test("a proposal is decided one at a time, from a button of its own row, and never by a draw", () => {
+  // The three decisions are each one call, written out at its button in the detail of one row: there is no loop
+  // over rows that could turn into "accept all", and nothing that draws or polls reaches them.
+  const decide = MAIN.slice(MAIN.indexOf("function drawDecide("), MAIN.indexOf("async function decideCall("));
+  for (const cmd of ["agent_accept", "agent_waive", "agent_reject"]) {
+    assert.equal(MAIN.split(`invoke("${cmd}"`).length - 1, 1, `${cmd} is called once`);
+    const atButton = String.raw`addEventListener\("click", \(\) =>\s+decideCall\(id, row\.id, \(args\) =>\s+invoke\("` + cmd + '"';
+    assert.match(decide, new RegExp(atButton), `${cmd} belongs to a button of the row`);
+  }
+  assert.doesNotMatch(decide, /for \(|forEach|\.map\(/, "no decision is made for several rows");
+  for (const fn of ["async function refreshRun(", "async function checkFresh(", "function drawRunView(", "function drawRunDetail("]) {
+    const at = MAIN.indexOf(fn);
+    assert.ok(at > 0, `${fn} should exist`);
+    const body = MAIN.slice(at, MAIN.indexOf("\n}\n", at));
+    assert.doesNotMatch(body, /agent_accept|agent_waive|agent_reject/, `${fn} must not decide anything`);
+  }
 });
 
 test("the run dialog does not start by default, and its button names where the files go", () => {

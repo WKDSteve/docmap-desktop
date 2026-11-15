@@ -55,6 +55,14 @@ export const UNAVAILABLE = [
   'agent_resume',
   'agent_cancel',
   'agent_ignore',
+  // Deciding about a proposal writes into the project (.rules-verdicts.json, .rules-waivers.json) through the engine's
+  // writers, which a page that writes nothing into a picked folder does not have.
+  'agent_freshness',
+  'agent_accept',
+  'agent_waive',
+  'agent_reject',
+  'agent_person',
+  'rules_judged',
 ];
 
 const DEFAULT_WORKSPACE = 'Default';

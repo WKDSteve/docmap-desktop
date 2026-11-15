@@ -3264,6 +3264,18 @@ body.has-bar {
   display: none;
 }
 
+/* A decision, or that the proposal is outdated: a line of its own under the three words. */
+.rules-run-mark {
+  grid-column: 3 / 5;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.rules-run-mark:empty {
+  display: none;
+}
+
 .rules-run-detail {
   min-width: 0;
   padding: 8px 10px;
@@ -3312,6 +3324,98 @@ body.has-bar {
 
 .rules-run-verdict {
   font-weight: 600;
+}
+
+/* Outdated: said in words and with a mark, never by colour. */
+.rules-run-stale {
+  margin: 0 0 6px;
+  padding: 4px 8px;
+  border: 1px dashed var(--ink);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+
+/* What a person decided, where the buttons were. */
+.rules-run-decided {
+  margin: 4px 0 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow-wrap: anywhere;
+}
+
+.rules-decide {
+  margin: 6px 0 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.rules-decide-lead {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.rules-decide-fields {
+  display: grid;
+  gap: 4px;
+}
+
+.rules-decide-field {
+  display: grid;
+  grid-template-columns: minmax(90px, 30%) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.rules-decide-field input,
+.rules-decide-field textarea {
+  width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.rules-decide-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+}
+
+.rules-decide-why {
+  margin: 6px 0 0;
+}
+
+.rules-decide-waive {
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--line);
+}
+
+/* A person's decision in the Agent column of the Rules tab. */
+.rules-judged {
+  display: inline-block;
+  padding: 0 7px;
+  border: 1px solid var(--ink);
+  border-radius: var(--radius-pill);
+  line-height: 1.6;
+  white-space: nowrap;
+  color: var(--ink);
+}
+
+.rules-judged.waived {
+  border-style: dashed;
+  border-color: var(--muted);
+  color: var(--muted);
 }
 
 .rules-run-reason {

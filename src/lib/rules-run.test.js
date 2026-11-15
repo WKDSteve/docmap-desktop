@@ -14,6 +14,10 @@ import {
   progress,
   actionsFor,
   isLive,
+  decideOffer,
+  decisionKey,
+  freshKey,
+  waiverPaths,
 } from "./rules-run.js";
 
 function preview(over = {}) {
@@ -174,4 +178,59 @@ test("what a run can be told depends on its state", () => {
   assert.deepEqual(actionsFor("cancelled"), { pause: false, resume: false, cancel: false });
   assert.equal(isLive("running"), true);
   assert.equal(isLive("paused"), false);
+});
+
+test("each proposal is decided on its own: accept only a current answer, waive and reject any", () => {
+  const r = run();
+  r.decisions = { "M-02": { kind: "rejected", by: "A Person", atMs: 1 } };
+  const fresh = { "M-01": "current", "M-02": "current", "M-03": "current", "M-04": "files" };
+  const rows = queueRows(r, fresh);
+  const by = Object.fromEntries(rows.map((row) => [row.id, row]));
+  assert.equal(by["M-01"].fresh, "current");
+  assert.equal(by["M-05"].fresh, null, "no proposal, nothing known");
+
+  const open = decideOffer(by["M-01"]);
+  assert.deepEqual(open.accept, { ok: true, why: null });
+  assert.equal(open.waive.ok && open.reject.ok, true);
+  // decided: nothing more to offer, and it says what became of it
+  assert.equal(decideOffer(by["M-02"]), null);
+  assert.equal(decisionKey(by["M-02"].decision), "rules.run.decided.rejected");
+  // no answer: not acceptable, but the rule can still be waived or the proposal rejected
+  const unclear = decideOffer(by["M-03"]);
+  assert.deepEqual(unclear.accept, { ok: false, why: "rules.run.accept.notAnswer" });
+  assert.equal(unclear.waive.ok, true);
+  assert.equal(decideOffer(by["M-04"]).accept.ok, false);
+  // a rule without a proposal, and one that was not sent, have nothing to decide
+  assert.equal(decideOffer(by["M-05"]), null);
+  assert.equal(decideOffer(by["N-01"]), null);
+});
+
+test("an outdated proposal is marked and cannot be accepted; while unknown it waits", () => {
+  const rows = (fresh) => queueRows(run(), fresh);
+  for (const [state, key] of [
+    ["rule", "rules.run.fresh.rule"],
+    ["files", "rules.run.fresh.files"],
+    ["gone", "rules.run.fresh.gone"],
+  ]) {
+    const row = rows({ "M-01": state })[0];
+    assert.equal(freshKey(row.fresh), key);
+    assert.deepEqual(decideOffer(row).accept, { ok: false, why: key });
+    assert.equal(decideOffer(row).waive.ok, true, "a waiver is about the rule");
+  }
+  assert.equal(freshKey("current"), null);
+  assert.equal(freshKey(null), null);
+  assert.deepEqual(decideOffer(rows(null)[0]).accept, { ok: false, why: "rules.run.accept.checking" });
+});
+
+test("decisions are named by their kind, and nothing else", () => {
+  assert.equal(decisionKey({ kind: "accepted" }), "rules.run.decided.accepted");
+  assert.equal(decisionKey({ kind: "waived" }), "rules.run.decided.waived");
+  assert.equal(decisionKey({ kind: "all" }), null);
+  assert.equal(decisionKey(null), null);
+});
+
+test("the paths of a waiver are one per line or comma separated", () => {
+  assert.deepEqual(waiverPaths(" lua/gen \n\n docs/*.md, a.lua "), ["lua/gen", "docs/*.md", "a.lua"]);
+  assert.deepEqual(waiverPaths(""), []);
+  assert.deepEqual(waiverPaths(undefined), []);
 });

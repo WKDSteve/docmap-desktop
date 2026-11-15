@@ -421,11 +421,15 @@ failed rule lists its findings; a finding opens the file at its line. A run that
 does not come back within two minutes is stopped, and its rules show that as an
 error. The manual rules of the selection are not run: they are marked as left for
 an agent run, which is a separate step you start yourself, and a rule that could
-not be sent says why. Results of an agent appear in the **Agent** column, never
-in the mechanical one.
+not be sent says why. What a person decided about a manual rule appears in the
+**Agent** column, never in the mechanical one: `✕ verdict: violation` or
+`✓ verdict: compliant` (from the project's `.rules-verdicts.json`, with who and
+when on hover) or `– waived` (a waiver in `.rules-waivers.json` that has not
+expired).
 
 Once a project's rules have been read, the sidebar shows two numbers for it:
-manual rules still open, and automated ones whose last run did not pass.
+manual rules still open (no verdict and no waiver in force), and automated ones
+whose last run did not pass.
 
 ### An agent run over manual rules
 
@@ -464,8 +468,26 @@ pauses it. **Agent runs of this project** in the Rules tab lists running and fin
 - **Pause** stops the queue and keeps the run resumable, **Resume** continues it, **Cancel run** ends it for good.
   What already came back is kept either way. The token count is what the backend reported, not an estimate.
 
-Accepting a proposal as a verdict, waiving a rule and rejecting a proposal are not in this window yet: a run's
-proposals can be read here, and no verdict is written from here.
+**Deciding about a proposal.** The detail of a proposal has three buttons, for that one proposal and no other:
+there is no "accept all".
+
+- **Accept** makes the proposal the rule's verdict in `.rules-verdicts.json`, with your name (**Decided by**, filled
+  in from git's `user.name` and yours to change, never taken from the proposal) and an optional note. Only an answer
+  can be accepted (a violation, or no violation found), and only while it still matches the rule and the files: when
+  a run is opened, the engine plans it again, and a proposal whose rule or files have changed since is marked
+  **outdated** and cannot be accepted (start a new run for it).
+- **Waive…** opens the fields of a waiver of the rule: a reason (one line), optionally the last day it holds and the
+  paths it is limited to. It goes into `.rules-waivers.json`. A waiver is about the rule, so an outdated proposal can
+  still lead to one.
+- **Reject** writes nothing into the project. The run remembers it, as it remembers the other two decisions.
+
+The two files are written by the engine, through `rules.nvim`'s own writers (`rules/accept` and `rules/waive` of
+docmap.nvim's standalone engine): the same code `:Rules` runs in Neovim, so the files stay in the shape it reads.
+When it refuses (a verdicts file it cannot use, a rule waived already), the detail says why and the file is as it
+was; the proposal stays open. An engine older than these two routes is named as such. On Windows the name, the
+note, the reason and the paths are written in plain ASCII for now (no `ä`, `ü`, `ß`): the engine reads its command
+line through the system's code page and would change such letters, so the window refuses them before anything is
+written.
 
 ### Trusting a ruleset
 

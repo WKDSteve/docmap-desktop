@@ -58,6 +58,7 @@ The strip under the menu bar says this on the page itself (**What is different h
 | History, checklist status | from git, through the local server | not there: no git. The map's own text for a page opened from disk applies |
 | Telemetry, loaded modules | from a Neovim session's data | not there: those files are outside the folder |
 | Rule runs with an agent | through ai-desktop | not there |
+| Accepting a proposal, waiving a rule | written into the project by the engine (`.rules-verdicts.json`, `.rules-waivers.json`) | not there: the page writes nothing into a folder, and the Rules tab is not offered |
 | Statistics pane | yes | not offered |
 | Open in editor, reveal in file manager, copy path | yes | not offered: the browser does not tell a page where a folder lies |
 | Add from a URL (clone), from a Neovim config, GitHub lists, traffic | yes | not offered: no git, no network |

@@ -86,6 +86,7 @@ import {
   mergeRun,
   mechanicalCounts,
   sidebarCounts,
+  judgedOf,
   notSendable,
   untrustedRulesets,
 } from "./lib/rules.js";
@@ -100,6 +101,10 @@ import {
   progress as runProgress,
   actionsFor as runActions,
   isLive as isRunLive,
+  decideOffer,
+  decisionKey,
+  freshKey,
+  waiverPaths,
 } from "./lib/rules-run.js";
 
 function fatal(what, err) {
@@ -3880,6 +3885,8 @@ const rulesUi = {
 const LANE_SHAPE = { auto: "◆", manual: "○" };
 /** And with a mechanical status. */
 const STATUS_SHAPE = { pass: "✓", fail: "✕", error: "!", waived: "–" };
+/** And with what a person decided about a manual rule (the Agent column). */
+const JUDGED_SHAPE = { violation: "✕", compliant: "✓", waived: "–" };
 /** And with the trust of a ruleset. */
 const TRUST_SHAPE = { trusted: "✓", untrusted: "○", changed: "!", unreadable: "✕" };
 
@@ -3907,13 +3914,30 @@ function loadRules(id) {
           const files = new Set(rules.map((r) => r.source_file)).size;
           st.grouping = files * 2 > rules.length && rules.length > 8 ? "family" : "file";
         }
-        return catalog;
+        // two small files, no engine: read with the catalog so the count is right at once
+        return loadJudged(id).then(() => catalog);
       })
       .finally(() => {
         st.loading = null;
       });
   }
   return st.loading;
+}
+
+/**
+ * Read which rules a person decided about (`.rules-verdicts.json`,
+ * `.rules-waivers.json`): the Agent column shows it, and the sidebar does not
+ * count those rules as open. A failure leaves nothing decided, which counts
+ * every manual rule as open: too many, never too few.
+ */
+async function loadJudged(id) {
+  const st = rulesOf(id);
+  try {
+    st.judged = await invoke("rules_judged", { id });
+  } catch (e) {
+    st.judged = null;
+    void e;
+  }
 }
 
 async function renderRules(force = false) {
@@ -3991,7 +4015,7 @@ function drawRulesNow(id) {
     auto: all.auto,
     manual: all.manual,
   });
-  drawRulesProblems(catalog);
+  drawRulesProblems(catalog, st.judged);
   drawRulesTrust(id, catalog);
   rulesUi.body.hidden = false;
 
@@ -4055,10 +4079,14 @@ function drawRulesNow(id) {
   syncRunView(id);
 }
 
-/** What the engine could not read of the rulesets, and what it warns about. */
-function drawRulesProblems(catalog) {
+/**
+ * What the engine could not read of the rulesets, what it warns about, and a
+ * verdicts or waivers file of the project that could not be read.
+ */
+function drawRulesProblems(catalog, judged) {
   const lines = [...rulesList(catalog.warnings), ...rulesList(catalog.errors)].map(String);
   if (catalog.trustStoreError) lines.unshift(errorText(catalog.trustStoreError));
+  for (const file of rulesList(judged?.unreadable)) lines.unshift(fill(t("rules.judged.unreadable"), { file }));
   rulesUi.problems.replaceChildren();
   rulesUi.problems.hidden = lines.length === 0;
   const SHOWN = 8;
@@ -4261,7 +4289,28 @@ function ruleRow(id, st, rule, order) {
   }
   const agent = node("span", "rules-agent");
   const note = st.notes.get(rule.id);
-  if (note) agent.append(node("span", "rules-left", t("rules.left")));
+  // What a person decided, from the project's verdicts and waivers. Here and
+  // never in the mechanical slot: a verdict is a person's answer to a proposal.
+  const judged = judgedOf(rule, st.judged);
+  if (judged) {
+    const chip =
+      judged.kind === "verdict"
+        ? node(
+            "span",
+            "rules-judged verdict",
+            `${JUDGED_SHAPE[judged.verdict] ?? "■"} ${t("rules.judged.verdict." + judged.verdict)}`
+          )
+        : node("span", "rules-judged waived", `${JUDGED_SHAPE.waived} ${t("rules.judged.waived")}`);
+    const full =
+      judged.kind === "verdict"
+        ? fill(t("rules.judged.verdictBy"), { by: judged.by, date: judged.date })
+        : judged.expires
+          ? fill(t("rules.judged.waivedUntil"), { reason: judged.reason, date: judged.expires })
+          : fill(t("rules.judged.waivedFor"), { reason: judged.reason });
+    chip.title = full;
+    chip.setAttribute("aria-label", `${chip.textContent}: ${full}`);
+    agent.append(chip);
+  } else if (note) agent.append(node("span", "rules-left", t("rules.left")));
 
   row.append(box, mark, title, mech, agent);
   wrap.append(row);
@@ -4392,7 +4441,9 @@ async function startRules() {
  */
 function renderRulesCount() {
   const id = view.selectedId;
-  const counts = id ? sidebarCounts(rulesState.get(id)?.catalog ?? null, rulesOf(id).results) : null;
+  const counts = id
+    ? sidebarCounts(rulesState.get(id)?.catalog ?? null, rulesOf(id).results, rulesOf(id).judged)
+    : null;
   rulesUi.count.hidden = !counts;
   if (!counts) return;
   rulesUi.count.textContent = counts.failed
@@ -4405,7 +4456,7 @@ function renderRulesCount() {
 /** The same two numbers as a short mark in the project picker, when known. */
 function rulesMark(id) {
   const st = rulesState.get(id);
-  const counts = st ? sidebarCounts(st.catalog, st.results) : null;
+  const counts = st ? sidebarCounts(st.catalog, st.results, st.judged) : null;
   if (!counts) return "";
   return ` (${LANE_SHAPE.manual}${counts.manual}${counts.failed ? ` ${STATUS_SHAPE.fail}${counts.failed}` : ""})`;
 }
@@ -4576,9 +4627,11 @@ trustUi.go.addEventListener("click", async () => {
 //   dialog**, and the dialog says before that what would be sent and where.
 //   Opening the dialog asks the engine for the plan and ai-desktop for its
 //   health; neither sends a file.
-// - **The view decides nothing.** A proposal is shown as a proposal, a
-//   model's "compliant" as "no violation found" with what it covered, and
-//   there is no button here that turns either into a verdict.
+// - **The view decides nothing by itself.** A proposal is shown as a
+//   proposal, a model's "compliant" as "no violation found" with what it
+//   covered. Only a person turns one into a verdict or a waiver, one at a
+//   time, with the buttons in the detail of its row (see "deciding about one
+//   proposal" below).
 // ---------------------------------------------------------------------
 
 const runUi = {
@@ -4704,6 +4757,8 @@ async function openRun(id, runId) {
   st.openRun = runId;
   st.run = null;
   st.runRule = null;
+  // asked again on every opening: the rules or the tree may have changed in between
+  st.runFresh = null;
   await refreshRun(id);
   if (id === view.selectedId && rulesOpen) drawRules(id);
 }
@@ -4737,7 +4792,31 @@ async function refreshRun(id) {
         if (st.run && !isRunLive(st.run.state)) loadRuns(id);
       });
     }, 1500);
+  } else if (st.run) {
+    void checkFresh(id);
   }
+}
+
+/**
+ * Whether the proposals of the open run still match the rules and the tree
+ * (`agent_freshness`: the engine plans the run's selection again, no network).
+ * Asked once a run stands still, and again when it has more proposals than at
+ * the last look. Until the answer is there, no proposal can be accepted.
+ */
+async function checkFresh(id) {
+  const st = rulesOf(id);
+  const runId = st.openRun;
+  const count = rulesList(st.run?.proposals).length;
+  const known = st.runFresh;
+  if (!runId || !count || (known && known.runId === runId && known.count === count)) return;
+  st.runFresh = { runId, count, map: null, error: null };
+  try {
+    const map = await invoke("agent_freshness", { id, runId });
+    if (st.runFresh?.runId === runId) st.runFresh.map = map;
+  } catch (e) {
+    if (st.runFresh?.runId === runId) st.runFresh.error = errorText(e);
+  }
+  if (st.openRun === runId && st.run && id === view.selectedId && rulesOpen) drawRunView(id);
 }
 
 function closeRun(id) {
@@ -4775,7 +4854,8 @@ function drawRunView(id) {
   runUi.resume.hidden = !can.resume;
   runUi.cancel.hidden = !can.cancel;
 
-  const rows = queueRows(run);
+  const fresh = st.runFresh && st.runFresh.runId === run.id ? st.runFresh.map : null;
+  const rows = queueRows(run, fresh);
   if (!st.runRule || !rows.some((r) => r.id === st.runRule)) st.runRule = rows[0]?.id ?? null;
   const rules = new Map(rulesList(st.catalog?.rules).map((r) => [r.id, r]));
   const held = runUi.queue.contains(document.activeElement) ? document.activeElement.dataset.fk : undefined;
@@ -4794,10 +4874,16 @@ function drawRunView(id) {
       // What the model proposed, in its own slot: never blended with the state.
       node("span", "rules-run-says", row.status && row.state !== "error" ? t(proposalKey(row.status)) : ""),
       // And what the check of the evidence did with it, in a third.
-      node("span", "rules-run-evidence", row.evidence ? runEvidence(row) : "")
+      node("span", "rules-run-evidence", row.evidence ? runEvidence(row) : ""),
+      // And what a person made of it, or that it is outdated, on a line of its own.
+      node("span", "rules-run-mark", runMark(row))
     );
     if (rule) pick.title = titleOf(rule);
     pick.addEventListener("click", () => {
+      if (st.runRule !== row.id && st.decide) {
+        // what was typed about one proposal is not carried to the next
+        Object.assign(st.decide, { note: "", reason: "", expires: "", paths: "", waiving: null });
+      }
       st.runRule = row.id;
       drawRunView(id);
     });
@@ -4808,7 +4894,21 @@ function drawRunView(id) {
     const again = [...runUi.queue.querySelectorAll("[data-fk]")].find((el) => el.dataset.fk === held);
     if (again) again.focus({ preventScroll: true });
   }
+  // The detail is rebuilt too: a field or a button of the decision keeps the keyboard.
+  const inDetail = runUi.detail.contains(document.activeElement) ? document.activeElement.dataset.fk : undefined;
   drawRunDetail(id, rows.find((r) => r.id === st.runRule) ?? null, rules.get(st.runRule) ?? null);
+  if (inDetail) {
+    const again = [...runUi.detail.querySelectorAll("[data-fk]")].find((el) => el.dataset.fk === inDetail);
+    if (again && !again.disabled) again.focus({ preventScroll: true });
+  }
+}
+
+/** A row's decision in a word, else whether it is outdated; nothing for an open, current one. */
+function runMark(row) {
+  const decided = decisionKey(row.decision);
+  if (decided) return `${DECIDED_SHAPE[row.decision.kind]} ${t(decided + ".short")}`;
+  const stale = freshKey(row.fresh);
+  return stale ? `! ${t(stale + ".short")}` : "";
 }
 
 /** The evidence check in a few words: what held, what was dropped, what was covered. */
@@ -4851,6 +4951,9 @@ function drawRunDetail(id, row, rule) {
     node("span", "rules-run-verdict", t(proposalKey(rec.status)))
   );
   box.append(says);
+  const stale = freshKey(row.fresh);
+  if (stale && !row.decision) box.append(node("p", "rules-run-stale", `! ${t(stale)}`));
+  drawDecide(id, row, box);
   if (rec.status === "compliant") {
     box.append(
       node(
@@ -4904,6 +5007,192 @@ function drawRunDetail(id, row, rule) {
     box.append(node("pre", "trust-code", p.raw.length > 4000 ? p.raw.slice(0, 4000) + "\n…" : p.raw));
   }
   if (row.fromCache) box.append(node("p", "rules-note", t("rules.run.fromCache")));
+}
+
+// ---- deciding about one proposal ------------------------------------
+//
+// Accept, Waive… and Reject sit in the detail of one row and act on that row
+// only: there is no "accept all", and no list of checkboxes that could become
+// one. Accept and Waive are written by the engine (`rules/accept`,
+// `rules/waive` into `.rules-verdicts.json` and `.rules-waivers.json`), Reject
+// writes nothing outside the run. A refusal of the engine stays in the detail,
+// and the proposal stays open.
+
+/** The shape that goes with a decision, so it is never colour alone. */
+const DECIDED_SHAPE = { accepted: "●", waived: "–", rejected: "○" };
+
+/** The form of the decision being prepared, per project: who decides, and the fields of a waiver. */
+function decideForm(st) {
+  if (!st.decide) st.decide = { by: null, note: "", reason: "", expires: "", paths: "", waiving: null, busy: false, error: null, errorRule: null };
+  return st.decide;
+}
+
+/** The name to offer for "decided by", asked once per project; the person can change it. */
+async function loadPerson(id) {
+  const f = decideForm(rulesOf(id));
+  if (f.by !== null) return;
+  f.by = "";
+  try {
+    f.by = (await invoke("agent_person", { id })) || "";
+  } catch (e) {
+    void e;
+  }
+  const st = rulesOf(id);
+  if (st.run && id === view.selectedId && rulesOpen) drawRunView(id);
+}
+
+function decideField(label, input, fk) {
+  const wrap = node("label", "rules-decide-field");
+  input.dataset.fk = fk;
+  wrap.append(node("span", null, label), input);
+  return wrap;
+}
+
+function textInput(value, onInput, type = "text") {
+  const input = document.createElement("input");
+  input.type = type;
+  input.value = value ?? "";
+  input.addEventListener("input", () => onInput(input.value));
+  return input;
+}
+
+function drawDecide(id, row, box) {
+  const st = rulesOf(id);
+  const f = decideForm(st);
+  if (row.decision) {
+    const d = row.decision;
+    const date = d.atMs ? new Date(d.atMs).toLocaleDateString(locale) : "";
+    let text = fill(t(decisionKey(d)), { by: d.by, date, verdict: d.verdict ? t("rules.judged.verdict." + d.verdict) : "" });
+    if (d.kind === "waived") {
+      text += " " + (d.expires ? fill(t("rules.run.decided.until"), { reason: d.reason ?? "", date: d.expires }) : fill(t("rules.run.decided.for"), { reason: d.reason ?? "" }));
+    }
+    if (d.note) text += " " + fill(t("rules.run.decided.note"), { note: d.note });
+    box.append(node("p", "rules-run-decided", `${DECIDED_SHAPE[d.kind] ?? ""} ${text}`));
+    return;
+  }
+  const offer = decideOffer(row);
+  if (!offer) return;
+  if (f.by === null) void loadPerson(id);
+
+  const wrap = node("div", "rules-decide");
+  wrap.append(node("p", "rules-decide-lead", t("rules.run.decide.lead")));
+  const fields = node("div", "rules-decide-fields");
+  fields.append(
+    decideField(t("rules.run.decide.by"), textInput(f.by ?? "", (v) => (f.by = v)), "decide:by"),
+    decideField(t("rules.run.decide.note"), textInput(f.note, (v) => (f.note = v)), "decide:note")
+  );
+  wrap.append(fields);
+
+  const bar = node("div", "rules-decide-bar");
+  const accept = node("button", "addbox-primary", t("rules.run.decide.accept"));
+  accept.type = "button";
+  accept.dataset.fk = "decide:accept";
+  accept.disabled = f.busy || !offer.accept.ok;
+  accept.addEventListener("click", () =>
+    decideCall(id, row.id, (args) =>
+      invoke("agent_accept", { ...args, by: f.by ?? "", note: f.note.trim() || null })
+    )
+  );
+  const waive = node("button", "addbox-secondary", t("rules.run.decide.waive"));
+  waive.type = "button";
+  waive.dataset.fk = "decide:waive";
+  waive.disabled = f.busy;
+  waive.setAttribute("aria-expanded", String(f.waiving === row.id));
+  waive.addEventListener("click", () => {
+    f.waiving = f.waiving === row.id ? null : row.id;
+    drawRunView(id);
+  });
+  const reject = node("button", "addbox-secondary", t("rules.run.decide.reject"));
+  reject.type = "button";
+  reject.dataset.fk = "decide:reject";
+  reject.disabled = f.busy;
+  reject.addEventListener("click", () =>
+    decideCall(id, row.id, (args) => invoke("agent_reject", { ...args, by: f.by ?? "" }))
+  );
+  bar.append(accept, waive, reject);
+  wrap.append(bar);
+  // Why Accept is off, in words next to it rather than in a tooltip alone.
+  if (!offer.accept.ok) {
+    const why = offer.accept.why === "rules.run.accept.checking" && st.runFresh?.error
+      ? fill(t("rules.run.accept.unknown"), { error: st.runFresh.error })
+      : t(offer.accept.why);
+    accept.title = why;
+    wrap.append(node("p", "rules-note rules-decide-why", why));
+  }
+
+  if (f.waiving === row.id) {
+    const form = node("div", "rules-decide-waive");
+    form.append(node("p", "rules-decide-lead", t("rules.run.waive.lead")));
+    const paths = document.createElement("textarea");
+    paths.rows = 2;
+    paths.value = f.paths;
+    paths.addEventListener("input", () => (f.paths = paths.value));
+    form.append(
+      decideField(t("rules.run.waive.reason"), textInput(f.reason, (v) => (f.reason = v)), "waive:reason"),
+      decideField(t("rules.run.waive.expires"), textInput(f.expires, (v) => (f.expires = v), "date"), "waive:expires"),
+      decideField(t("rules.run.waive.paths"), paths, "waive:paths")
+    );
+    const go = node("button", "addbox-primary", t("rules.run.waive.go"));
+    go.type = "button";
+    go.dataset.fk = "waive:go";
+    go.disabled = f.busy;
+    go.addEventListener("click", () =>
+      decideCall(id, row.id, (args) =>
+        invoke("agent_waive", {
+          ...args,
+          args: { by: f.by ?? "", reason: f.reason, expires: f.expires || null, paths: waiverPaths(f.paths) },
+        })
+      )
+    );
+    const cancel = node("button", "addbox-secondary", t("rules.run.waive.cancel"));
+    cancel.type = "button";
+    cancel.addEventListener("click", () => {
+      f.waiving = null;
+      drawRunView(id);
+    });
+    const goBar = node("div", "rules-decide-bar");
+    goBar.append(go, cancel);
+    form.append(goBar);
+    wrap.append(form);
+  }
+  // The engine's refusal, or a field it would not take: here, where the decision was asked for.
+  if (f.error && f.errorRule === row.id) wrap.append(node("p", "rules-blocked", f.error));
+  box.append(wrap);
+}
+
+/**
+ * One decision about the proposal `rule` of the open run. `call` is the
+ * command itself, written out at its button. The answer is the run with the
+ * decision in it; the project's verdicts and waivers are read again for the
+ * Rules tab and the sidebar.
+ */
+async function decideCall(id, rule, call) {
+  const st = rulesOf(id);
+  const f = decideForm(st);
+  const runId = st.openRun;
+  if (!runId || f.busy) return;
+  f.busy = true;
+  f.error = null;
+  f.errorRule = null;
+  drawRunView(id);
+  try {
+    const run = await call({ id, runId, rule });
+    if (st.openRun === runId) st.run = run;
+    f.waiving = null;
+    f.note = "";
+    f.reason = "";
+    f.expires = "";
+    f.paths = "";
+    await loadJudged(id);
+    renderRulesCount();
+    void render();
+  } catch (e) {
+    f.error = errorText(e);
+    f.errorRule = rule;
+  } finally {
+    f.busy = false;
+  }
+  if (st.openRun === runId && st.run && id === view.selectedId && rulesOpen) drawRunView(id);
 }
 
 /**

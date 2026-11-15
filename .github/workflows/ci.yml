@@ -172,6 +172,10 @@ jobs:
       - name: the release-kit actions are the pinned commit
         run: python tools/check-release-kit-pin.py
 
+      # appkit-core comes by a git tag; Cargo.lock holds the commit the tag named then. A moved tag fails here.
+      - name: the appkit tag of Cargo.lock still names its commit
+        run: python tools/check-appkit-pin.py
+
       - name: no colour outside the tokens
         run: python tools/check-colors.py
 

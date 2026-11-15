@@ -140,6 +140,7 @@ fn main() {
         // The runs of the rules agent live here, not in a window: closing the
         // window does not stop one, quitting the app pauses it (see below).
         .manage(agent::runner::Runner::default())
+        .manage(agent::chat::Chats::default())
         .invoke_handler(tauri::generate_handler![
             workspace::map_dir_refused,
             workspace::list_projects,
@@ -218,6 +219,10 @@ fn main() {
             agent::commands::agent_waive,
             agent::commands::agent_reject,
             agent::commands::agent_person,
+            agent::commands::agent_chat_preview,
+            agent::commands::agent_chat_send,
+            agent::commands::agent_chat_cancel,
+            agent::commands::agent_chat_propose,
             rules::commands::rules_catalog,
             rules::commands::rules_run,
             rules::commands::rules_trust_preview,

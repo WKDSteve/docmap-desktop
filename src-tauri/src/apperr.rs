@@ -166,6 +166,17 @@ pub const ENGLISH: &[(&str, &str)] = &[
     ("err.agent.expires", "{value} is not a date of the form YYYY-MM-DD"),
     ("err.agent.paths", "Paths of a waiver are relative, one per line, without a comma; at most 50"),
     ("err.agent.ascii", "On Windows the docmap engine would not receive {text} as written: it reads it through the system's code page. Write it in plain ASCII, without letters such as ä, ö, ü or ß"),
+    ("err.agent.chatEmpty", "Write a message first"),
+    ("err.agent.chatLong", "The conversation is too long to send. Close the chat and start a new one"),
+    ("err.agent.chatMessage", "A message may have at most {max} characters"),
+    ("err.agent.chatFiles", "At most {max} files can be attached to a conversation"),
+    ("err.agent.chatNoRequest", "The run's selection does not ask about {rule} now, so there is nothing to talk about with its files"),
+    ("err.agent.chatAnswerLarge", "This answer is too large to be checked (more than 1 MiB)"),
+    ("err.agent.chatStopped", "The answer was stopped"),
+    ("err.agent.chatId", "This conversation has no valid name"),
+    ("err.agent.chatBusy", "This conversation is waiting for an answer already"),
+    ("err.agent.engineNoAttach", "The docmap engine cannot check files for a conversation (rules/attach). Update it to the one this app was checked against"),
+    ("err.agent.attachPath", "{path} is not a file of the project"),
     // The Rules tab: the catalog, the mechanical run and the trust store (`rules/`).
     ("err.rules.engine", "The docmap engine could not answer for the rules"),
     ("err.rules.engineOld", "{engine} is a docmap engine without the rules engine. Rebuild it from docmap.nvim, or point at a newer one"),
@@ -396,6 +407,7 @@ mod tests {
     const SOURCES: &[(&str, &str)] = &[
         // The rules agent is a folder of modules.
         ("agent/mod.rs", include_str!("agent/mod.rs")),
+        ("agent/chat.rs", include_str!("agent/chat.rs")),
         ("agent/client.rs", include_str!("agent/client.rs")),
         ("agent/commands.rs", include_str!("agent/commands.rs")),
         ("agent/decide.rs", include_str!("agent/decide.rs")),

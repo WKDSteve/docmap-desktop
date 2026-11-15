@@ -110,8 +110,13 @@ writes both files through `rules.nvim`'s own writers; an outdated proposal (its 
 cannot be accepted. The Rules tab shows the verdict or the waiver in the Agent column, and the sidebar counts only
 the manual rules without one.
 
-- **Module:** `src-tauri/src/agent/` (`decide.rs`), `src-tauri/src/rules/judged.rs`, `src/lib/rules-run.js`
-- **Usercmds:** **Agent run for N manual rules…** in the Rules tab
+A chat in the run view talks with the run's model about one rule or the whole run. Nothing is sent until **Send**;
+the lines above the input say where the text goes and what goes with it, with an estimated token count, and a
+trimmed conversation says so. It cannot open files (**Add file to context…** attaches one, through the engine's deny
+list) and cannot decide: **Make this a proposal** turns an answer into a normal proposal through the evidence check.
+
+- **Module:** `src-tauri/src/agent/` (`decide.rs`, `chat.rs`), `src/lib/rules-chat.js`, `src-tauri/src/rules/judged.rs`, `src/lib/rules-run.js`
+- **Usercmds:** **Agent run for N manual rules…** in the Rules tab; **Chat about <rule>…** and **Chat about this run…** in the run view
 - **Docs:** [USAGE.md](../USAGE.md#an-agent-run-over-manual-rules)
 
 ## Trusting a ruleset

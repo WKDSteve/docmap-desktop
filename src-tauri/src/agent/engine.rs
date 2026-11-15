@@ -143,6 +143,14 @@ pub trait Engine: Send + Sync {
     /// `rules/validate` of one rule's raw `answer`: the engine's `proposal`
     /// object, never a verdict.
     fn validate(&self, root: &Path, rule: &str, answer: &str) -> Result<Value, AppError>;
+
+    /// `rules/attach`: whether the file `path` (relative to `root`) may go into
+    /// a request, and its text as a request carries it. The planner's decision
+    /// (deny list, links, size), never this side's. An engine without the
+    /// route says so.
+    fn attach(&self, _root: &Path, _path: &str) -> Result<Value, AppError> {
+        Err(AppError::new("err.agent.engineNoAttach"))
+    }
 }
 
 /// The engine's two writers, as the run view uses them. Each call is one
@@ -259,6 +267,9 @@ pub(crate) fn capabilities(program: &str, grammars: Option<&str>) -> Result<Vec<
 pub struct CliEngine {
     program: String,
     grammars: Option<String>,
+    /// `rules-attach` is among its capabilities (an engine from before the
+    /// chat has the agent functions without it).
+    attach: bool,
 }
 
 impl CliEngine {
@@ -272,7 +283,12 @@ impl CliEngine {
         if !(caps.iter().any(|c| c == "api") && caps.iter().any(|c| c == "rules-agent")) {
             return Err(AppError::new("err.agent.engineOld").with("engine", &program));
         }
-        Ok(CliEngine { program, grammars })
+        let attach = caps.iter().any(|c| c == "rules-attach");
+        Ok(CliEngine {
+            program,
+            grammars,
+            attach,
+        })
     }
 
     fn command(&self) -> proc::Cmd {
@@ -323,6 +339,29 @@ impl Engine for CliEngine {
             .filter(Value::is_object)
             .ok_or_else(|| AppError::new("err.agent.engineShape"))
     }
+
+    fn attach(&self, root: &Path, path: &str) -> Result<Value, AppError> {
+        if !self.attach {
+            return Err(AppError::new("err.agent.engineNoAttach").with("engine", &self.program));
+        }
+        attach_arg(path)?;
+        let v = self.call(root, "rules/attach", &[format!("--select={path}")])?;
+        unavailable(&v)?;
+        Ok(v)
+    }
+}
+
+/// A path the engine is handed on its command line: on Windows it reads that
+/// line through the ANSI code page (`answer_arg`), so a path that would arrive
+/// changed is refused here rather than asked about under another name.
+fn attach_arg(path: &str) -> Result<(), AppError> {
+    if path.trim().is_empty() || path.chars().any(char::is_control) {
+        return Err(AppError::new("err.agent.attachPath").with("path", path));
+    }
+    if cfg!(windows) && !path.is_ascii() {
+        return Err(AppError::new("err.agent.ascii").with("text", path));
+    }
+    Ok(())
 }
 
 /// The standalone binary as the writer of verdicts and waivers.
@@ -338,7 +377,11 @@ impl CliJudge {
         if !(has("api") && has("rules") && has("rules-agent") && has("rules-write")) {
             return Err(AppError::new("err.agent.engineNoWrite").with("engine", &program));
         }
-        Ok(CliJudge(CliEngine { program, grammars }))
+        Ok(CliJudge(CliEngine {
+            program,
+            grammars,
+            attach: has("rules-attach"),
+        }))
     }
 }
 

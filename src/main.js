@@ -106,6 +106,16 @@ import {
   freshKey,
   waiverPaths,
 } from "./lib/rules-run.js";
+import {
+  chatKey,
+  newChat,
+  chatArgs,
+  egressFacts,
+  relativeTo,
+  addFile,
+  attachedLine,
+  canPropose,
+} from "./lib/rules-chat.js";
 
 function fatal(what, err) {
   const box = document.getElementById("placeholder");
@@ -134,7 +144,7 @@ if (!window.__TAURI__) {
   throw new Error("no tauri bridge");
 }
 
-const { invoke, convertFileSrc } = window.__TAURI__.core;
+const { invoke, convertFileSrc, Channel } = window.__TAURI__.core;
 const { open, save } = window.__TAURI__.dialog;
 
 // The web variant (web/, one HTML file opened from disk, the engine in the page) answers the same bridge from the
@@ -4807,6 +4817,7 @@ function syncRunView(id) {
   rulesUi.trust.hidden = true;
   rulesUi.problems.hidden = true;
   drawRunView(id);
+  drawChat(id);
 }
 
 async function openRun(id, runId) {
@@ -4881,6 +4892,8 @@ function closeRun(id) {
   clearTimeout(st.runTimer);
   st.openRun = null;
   st.run = null;
+  st.chatKey = null;
+  chatUi.box.hidden = true;
   runUi.view.hidden = true;
   drawRules(id);
   loadRuns(id);
@@ -4991,6 +5004,13 @@ function drawRunDetail(id, row, rule) {
   const head = node("p", "rules-run-detail-head");
   head.append(node("span", "rules-id", row.id), node("span", "rules-text", rule ? titleOf(rule) : ""));
   box.append(head);
+  if (row.state !== "notSent") {
+    const talk = node("button", "addbox-secondary rules-chat-open", fill(t("rules.chat.rule"), { rule: row.id }));
+    talk.type = "button";
+    talk.dataset.fk = "chat:" + row.id;
+    talk.addEventListener("click", () => openChat(id, row.id));
+    box.append(talk);
+  }
   if (rule && rule.text) box.append(node("p", "rules-rule-text", rule.text));
 
   const rec = rulesList(st.run.proposals).find((p) => p.ruleId === row.id);
@@ -5064,6 +5084,7 @@ function drawRunDetail(id, row, rule) {
     box.append(node("pre", "trust-code", p.raw.length > 4000 ? p.raw.slice(0, 4000) + "\n…" : p.raw));
   }
   if (row.fromCache) box.append(node("p", "rules-note", t("rules.run.fromCache")));
+  if (rec.source === "chat") box.append(node("p", "rules-note", t("rules.run.fromChat")));
 }
 
 // ---- deciding about one proposal ------------------------------------
@@ -5283,6 +5304,341 @@ runUi.resume.addEventListener("click", () => runCommand((args) => invoke("agent_
 runUi.cancel.addEventListener("click", () => runCommand((args) => invoke("agent_cancel", args)));
 runUi.back.addEventListener("click", () => {
   if (view.selectedId) closeRun(view.selectedId);
+});
+
+// ---- the chat about one rule or the whole run -----------------------
+//
+// A conversation with the model in the run view (`agent/chat.rs`). Opened by
+// a button only, never by itself; nothing is sent until the person presses
+// Send, and the lines above the input say what a message sends and where
+// (the preview: the engine plans, nothing goes out). It cannot open files: a
+// person attaches one, and the engine's deny list decides whether it goes. It
+// decides nothing: Make this a proposal sends one answer through the check of
+// every run answer, and what comes out waits for a person like any proposal.
+
+const chatUi = {
+  box: document.getElementById("rules-chat"),
+  title: document.getElementById("rules-chat-title"),
+  close: document.getElementById("rules-chat-close"),
+  dest: document.getElementById("rules-chat-dest"),
+  egress: document.getElementById("rules-chat-egress"),
+  trimmed: document.getElementById("rules-chat-trimmed"),
+  log: document.getElementById("rules-chat-log"),
+  files: document.getElementById("rules-chat-files"),
+  text: document.getElementById("rules-chat-text"),
+  error: document.getElementById("rules-chat-error"),
+  send: document.getElementById("rules-chat-send"),
+  stop: document.getElementById("rules-chat-stop"),
+  attach: document.getElementById("rules-chat-attach"),
+  run: document.getElementById("rules-run-chat"),
+};
+
+let chatCount = 0;
+
+/** The open conversation of the project's open run, or null. */
+function openChatOf(st) {
+  if (!st.chatKey || !st.chats) return null;
+  const c = st.chats.get(st.chatKey);
+  return c && c.runId === st.openRun ? c : null;
+}
+
+/** Open the conversation about `rule` (null: the whole run) of the open run. Sends nothing. */
+function openChat(id, rule) {
+  const st = rulesOf(id);
+  if (!st.openRun) return;
+  if (!st.chats) st.chats = new Map();
+  const key = chatKey(st.openRun, rule);
+  if (!st.chats.has(key)) st.chats.set(key, newChat(st.openRun, rule, ++chatCount));
+  st.chatKey = key;
+  const c = st.chats.get(key);
+  chatUi.text.value = c.draft;
+  drawChat(id);
+  chatUi.box.scrollIntoView({ block: "nearest" });
+  chatUi.text.focus({ preventScroll: true });
+  void refreshChatPreview(id);
+}
+
+function closeChat(id) {
+  const st = rulesOf(id);
+  const c = openChatOf(st);
+  if (c) c.draft = chatUi.text.value;
+  st.chatKey = null;
+  chatUi.box.hidden = true;
+}
+
+/** What the next message would send and where: the engine plans, nothing goes out. */
+async function refreshChatPreview(id) {
+  const st = rulesOf(id);
+  const c = openChatOf(st);
+  if (!c || c.previewing) return;
+  c.previewing = true;
+  c.previewError = null;
+  drawChat(id);
+  try {
+    c.preview = await invoke("agent_chat_preview", { id, args: chatArgs(c) });
+    c.dropped = c.preview.dropped;
+  } catch (e) {
+    c.previewError = errorText(e);
+  } finally {
+    c.previewing = false;
+  }
+  if (openChatOf(st) === c) drawChat(id);
+}
+
+/** The where-it-goes line and the egress line, from the last preview and the draft. */
+function drawChatEgress(c) {
+  const p = c.preview;
+  if (!p) {
+    chatUi.dest.textContent = c.previewError ? "" : t("rules.chat.preview.loading");
+    chatUi.egress.textContent = "";
+    return;
+  }
+  if (p.refused) {
+    chatUi.dest.textContent = errorText(p.refused);
+    chatUi.egress.textContent = "";
+    return;
+  }
+  const facts = egressFacts(p, chatUi.text.value.length);
+  chatUi.dest.textContent = facts.local
+    ? fill(t("rules.chat.dest.local"), { model: facts.model })
+    : fill(t("rules.chat.dest.cloud"), { backend: backendName(facts.backend), model: facts.model });
+  const nf = new Intl.NumberFormat(locale);
+  chatUi.egress.textContent = fill(t(c.rule ? "rules.chat.egress.rule" : "rules.chat.egress.run"), {
+    rule: facts.rule,
+    files: nf.format(facts.files),
+    attached: nf.format(facts.attached),
+    messages: nf.format(facts.messages),
+    tokens: nf.format(facts.tokens),
+  });
+}
+
+function drawChat(id) {
+  const st = rulesOf(id);
+  const c = openChatOf(st);
+  if (!c) {
+    chatUi.box.hidden = true;
+    return;
+  }
+  chatUi.box.hidden = false;
+  chatUi.title.textContent = c.rule ? fill(t("rules.chat.title.rule"), { rule: c.rule }) : t("rules.chat.title.run");
+  chatUi.text.placeholder = t(c.rule ? "rules.chat.placeholder" : "rules.chat.placeholder.run");
+  drawChatEgress(c);
+  // Trimmed is said every time it is so, never left to be noticed.
+  chatUi.trimmed.hidden = !c.dropped;
+  chatUi.trimmed.textContent = c.dropped
+    ? fill(t("rules.chat.trimmed"), {
+        n: c.dropped,
+        limit: new Intl.NumberFormat(locale).format(c.preview?.limitChars ?? 0),
+      })
+    : "";
+  drawChatLog(id, c);
+  drawChatFiles(id, c);
+  const problem = c.error || c.previewError;
+  chatUi.error.hidden = !problem;
+  chatUi.error.textContent = problem ?? "";
+  const refused = Boolean(c.preview?.refused);
+  chatUi.send.disabled = c.busy || refused || !c.preview;
+  chatUi.stop.hidden = !c.busy;
+  chatUi.attach.disabled = c.busy || c.files.length >= 5;
+}
+
+function drawChatLog(id, c) {
+  const nearEnd = chatUi.log.scrollHeight - chatUi.log.scrollTop - chatUi.log.clientHeight < 40;
+  chatUi.log.replaceChildren();
+  if (!c.messages.length) chatUi.log.append(node("li", "rules-note", t("rules.chat.empty")));
+  c.messages.forEach((m, i) => {
+    const li = node("li", "rules-chat-msg " + m.role);
+    li.append(
+      node("span", "rules-chat-who", t(m.role === "user" ? "rules.chat.you" : "rules.chat.model")),
+      node("p", "rules-chat-text", m.text)
+    );
+    if (m.role === "assistant") {
+      if (m.stopped) li.append(node("p", "rules-note", t("rules.chat.stopped")));
+      if (m.failed) li.append(node("p", "rules-blocked", fill(t("rules.chat.failed"), { error: m.failed })));
+      if (!m.partial && m.tokens !== undefined) {
+        li.append(node("p", "rules-note", fill(t("rules.chat.answerTokens"), { tokens: new Intl.NumberFormat(locale).format(m.tokens) })));
+      }
+      const bar = node("div", "rules-decide-bar");
+      // The model can only ask; the file is added by a person, with a click.
+      for (const file of m.wants ?? []) {
+        if (c.files.includes(file)) continue;
+        const want = node("button", "addbox-secondary", fill(t("rules.chat.attachWanted"), { file }));
+        want.type = "button";
+        want.disabled = c.busy || c.files.length >= 5;
+        want.addEventListener("click", () => attachChatFile(id, file));
+        bar.append(want);
+      }
+      if (canPropose(c, m)) {
+        const go = node("button", "addbox-secondary rules-decide-go", t("rules.chat.propose"));
+        go.type = "button";
+        go.title = fill(t("rules.chat.propose.why"), { rule: c.rule });
+        go.disabled = c.busy || c.proposing;
+        go.addEventListener("click", () => proposeFromChat(id, i));
+        bar.append(go);
+      }
+      if (bar.childElementCount) li.append(bar);
+      if (m.note) li.append(node("p", "rules-note", m.note));
+    }
+    chatUi.log.append(li);
+  });
+  if (nearEnd) chatUi.log.scrollTop = chatUi.log.scrollHeight;
+}
+
+function drawChatFiles(id, c) {
+  chatUi.files.hidden = c.files.length === 0;
+  chatUi.files.replaceChildren();
+  if (!c.files.length) return;
+  chatUi.files.append(node("li", "rules-chat-who", t("rules.chat.files")));
+  const judged = new Map((c.preview?.attached ?? []).map((a) => [a.file, a]));
+  for (const file of c.files) {
+    const a = judged.get(file);
+    const line = a ? attachedLine(a) : { key: "rules.chat.file.pending", vars: { file } };
+    const li = node("li");
+    li.append(node("span", a && !a.sent ? "rules-blocked" : null, fill(t(line.key), line.vars)));
+    const remove = node("button", "addbox-secondary", t("rules.chat.file.remove"));
+    remove.type = "button";
+    remove.disabled = c.busy;
+    remove.addEventListener("click", () => {
+      c.files = c.files.filter((f) => f !== file);
+      drawChat(id);
+      void refreshChatPreview(id);
+    });
+    li.append(remove);
+    chatUi.files.append(li);
+  }
+}
+
+/** Attach a file: `file` relative to the project, or one picked in the file dialog. */
+async function attachChatFile(id, file) {
+  const st = rulesOf(id);
+  const c = openChatOf(st);
+  if (!c || c.busy) return;
+  c.error = null;
+  if (!file) {
+    const root = view.projects.find((p) => p.id === id)?.root ?? "";
+    const picked = await open({ multiple: false, directory: false, title: t("rules.chat.attachTitle"), defaultPath: root || undefined });
+    if (!picked) return;
+    file = relativeTo(root, picked);
+    if (!file) {
+      c.error = fill(t("rules.chat.outside"), { file: String(picked) });
+      drawChat(id);
+      return;
+    }
+  }
+  addFile(c, file);
+  drawChat(id);
+  void refreshChatPreview(id);
+}
+
+/** Send the person's message: the one call of the chat that reaches a model. */
+async function sendChat(id) {
+  const st = rulesOf(id);
+  const c = openChatOf(st);
+  if (!c || c.busy) return;
+  const text = chatUi.text.value;
+  if (!text.trim()) return;
+  c.busy = true;
+  c.error = null;
+  const args = chatArgs(c, text);
+  const asked = { role: "user", text };
+  const answer = { role: "assistant", text: "", partial: true };
+  c.messages.push(asked, answer);
+  chatUi.text.value = "";
+  c.draft = "";
+  let sent = false;
+  const events = new Channel();
+  events.onmessage = (ev) => {
+    if (ev.kind === "sending") {
+      sent = true;
+      c.preview = ev.sent;
+      c.dropped = ev.sent.dropped;
+    } else if (ev.kind === "delta") {
+      answer.text += ev.text;
+    }
+    if (openChatOf(st) === c) drawChat(id);
+  };
+  drawChat(id);
+  try {
+    const reply = await invoke("agent_chat_send", { id, chat: c.chatId, args, onEvent: events });
+    Object.assign(answer, { text: reply.text, partial: false, tokens: reply.answerTokens, wants: reply.wants });
+    c.preview = reply.sent;
+    c.dropped = reply.sent.dropped;
+  } catch (e) {
+    if (!sent) {
+      // Nothing went out: the message is the person's again, as it was.
+      c.messages.splice(c.messages.indexOf(asked), 2);
+      if (!chatUi.text.value) chatUi.text.value = text;
+      c.error = errorText(e);
+    } else if (e && e.key === "err.agent.chatStopped") {
+      answer.stopped = true;
+    } else {
+      answer.failed = errorText(e);
+    }
+  } finally {
+    c.busy = false;
+  }
+  if (openChatOf(st) === c) drawChat(id);
+  // What the turn sent is known; what the next one would send is asked again (the answer is part of it now).
+  if (sent) void refreshChatPreview(id);
+}
+
+/** Make answer `index` the proposal of the open run for the conversation's rule. Decides nothing. */
+async function proposeFromChat(id, index) {
+  const st = rulesOf(id);
+  const c = openChatOf(st);
+  const m = c?.messages[index];
+  if (!c || !m || !canPropose(c, m) || c.proposing) return;
+  c.proposing = true;
+  c.error = null;
+  drawChat(id);
+  try {
+    const run = await invoke("agent_chat_propose", { id, runId: c.runId, rule: c.rule, text: m.text });
+    if (st.openRun === c.runId) st.run = run;
+    const rec = rulesList(run.proposals).find((p) => p.ruleId === c.rule);
+    m.note = fill(t("rules.chat.proposed"), { rule: c.rule, status: rec ? t(proposalKey(rec.status)) : "" });
+    // the new proposal is asked about again before it can be accepted
+    st.runFresh = null;
+    st.runRule = c.rule;
+  } catch (e) {
+    c.error = errorText(e);
+  } finally {
+    c.proposing = false;
+  }
+  if (st.openRun === c.runId && st.run && id === view.selectedId && rulesOpen) {
+    drawRunView(id);
+    void checkFresh(id);
+  }
+  if (openChatOf(st) === c) drawChat(id);
+}
+
+chatUi.run.addEventListener("click", () => {
+  if (view.selectedId) openChat(view.selectedId, null);
+});
+chatUi.close.addEventListener("click", () => {
+  if (view.selectedId) closeChat(view.selectedId);
+});
+chatUi.send.addEventListener("click", () => {
+  if (view.selectedId) void sendChat(view.selectedId);
+});
+chatUi.stop.addEventListener("click", () => {
+  const id = view.selectedId;
+  const c = id ? openChatOf(rulesOf(id)) : null;
+  if (c?.busy) invoke("agent_chat_cancel", { chat: c.chatId }).catch((e) => say(errorText(e)));
+});
+chatUi.attach.addEventListener("click", () => {
+  if (view.selectedId) void attachChatFile(view.selectedId, null);
+});
+chatUi.text.addEventListener("input", () => {
+  const id = view.selectedId;
+  const c = id ? openChatOf(rulesOf(id)) : null;
+  if (c) drawChatEgress(c);
+});
+chatUi.text.addEventListener("keydown", (e) => {
+  // Ctrl+Enter sends; Enter alone is a new line of the message.
+  if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && view.selectedId) {
+    e.preventDefault();
+    void sendChat(view.selectedId);
+  }
 });
 
 // ---- the dialog ----------------------------------------------------

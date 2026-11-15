@@ -632,7 +632,7 @@ fn ask_batch(
 /// The proposal of one rule from the engine's object, or the error that kept
 /// it from being checked. **Never a verdict**: `proposed` and `verified` are
 /// set here whatever the engine said.
-fn proposal_of(
+pub(super) fn proposal_of(
     outcome: Result<Value, AppError>,
     rule: &str,
     batch: &str,

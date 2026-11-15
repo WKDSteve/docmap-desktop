@@ -11,6 +11,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::State;
 
+use super::chat::{self, ChatArgs, ChatEvent, ChatPreview, ChatReply, Chats};
 use super::client::{self, Client, Health};
 use super::decide::{self, WaiveArgs};
 use super::engine::{CliEngine, CliJudge, Engine};
@@ -287,4 +288,70 @@ pub fn agent_ignore(app: tauri::AppHandle, id: String, add: bool) -> Result<Igno
     } else {
         Ok(store::ignore_state(&root))
     }
+}
+
+// ---- the chat of the run view (`chat.rs`) ---------------------------------
+
+/// What the next turn of a conversation would send and where, without sending
+/// anything: the window shows it before the person sends (no request ever
+/// leaves without being shown first).
+#[tauri::command(async)]
+pub fn agent_chat_preview(
+    app: tauri::AppHandle,
+    runner: State<'_, Runner>,
+    id: String,
+    args: ChatArgs,
+) -> Result<ChatPreview, AppError> {
+    let root = root_of_run(&app, &runner, &id, &args.run_id)?;
+    Ok(chat::build(&*engine(&app)?, &root, &args, false)?.preview)
+}
+
+/// Send one turn: the person's last message with the rule, its files, the
+/// attached files and the conversation so far. The answer streams into
+/// `on_event` as it comes; the reply is the whole of it. `chat` is the window's
+/// id for the conversation, which [`agent_chat_cancel`] names.
+#[tauri::command(async)]
+pub fn agent_chat_send(
+    app: tauri::AppHandle,
+    runner: State<'_, Runner>,
+    chats: State<'_, Chats>,
+    id: String,
+    chat: String,
+    args: ChatArgs,
+    on_event: tauri::ipc::Channel<ChatEvent>,
+) -> Result<ChatReply, AppError> {
+    let root = root_of_run(&app, &runner, &id, &args.run_id)?;
+    let engine = engine(&app)?;
+    let client = client(&app)?;
+    let stop = chats.begin(&chat)?;
+    let out = chat::send(&*engine, &client, &root, &args, &stop, &mut |ev| {
+        // A window that went away does not stop the turn: the cancel does.
+        let _ = on_event.send(ev);
+    });
+    chats.end(&chat);
+    out
+}
+
+/// Stop the turn of conversation `chat` in flight. What came in before stays
+/// in the window; the turn ends with `err.agent.chatStopped`.
+#[tauri::command]
+pub fn agent_chat_cancel(chats: State<'_, Chats>, chat: String) -> bool {
+    chats.cancel(&chat)
+}
+
+/// Make one answer of the chat about `rule` a proposal of run `run_id`: checked
+/// by `rules/validate`, stored as a proposal that waits for a person. Never a
+/// verdict. Answers the run as it is then.
+#[tauri::command(async)]
+pub fn agent_chat_propose(
+    app: tauri::AppHandle,
+    runner: State<'_, Runner>,
+    id: String,
+    run_id: String,
+    rule: String,
+    text: String,
+) -> Result<Run, AppError> {
+    let root = project_root(&app, &id)?;
+    chat::propose(&*engine(&app)?, &root, &run_id, &rule, &text)?;
+    runner.status(&root, &run_id)
 }

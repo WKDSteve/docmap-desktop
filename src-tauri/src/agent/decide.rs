@@ -38,6 +38,12 @@ use crate::apperr::AppError;
 /// write them. The engine's own writers guard their files across processes.
 static DECIDE: Mutex<()> = Mutex::new(());
 
+/// The lock of [`DECIDE`], for another step that changes a proposal (the chat's
+/// `propose`): a decision never reads a proposal that is being replaced.
+pub(super) fn one_at_a_time() -> Result<std::sync::MutexGuard<'static, ()>, AppError> {
+    DECIDE.lock().map_err(|_| AppError::new("err.lock"))
+}
+
 /// The longest name the engine takes for `by` (`rules.engine.verdicts`).
 const MAX_BY: usize = 100;
 /// The longest note or reason (`rules.engine.waivers.MAX_REASON_LEN`).

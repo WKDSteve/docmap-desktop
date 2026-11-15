@@ -128,6 +128,7 @@ test("no English catalog key is dead", () => {
     read("./finder.js"),
     read("./stats.js"),
     read("./rules-run.js"),
+    read("./rules-chat.js"),
     read("./engine-log.js"),
     read("./errors.js"),
     read("./contract.js"),
@@ -591,4 +592,49 @@ test("a language switch redraws what main.js painted in script: both reports and
   }
   // The run's outcome is a recipe, not a frozen string.
   assert.match(MAIN, /sayLive\(\(\) => \(res\.current \?/, "the check verdict stays in the old language");
+});
+
+test("the chat sends only when the person sends, and decides nothing", () => {
+  // No request without a click. `agent_chat_send` is the one call that reaches a model; it is made once, in
+  // `sendChat`, and `sendChat` runs from the Send button and Ctrl+Enter in the message field, nothing else.
+  assert.equal(MAIN.split('invoke("agent_chat_send"').length - 1, 1, "agent_chat_send is called once");
+  const send = MAIN.slice(MAIN.indexOf("async function sendChat("), MAIN.indexOf("async function proposeFromChat("));
+  assert.match(send, /invoke\("agent_chat_send"/);
+  const callers = [...MAIN.matchAll(/sendChat\(/g)].length;
+  assert.equal(callers, 3, "the definition, the Send button and Ctrl+Enter");
+  assert.match(MAIN, /chatUi\.send\.addEventListener\("click", \(\) => \{\n\s+if \(view\.selectedId\) void sendChat\(view\.selectedId\);/);
+  assert.match(MAIN, /if \(e\.key === "Enter" && \(e\.ctrlKey \|\| e\.metaKey\) && view\.selectedId\) \{\n\s+e\.preventDefault\(\);\n\s+void sendChat\(view\.selectedId\);/);
+  // Opening, drawing and previewing a conversation send nothing.
+  for (const fn of ["function openChat(", "async function refreshChatPreview(", "function drawChat(", "function drawChatLog(", "function drawChatFiles(", "function drawChatEgress(", "async function attachChatFile("]) {
+    const at = MAIN.indexOf(fn);
+    assert.ok(at > 0, `${fn} should exist`);
+    const body = MAIN.slice(at, MAIN.indexOf("\n}\n", at));
+    assert.doesNotMatch(body, /agent_chat_send|agent_chat_propose|agent_accept|agent_waive|agent_reject/, `${fn} must not send or decide`);
+  }
+  // A chat is opened by a button: the run's own, and the one in the detail of a row.
+  assert.equal([...MAIN.matchAll(/openChat\(/g)].length, 3, "the definition and two buttons");
+  assert.match(MAIN, /chatUi\.run\.addEventListener\("click", \(\) => \{\n\s+if \(view\.selectedId\) openChat\(view\.selectedId, null\);/);
+  assert.match(MAIN, /talk\.addEventListener\("click", \(\) => openChat\(id, row\.id\)\);/);
+  // An answer becomes a proposal only from its own button, through the backend's check; never a verdict.
+  assert.equal(MAIN.split('invoke("agent_chat_propose"').length - 1, 1);
+  assert.match(MAIN, /go\.addEventListener\("click", \(\) => proposeFromChat\(id, i\)\);/);
+  const propose = MAIN.slice(MAIN.indexOf("async function proposeFromChat("), MAIN.indexOf('chatUi.run.addEventListener("click"'));
+  assert.doesNotMatch(propose, /agent_accept|agent_waive|agent_reject/);
+  // A file the model asks for is offered as a button, never attached by itself.
+  assert.match(MAIN, /want\.addEventListener\("click", \(\) => attachChatFile\(id, file\)\);/);
+  assert.equal([...MAIN.matchAll(/attachChatFile\(/g)].length, 3, "the definition, the wanted file, Add file to context");
+});
+
+test("the chat is closed in the markup and its buttons have names before any script runs", () => {
+  const at = HTML.indexOf('<section id="rules-chat"');
+  assert.ok(at > 0);
+  const box = HTML.slice(at, HTML.indexOf("</section>", at));
+  assert.match(box.match(/<section id="rules-chat"[^>]*>/)[0], /hidden/);
+  for (const id of ["rules-chat-close", "rules-chat-send", "rules-chat-stop", "rules-chat-attach"]) {
+    const tag = box.match(new RegExp(`<button id="${id}"[^>]*>([^<]*)<`));
+    assert.ok(tag, id);
+    assert.match(tag[0], /type="button"/, `${id} is no submit button`);
+    assert.ok(tag[1].trim(), `${id} has a name`);
+  }
+  assert.match(box, /id="rules-chat-trimmed"[^>]*role="status"/, "a trimmed conversation is announced");
 });

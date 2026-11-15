@@ -182,6 +182,10 @@ pub struct ProposalRec {
     pub proposal: Value,
     pub error: Option<Value>,
     pub created_ms: u64,
+    /// Where the answer came from when it was not the run's own request:
+    /// `chat` for one taken over from the chat of the run view.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

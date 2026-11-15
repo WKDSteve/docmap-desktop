@@ -36,6 +36,10 @@ pub struct Resp {
     status: u16,
     body: String,
     delay_ms: u64,
+    /// A server-sent event stream instead of `body`: each part written after
+    /// its own pause, no `Content-Length`, the connection closed at the end
+    /// (how `/ask/stream` of ai-desktop answers).
+    parts: Option<Vec<(u64, String)>>,
 }
 
 impl Resp {
@@ -44,7 +48,34 @@ impl Resp {
             status,
             body: body.to_string(),
             delay_ms: 0,
+            parts: None,
         }
+    }
+
+    /// A `text/event-stream` answer of 200: `parts` are `(pause_ms, raw text)`,
+    /// written in order, each after its pause.
+    pub fn stream(parts: Vec<(u64, String)>) -> Resp {
+        Resp {
+            status: 200,
+            body: String::new(),
+            delay_ms: 0,
+            parts: Some(parts),
+        }
+    }
+
+    /// The `data:` lines of `/ask/stream` for these deltas, then `[DONE]`.
+    pub fn deltas(deltas: &[&str]) -> Resp {
+        let mut parts: Vec<(u64, String)> = deltas
+            .iter()
+            .map(|d| {
+                (
+                    0,
+                    format!("data: {}\n\n", serde_json::json!({ "delta": d })),
+                )
+            })
+            .collect();
+        parts.push((0, "data: [DONE]\n\n".to_string()));
+        Resp::stream(parts)
     }
 
     /// Hold the response back this long first.
@@ -92,6 +123,14 @@ impl Fake {
 
     pub fn seen(&self) -> Vec<Seen> {
         self.seen.lock().unwrap().clone()
+    }
+
+    /// How many `POST /ask/stream` arrived.
+    pub fn streams(&self) -> usize {
+        self.seen()
+            .iter()
+            .filter(|s| s.path == "/ask/stream")
+            .count()
     }
 
     /// How many `POST /ask` arrived.
@@ -148,12 +187,36 @@ fn serve(stream: TcpStream, seen: &Mutex<Vec<Seen>>, answer: &dyn Fn(&Seen) -> R
     if resp.delay_ms > 0 {
         std::thread::sleep(Duration::from_millis(resp.delay_ms));
     }
+    let mut stream = stream;
+    if let Some(parts) = resp.parts {
+        let head = format!(
+            "HTTP/1.1 {} X\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+            resp.status
+        );
+        if stream.write_all(head.as_bytes()).is_err() {
+            return;
+        }
+        let _ = stream.flush();
+        for (pause, part) in parts {
+            if pause > 0 {
+                std::thread::sleep(Duration::from_millis(pause));
+            }
+            // A reader that went away ends the stream here.
+            if stream
+                .write_all(part.as_bytes())
+                .and_then(|()| stream.flush())
+                .is_err()
+            {
+                return;
+            }
+        }
+        return;
+    }
     let head = format!(
         "HTTP/1.1 {} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         resp.status,
         resp.body.len()
     );
-    let mut stream = stream;
     let _ = stream.write_all(head.as_bytes());
     let _ = stream.write_all(resp.body.as_bytes());
     let _ = stream.flush();

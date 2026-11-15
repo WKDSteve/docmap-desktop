@@ -505,6 +505,21 @@ const R = {
   agent_accept: (a) => stubDecide(a, "accepted"),
   agent_waive: (a) => stubDecide(a, "waived"),
   agent_reject: (a) => stubDecide(a, "rejected"),
+  // The chat of the run view, canned: what a message would send, an answer streamed in pieces through the Channel
+  // (one that asks for a file the first time), Stop, and an answer made a proposal. The conversation is trimmed
+  // once it has more than six messages, so the notice can be looked at.
+  agent_chat_preview: (a) => stubChatPreview(a.args),
+  agent_chat_send: (a) => stubChatSend(a),
+  agent_chat_cancel: (a) => {
+    const turn = STUB_CHAT_TURNS[a.chat];
+    if (turn) turn.stopped = true;
+    return Boolean(turn);
+  },
+  agent_chat_propose: (a) => stubSet(a.runId, (run) => {
+    const status = /violation/i.test(a.text) ? "violation" : "unclear";
+    const rec = { ...STUB_PROPOSALS[status === "violation" ? "violation" : "unclear"](a.rule), source: "chat" };
+    run.proposals = run.proposals.filter((p) => p.ruleId !== a.rule).concat([rec]);
+  }),
   rules_judged: () => JSON.parse(JSON.stringify(STUB_JUDGED)),
   rules_trust_preview: () => ({
     path: RULESET, sha256: "3f9a5c0d1e7b42a68c1d0f6e9b7a3c5d2e4f60718293a4b5c6d7e8f9a0b1c2d3",
@@ -671,6 +686,53 @@ function stubSet(runId, change) {
   change(run);
   return JSON.parse(JSON.stringify(run));
 }
+const STUB_CHAT_TURNS = {};
+function stubChatPreview(args) {
+  const run = STUB_RUNS.find((r) => r.id === args.runId);
+  const messages = args.messages || [];
+  const dropped = Math.max(0, messages.length - 6);
+  const attached = (args.files || []).map((file) =>
+    /(^|\/)\.env/.test(file)
+      ? { file, sent: false, denied: true, reason: "the deny list keeps this file out of every request (or it is a link)", bytes: 0, tokens: 0 }
+      : { file, sent: true, denied: false, reason: null, bytes: 1200, tokens: 310 }
+  );
+  const chars = 5200 + messages.slice(dropped).reduce((n, m) => n + m.text.length + 12, 0) + attached.reduce((n, a) => n + (a.sent ? 1240 : 0), 0);
+  return {
+    destination: { backend: run.backend, model: run.model, local: run.local },
+    refused: null,
+    rule: args.rule,
+    contextFiles: args.rule ? ["lua/docmap/core/deps.lua", "lua/docmap/init.lua"] : [],
+    attached,
+    dropped,
+    sentMessages: messages.length - dropped,
+    chars,
+    tokens: Math.ceil(chars / 4),
+    limitChars: 24000
+  };
+}
+async function stubChatSend(a) {
+  const sent = stubChatPreview(a.args);
+  const turn = (STUB_CHAT_TURNS[a.chat] = { stopped: false });
+  a.onEvent.__emit({ kind: "sending", sent });
+  const first = !(a.args.messages || []).some((m) => m.role === "assistant");
+  const text = first
+    ? "The module is loaded by a name built at run time (line 41), so nothing names it at the top.\n" +
+      "To be sure the name never comes from outside I would need the caller.\nNEED FILE: lua/docmap/core/api.lua\n"
+    : 'With the caller it holds: a violation.\n{"results":[{"rule":"' + (a.args.rule || "") + '","verdict":"violation","checked":["lua/docmap/core/deps.lua"],"findings":[]}]}';
+  let out = "";
+  for (const piece of text.match(/[\s\S]{1,18}/g)) {
+    await new Promise((r) => setTimeout(r, 60));
+    if (turn.stopped) {
+      delete STUB_CHAT_TURNS[a.chat];
+      throw { key: "err.agent.chatStopped", params: {}, message: "The answer was stopped" };
+    }
+    out += piece;
+    a.onEvent.__emit({ kind: "delta", text: piece });
+  }
+  delete STUB_CHAT_TURNS[a.chat];
+  const wants = [...out.matchAll(/^NEED FILE: (.+)$/gm)].map((m) => m[1].trim());
+  return { text: out, sent, answerTokens: Math.ceil(out.length / 4), wants };
+}
 function stubPreview(a) {
   const ids = String(a.selection || "").split(",").filter(Boolean);
   const sent = ids.filter((id) => id !== "S-02");
@@ -705,7 +767,16 @@ window.__TAURI__ = {
     },
     // The map page itself is not worth stubbing faithfully; `map-stub.html`
     // only has to run and say so (see its header for why).
-    convertFileSrc: () => "/tools/preview/map-stub.html"
+    convertFileSrc: () => "/tools/preview/map-stub.html",
+    // Tauri's channel: the stub hands events to `onmessage` the way the backend's `Channel::send` does.
+    Channel: class {
+      constructor() {
+        this.onmessage = () => {};
+      }
+      __emit(ev) {
+        this.onmessage(ev);
+      }
+    }
   },
   // Always the same directory: enough to preview `inspect_folder`'s
   // checklist path (see `R.inspect_folder`) without a real filesystem.

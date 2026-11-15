@@ -62,6 +62,11 @@ export const UNAVAILABLE = [
   'agent_waive',
   'agent_reject',
   'agent_person',
+  // The chat of the run view reaches ai-desktop and the engine's planner, which a page has neither of.
+  'agent_chat_preview',
+  'agent_chat_send',
+  'agent_chat_cancel',
+  'agent_chat_propose',
   'rules_judged',
 ];
 

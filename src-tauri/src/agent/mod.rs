@@ -23,6 +23,7 @@
 //! `rules/waive`): no code of this app writes `.rules-verdicts.json` or
 //! `.rules-waivers.json`.
 
+pub mod chat;
 pub mod client;
 pub mod commands;
 pub mod decide;

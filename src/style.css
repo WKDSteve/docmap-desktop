@@ -3408,6 +3408,110 @@ body.has-bar {
   border-top: 1px solid var(--line);
 }
 
+/* The chat of the run view, below the queue and the detail. */
+.rules-chat {
+  margin: 12px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+}
+
+.rules-chat[hidden],
+.rules-chat [hidden] {
+  display: none;
+}
+
+.rules-chat-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px;
+}
+
+.rules-chat-head h4 {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: 13px;
+}
+
+/* Where the text goes, in the ink of the text and in words: never colour alone. */
+.rules-chat-dest {
+  margin: 4px 0;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.rules-chat-trimmed {
+  margin: 4px 0;
+  padding: 4px 8px;
+  border-left: 3px solid var(--ink);
+  color: var(--ink);
+}
+
+.rules-chat-log {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 40vh;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.rules-chat-msg {
+  margin: 0 0 8px;
+}
+
+.rules-chat-who {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.rules-chat-text {
+  margin: 2px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+
+.rules-chat-msg.user .rules-chat-text {
+  padding-left: 8px;
+  border-left: 2px solid var(--line);
+}
+
+.rules-chat-files {
+  margin: 4px 0 8px;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.rules-chat-files li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.rules-chat-input {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.rules-chat-input textarea {
+  width: 100%;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  resize: vertical;
+}
+
 /* A person's decision in the Agent column of the Rules tab. */
 .rules-judged {
   display: inline-block;

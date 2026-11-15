@@ -19,6 +19,13 @@
 //! timeout). Each is a distinct [`AskError`] that names its cause, because
 //! "request failed" is the sentence a person cannot act on.
 //!
+//! **Streaming.** `POST /ask/stream` takes the same body and answers
+//! server-sent events: `data: {"delta": "..."}` per piece of text, then
+//! `data: [DONE]`, or `data: {"error": {"message": ...}}` when the backend
+//! fails part way (the status is 200 by then). It reports no `usage`, so what
+//! a streamed answer costs is an estimate on the caller's side
+//! ([`Client::ask_stream`], used by the chat of the run view).
+//!
 //! **Cancel.** A blocking read cannot be interrupted, so the request runs on a
 //! helper thread and the caller waits on a channel, looking at its [`Stop`]
 //! flag every 40 ms. On a stop the caller returns at once and the helper is
@@ -389,6 +396,169 @@ impl Client {
         };
         parse_reply(status, &body)
     }
+}
+
+/// What the reader of a stream hands the waiting caller.
+enum StreamEv {
+    Delta(String),
+    Done,
+    Fail(AskError),
+}
+
+impl Client {
+    /// `POST /ask/stream`: every piece of text goes to `on_delta` as it
+    /// arrives, on the caller's thread; the answer is the whole text. A stop
+    /// abandons the request at once, as [`Client::ask`] does, and what came in
+    /// before it has already been handed to `on_delta`.
+    ///
+    /// A stream that ends without `[DONE]` is [`AskError::Malformed`]: the text
+    /// so far is not the answer, and the caller must not take it for one.
+    pub fn ask_stream(
+        &self,
+        req: &AskRequest,
+        stop: &Stop,
+        on_delta: &mut dyn FnMut(&str),
+    ) -> Result<String, AskError> {
+        if let Some(kind) = stop.requested() {
+            return Err(AskError::Stopped(kind));
+        }
+        let limit = Duration::from_millis(req.timeout_ms) + self.slack;
+        let agent = Client::agent(limit);
+        let url = format!("{}/ask/stream", self.base);
+        let body = json!({
+            "prompt": req.prompt,
+            "system": req.system,
+            "model": req.model,
+            "timeout_ms": req.timeout_ms,
+        })
+        .to_string();
+        let timeout_ms = req.timeout_ms;
+        let (tx, rx) = mpsc::channel::<StreamEv>();
+        std::thread::spawn(move || {
+            let fail = |tx: &mpsc::Sender<StreamEv>, e: AskError| {
+                let _ = tx.send(StreamEv::Fail(e));
+            };
+            let mut resp = match agent
+                .post(&url)
+                .header("Content-Type", "application/json")
+                .header("Accept", "text/event-stream")
+                .send(body)
+            {
+                Ok(r) => r,
+                Err(e) => return fail(&tx, map_err_ms(timeout_ms)(e)),
+            };
+            let status = resp.status().as_u16();
+            if status != 200 {
+                let body = match read_body(&mut resp, timeout_ms) {
+                    Ok(b) => b,
+                    Err(e) => return fail(&tx, e),
+                };
+                let err = ok_json(status, &body)
+                    .err()
+                    .unwrap_or_else(|| AskError::Rejected {
+                        status,
+                        message: snippet(&body),
+                    });
+                return fail(&tx, err);
+            }
+            let reader = resp.body_mut().with_config().limit(MAX_BODY).reader();
+            let mut lines = std::io::BufReader::new(reader);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match std::io::BufRead::read_line(&mut lines, &mut line) {
+                    // The connection closed before `[DONE]`.
+                    Ok(0) => {
+                        return fail(
+                            &tx,
+                            AskError::Malformed("the stream ended before it was complete".into()),
+                        )
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        let err = match e.kind() {
+                            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+                                AskError::Timeout(timeout_ms)
+                            }
+                            _ => AskError::Malformed(format!("the stream could not be read: {e}")),
+                        };
+                        return fail(&tx, err);
+                    }
+                }
+                match stream_event(&line) {
+                    Some(Ok(StreamLine::Delta(d))) => {
+                        // The caller is gone when it stopped: nobody reads on.
+                        if tx.send(StreamEv::Delta(d)).is_err() {
+                            return;
+                        }
+                    }
+                    Some(Ok(StreamLine::Done)) => {
+                        let _ = tx.send(StreamEv::Done);
+                        return;
+                    }
+                    Some(Err(e)) => return fail(&tx, e),
+                    None => {}
+                }
+            }
+        });
+        let mut text = String::new();
+        loop {
+            match rx.recv_timeout(Duration::from_millis(40)) {
+                Ok(StreamEv::Delta(d)) => {
+                    // A stop wins over text that is still arriving.
+                    if let Some(kind) = stop.requested() {
+                        return Err(AskError::Stopped(kind));
+                    }
+                    on_delta(&d);
+                    text.push_str(&d);
+                }
+                Ok(StreamEv::Done) => return Ok(text),
+                Ok(StreamEv::Fail(e)) => return Err(e),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some(kind) = stop.requested() {
+                        return Err(AskError::Stopped(kind));
+                    }
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(AskError::Unreachable("the request ended abnormally".into()))
+                }
+            }
+        }
+    }
+}
+
+/// One line of an event stream that means something.
+#[derive(Debug, PartialEq)]
+enum StreamLine {
+    Delta(String),
+    Done,
+}
+
+/// What one line of `/ask/stream` says: a delta, the end, the backend's
+/// failure, or nothing (a blank line between events, a comment, a field
+/// other than `data`). A `data:` line that is not one of the three shapes is
+/// malformed: guessing at it would show a person text nobody sent.
+fn stream_event(line: &str) -> Option<Result<StreamLine, AskError>> {
+    let line = line.trim_end_matches(['\r', '\n']);
+    let data = line.strip_prefix("data:")?.trim_start();
+    if data == "[DONE]" {
+        return Some(Ok(StreamLine::Done));
+    }
+    let v: Value = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(_) => return Some(Err(AskError::Malformed(snippet(data)))),
+    };
+    if let Some(d) = v.get("delta").and_then(Value::as_str) {
+        return Some(Ok(StreamLine::Delta(d.to_string())));
+    }
+    if v.get("error").is_some() {
+        return Some(Err(AskError::Backend {
+            // ai-desktop's status for a failed backend; a stream has sent 200 already.
+            status: 502,
+            message: error_message(data),
+        }));
+    }
+    Some(Err(AskError::Malformed(snippet(data))))
 }
 
 fn map_err(limit: Duration) -> impl Fn(ureq::Error) -> AskError {
@@ -763,6 +933,92 @@ mod tests {
             started.elapsed() < Duration::from_secs(2),
             "{:?}",
             started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_stream_hands_each_delta_over_and_ends_at_done() {
+        let fake = Fake::start(|_| Resp::deltas(&["one ", "two"]));
+        let mut got = Vec::new();
+        let text = client(&fake)
+            .ask_stream(&req(5000), &Stop::default(), &mut |d| {
+                got.push(d.to_string())
+            })
+            .unwrap();
+        assert_eq!(text, "one two");
+        assert_eq!(got, vec!["one ".to_string(), "two".to_string()]);
+        let seen = fake.seen();
+        assert_eq!(seen[0].path, "/ask/stream");
+        assert_eq!(seen[0].header("origin"), None);
+        let body: Value = serde_json::from_str(&seen[0].body).unwrap();
+        assert_eq!(
+            body,
+            json!({"prompt":"the prompt","system":"the system","model":"qwen2.5-coder","timeout_ms":5000})
+        );
+    }
+
+    #[test]
+    fn a_stream_that_ends_without_done_is_not_an_answer() {
+        let fake =
+            Fake::start(|_| Resp::stream(vec![(0, "data: {\"delta\":\"half\"}\n\n".into())]));
+        let err = client(&fake)
+            .ask_stream(&req(5000), &Stop::default(), &mut |_| {})
+            .unwrap_err();
+        assert!(matches!(err, AskError::Malformed(_)), "{err:?}");
+    }
+
+    #[test]
+    fn a_stream_refused_with_a_status_names_it() {
+        let fake =
+            Fake::start(|_| Resp::json(502, r#"{"error":{"message":"no key for anthropic"}}"#));
+        let err = client(&fake)
+            .ask_stream(&req(5000), &Stop::default(), &mut |_| {})
+            .unwrap_err();
+        assert_eq!(
+            err,
+            AskError::Backend {
+                status: 502,
+                message: "no key for anthropic".into()
+            }
+        );
+        let fake = Fake::start(|_| Resp::json(403, r#"{"error":{"message":"cross-origin"}}"#));
+        let err = client(&fake)
+            .ask_stream(&req(5000), &Stop::default(), &mut |_| {})
+            .unwrap_err();
+        assert_eq!(err, AskError::Forbidden("cross-origin".into()));
+    }
+
+    #[test]
+    fn the_lines_of_a_stream_are_read_strictly() {
+        assert_eq!(
+            stream_event("data: {\"delta\":\"x\"}\r\n")
+                .unwrap()
+                .unwrap(),
+            StreamLine::Delta("x".into())
+        );
+        assert_eq!(
+            stream_event("data:[DONE]\n").unwrap().unwrap(),
+            StreamLine::Done
+        );
+        assert!(stream_event("\n").is_none(), "a blank line between events");
+        assert!(stream_event(": keep-alive\n").is_none(), "a comment");
+        assert!(stream_event("event: x\n").is_none(), "another field");
+        assert!(matches!(
+            stream_event("data: {\"other\":1}\n").unwrap(),
+            Err(AskError::Malformed(_))
+        ));
+        assert!(matches!(
+            stream_event("data: not json\n").unwrap(),
+            Err(AskError::Malformed(_))
+        ));
+        assert_eq!(
+            stream_event("data: {\"error\":{\"message\":\"boom\"}}\n")
+                .unwrap()
+                .unwrap_err(),
+            AskError::Backend {
+                status: 502,
+                message: "boom".into()
+            }
         );
     }
 }

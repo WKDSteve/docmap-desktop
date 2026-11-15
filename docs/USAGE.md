@@ -490,6 +490,25 @@ note, the reason and the paths are written in plain ASCII for now (no `ä`, `ü`
 line through the system's code page and would change such letters, so the window refuses them before anything is
 written.
 
+**Talking about a rule or a run.** **Chat about <rule>…** in the detail of a rule, or **Chat about this run…** above
+the queue, opens a conversation with the run's model. Opening it sends nothing; a message goes out when you press
+**Send** (or Ctrl+Enter), and **Stop** ends an answer that is still coming. Above the input it says where the text
+goes (the model on this machine, or a cloud service by name) and what goes with every message: the rule with the
+files its request carries and the proposal on record (for the whole run: its rules and proposals with the lines they quote, no whole files; never the run's notes), the
+files you attached and the conversation so far, as an **estimated** token count (ai-desktop's stream reports no
+usage). Every message sends the conversation again, so it is trimmed to its newest 24,000 characters, and a notice
+says how many earlier messages no longer go.
+
+- The chat cannot open files. **Add file to context…** attaches one of the project (at most five), and the engine
+  decides whether it may go, with the same deny list as a run (`rules/attach`): a file it keeps out is listed as not
+  sent. When an answer asks for a file (`NEED FILE: <path>`), the window offers a button for it; nothing is attached
+  by itself.
+- The chat decides nothing. **Make this a proposal** sends one answer through the same check as every answer of a run
+  (`rules/validate`: each quote against the files) and puts what comes out in place of the run's proposal for that
+  rule, marked as made from the chat. It is a proposal like any other, decided with the buttons above. An answer that
+  does not take that step stays text. A proposal already decided, or a run that is still asking, is not changed.
+- The conversation lives in the window while the app runs; it is not stored.
+
 ### Trusting a ruleset
 
 A `lua_predicate` check is code from the ruleset, and it would run with your

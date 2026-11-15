@@ -61,6 +61,9 @@ try {
   const page = await context.newPage();
   const problems = [];
   page.on('pageerror', (e) => problems.push(String(e)));
+  // A file of the page the preview server did not deliver (a module of main.js) leaves the window half started.
+  const unloaded = [];
+  page.on('requestfailed', (r) => unloaded.push(`${r.url()} ${r.failure()?.errorText ?? ''}`.trim()));
   await page.goto(URL);
   await page.waitForSelector('#sidebar');
   await page.waitForTimeout(800);
@@ -103,11 +106,33 @@ try {
   // The run view of an agent run, with the decision of one proposal open: its fields, its buttons, the waiver form,
   // an outdated proposal and a decided one (the stub's run-0: D-02 a violation, D-03 outdated).
   await page.evaluate(() => document.querySelectorAll('dialog[open]').forEach((d) => d.close()));
-  await page.evaluate(() => {
-    const s = document.querySelector('#projects');
-    s.value = [...s.options].find((o) => o.value && o.value !== 'p2' && !o.disabled)?.value ?? s.value;
-    s.dispatchEvent(new Event('change'));
-  });
+  // The project bar with its tabs exists for a selected project only, and the list of projects arrives from the
+  // stubbed bridge once main.js and its modules are loaded. CI run 43736919686 waited 60 s for the Rules tab: the
+  // preview server had refused a module of the page (its listen queue was the default 5, tools/preview/preview.py), the
+  // page never listed its projects, and a choice from the empty list selected nothing. So: wait for the project,
+  // choose it, wait for the bar, and say what the page held if it does not come.
+  try {
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('#projects option')].some((o) => o.value && o.value !== 'p2' && !o.disabled),
+      null,
+      { timeout: 30000 },
+    );
+    await page.evaluate(() => {
+      const s = document.querySelector('#projects');
+      s.value = [...s.options].find((o) => o.value && o.value !== 'p2' && !o.disabled).value;
+      s.dispatchEvent(new Event('change'));
+    });
+    await page.waitForSelector('#projbar:not([hidden])', { timeout: 15000 });
+  } catch (e) {
+    // Say what the page looked like, so that a red run names its cause instead of a click that timed out.
+    const state = await page.evaluate(() => ({
+      chosen: document.querySelector('#projects').value,
+      options: [...document.querySelectorAll('#projects option')].map((o) => o.value),
+      open: [...document.querySelectorAll('dialog[open]')].map((d) => d.id),
+    }));
+    state.unloaded = unloaded;
+    throw new Error(`no project to choose, or its bar did not show: ${JSON.stringify(state)}`, { cause: e });
+  }
   await page.locator(".viewtabs [data-pane='rules']").click();
   await page.waitForSelector('[data-fk="run:run-0"]');
   await page.locator('[data-fk="run:run-0"]').click();
@@ -149,6 +174,10 @@ try {
   await page.mouse.click(5, 5);
   expectThat('a click beside the workspaces closes them', !(await isOpen('wsbox')));
 
+  if (unloaded.length > 0) {
+    console.log(`FAILED files the page did not get: ${unloaded.join('; ')}`);
+    failed.push(...unloaded.map((u) => `not loaded: ${u}`));
+  }
   if (problems.length > 0) {
     console.log(`FAILED errors of the page: ${problems.join('; ')}`);
     failed.push(...problems);

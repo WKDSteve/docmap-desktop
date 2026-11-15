@@ -68,15 +68,27 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
         super().end_headers()
 
 
+class PreviewServer(socketserver.ThreadingTCPServer):
+    """One thread per connection, and room for the burst of a page load.
+
+    Threading: a browser opens speculative connections that send nothing, and a single-threaded server waits on the
+    first one forever -- every later request, including the page itself, then hangs.
+
+    The queue: `main.js` imports some twenty modules at once, and the default backlog of `socketserver` is 5. On
+    Windows a connection beyond a full backlog is refused, not held: a module then failed to load
+    (`ERR_CONNECTION_REFUSED`), the page never asked for its projects, and tools/page-check.mjs waited a minute for a
+    tab of a project that was never listed (2 of 60 loads on a busy machine).
+    """
+
+    daemon_threads = True
+    request_queue_size = 128
+
+
 def main() -> None:
     out = build()
     os.chdir(ROOT)
     handler = NoCacheHandler
-    # Threading: a browser opens speculative connections that send nothing,
-    # and a single-threaded server waits on the first one forever -- every
-    # later request, including the page itself, then hangs.
-    socketserver.ThreadingTCPServer.daemon_threads = True
-    with socketserver.ThreadingTCPServer(("127.0.0.1", PORT), handler) as httpd:
+    with PreviewServer(("127.0.0.1", PORT), handler) as httpd:
         rel = out.relative_to(ROOT).as_posix()
         print(f"http://localhost:{PORT}/{rel}")
         httpd.serve_forever()

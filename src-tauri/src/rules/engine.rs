@@ -8,7 +8,7 @@
 //! to the engine as `--trust=<folder>`.
 //!
 //! A run is the one engine call that executes code from a ruleset, so it is
-//! the one with a memory limit next to the time limit (`proc::run_limited`).
+//! the one with a memory limit next to the time limit (`proc::Cmd::memory`).
 //! [`Routes`] is the seam: the real one starts the binary, the tests bring a
 //! canned one.
 
@@ -83,14 +83,21 @@ impl CliRoutes {
         limit: Duration,
         memory: Option<u64>,
     ) -> Result<Value, AppError> {
-        let mut cmd = crate::agent::engine::command(&self.program, self.grammars.as_deref());
+        let mut cmd = crate::agent::engine::command(
+            "docmap-desktop rules tab",
+            &self.program,
+            self.grammars.as_deref(),
+        );
         cmd.envs(self.env.iter().map(|(k, v)| (k, v)));
-        cmd.arg(root).arg(format!("--api={route}")).args(flags);
-        let out = proc::run_limited(&mut cmd, limit, memory).map_err(|e| match e {
+        cmd.arg(root)
+            .arg(format!("--api={route}"))
+            .args(flags)
+            .memory(memory);
+        let out = proc::run(&cmd, limit).map_err(|e| match e {
             ProcError::Timeout(secs) => AppError::new("err.rules.timeout").with("secs", secs),
             failed => failed.into_app(&self.program),
         })?;
-        if !out.status.success() {
+        if !out.success() {
             // Killed by the memory limit, or an engine that failed: either way it said nothing
             // usable, and what it wrote last is the only account of why.
             return Err(AppError::new("err.rules.engine").detail(last_lines(&out.stderr)));

@@ -45,8 +45,13 @@ mod workspace;
 const NVIM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 /// `git clone --depth 1` of a repository the user pasted a URL for.
 const CLONE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-/// `docmap --capabilities`: it answers in milliseconds, or it is hung.
-const ENGINE_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// One Generate or Check of a project: seconds on a large tree, minutes with
+/// `--full` (lua-language-server); past this the engine is hung, not busy.
+const ENGINE_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// One `/api/*` answer of the engine for the map page: a read of the project.
+const ENGINE_API_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+/// `gh repo list`: one request to GitHub.
+const GH_LIST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 use std::collections::HashMap;
 use std::fs;
@@ -114,6 +119,11 @@ fn main() {
             // language and selection change, and a handler registered per
             // rebuild would fire once per rebuild it outlived.
             menu::forward_clicks(app.handle());
+            // The line of every child this app starts (`proc`): a release
+            // build has no console, so stderr would reach nobody.
+            if let Ok(dir) = app.path().app_log_dir() {
+                proc::log_to(dir.join("processes.log"));
+            }
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
@@ -140,6 +150,7 @@ fn main() {
             workspace::project_scope_get,
             workspace::project_scope_set,
             import::import_from_url,
+            import::cancel_import,
             engine::map_status,
             views::workspace_deps,
             engine::scan_languages,
@@ -154,6 +165,7 @@ fn main() {
             nvim::nvim_info,
             nvim::set_nvim_path,
             nvim::set_nvim_config_dir,
+            nvim::set_nvim_cache_dir,
             nvim::import_from_nvim_config,
             engine::serve_project,
             views::set_menu,
@@ -685,7 +697,7 @@ mod tests {
         assert!(!code.contains("0x0800_0000"));
         #[cfg(windows)]
         {
-            let flags = editor_creation_flags();
+            let flags = appkit_core::launch::creation_flags(EDITOR_WINDOW);
             assert_eq!(flags & 0x0800_0000, 0, "CREATE_NO_WINDOW");
             assert_eq!(flags & 0x0000_0008, 0, "DETACHED_PROCESS");
             assert_ne!(flags & 0x0000_0010, 0, "CREATE_NEW_CONSOLE");
@@ -1729,7 +1741,7 @@ mod tests {
     // the whole point of this test is that it reads *this crate's real*
     // `tauri.conf.json`, and a fake context would leave it asserting
     // against a configuration nobody ships.
-    fn args_of(cmd: &std::process::Command) -> Vec<String> {
+    fn args_of(cmd: &crate::proc::Cmd) -> Vec<String> {
         cmd.get_args()
             .map(|a| a.to_string_lossy().into_owned())
             .collect()
@@ -2079,6 +2091,56 @@ mod tests {
         assert!(parse_nvim_export("[]").unwrap().is_empty());
         let err = parse_nvim_export("not json").unwrap_err();
         assert_eq!(err.key(), "err.nvim.notJson");
+    }
+
+    // Neovim's cache folder without a Neovim: it was a headless `nvim` with
+    // no time limit, which hung for good on a config that waits for input.
+    #[test]
+    fn the_nvim_cache_folder_follows_neovims_rule_without_starting_it() {
+        use std::ffi::OsString;
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(k, _)| *k == name)
+                    .map(|(_, v)| OsString::from(*v))
+            }
+        };
+        assert_eq!(
+            nvim::nvim_cache_dir_from(env(&[("LOCALAPPDATA", r"C:\Users\a\AppData\Local")]), true)
+                .as_deref(),
+            Some("C:/Users/a/AppData/Local/Temp/nvim")
+        );
+        assert_eq!(
+            nvim::nvim_cache_dir_from(env(&[("HOME", "/home/a")]), false).as_deref(),
+            Some("/home/a/.cache/nvim")
+        );
+        // XDG_CACHE_HOME wins on every platform; NVIM_APPNAME names the folder.
+        assert_eq!(
+            nvim::nvim_cache_dir_from(
+                env(&[
+                    ("XDG_CACHE_HOME", "/x/cache"),
+                    ("NVIM_APPNAME", "lazyvim"),
+                    ("HOME", "/home/a"),
+                ]),
+                false
+            )
+            .as_deref(),
+            Some("/x/cache/lazyvim")
+        );
+        // An empty variable is an unset one, as for Neovim.
+        assert_eq!(
+            nvim::nvim_cache_dir_from(
+                env(&[("XDG_CACHE_HOME", ""), ("NVIM_APPNAME", ""), ("HOME", "/h")]),
+                false
+            )
+            .as_deref(),
+            Some("/h/.cache/nvim")
+        );
+        assert_eq!(nvim::nvim_cache_dir_from(env(&[]), true), None);
+        // And no `nvim` is started for it any more.
+        let source = include_str!("nvim.rs");
+        assert!(!source.contains("io.write(vim.fn.stdpath"));
     }
 
     #[test]

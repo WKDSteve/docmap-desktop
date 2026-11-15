@@ -268,13 +268,7 @@ pub(crate) fn open_externally(target: &str) -> Result<(), AppError> {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let mut cmd = std::process::Command::new(if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        });
-        cmd.arg(target);
-        cmd.spawn().map(|_| ()).map_err(|e| failed(e.to_string()))
+        crate::paths::hand_to_system(&[target]).map_err(failed)
     }
 }
 

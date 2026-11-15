@@ -653,8 +653,8 @@ mod tests {
 
     /// The three questions this module and the file tree answer start no
     /// process: outside their tests, the file tree, the traffic view and this
-    /// reader name no `Command` at all, and the import names exactly one, the
-    /// `git clone` that stays a child process by decision.
+    /// reader name no `Command` at all, and the import starts exactly one, the
+    /// `git clone` that stays a child process by decision, through `proc`.
     #[test]
     fn the_git_questions_start_no_process() {
         let starts = |source: &str| {
@@ -664,6 +664,11 @@ mod tests {
         assert_eq!(starts(include_str!("filetree.rs")), 0, "filetree.rs");
         assert_eq!(starts(include_str!("traffic.rs")), 0, "traffic.rs");
         assert_eq!(starts(include_str!("gitcfg.rs")), 0, "gitcfg.rs");
-        assert_eq!(starts(include_str!("import.rs")), 1, "import.rs");
+        assert_eq!(starts(include_str!("import.rs")), 0, "import.rs");
+        let import = include_str!("import.rs")
+            .split("#[cfg(test)]")
+            .next()
+            .unwrap();
+        assert_eq!(import.matches("proc::Cmd::new").count(), 1, "import.rs");
     }
 }

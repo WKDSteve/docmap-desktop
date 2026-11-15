@@ -186,6 +186,7 @@ const els = {
   contextNote: document.getElementById("context-note"),
   pickNvim: document.getElementById("pick-nvim"),
   pickNvimConfig: document.getElementById("pick-nvim-config"),
+  pickNvimCache: document.getElementById("pick-nvim-cache"),
   help: document.getElementById("help"),
 };
 
@@ -281,7 +282,14 @@ const viewStore = createStore({
   // `null` until asked, and asked again after `set_grammars`.
   grammarDir: null,
   callsSupport: "unknown",
-  nvim: { path: null, from_path: true, config_dir: null, config_dir_from_default: true },
+  nvim: {
+    path: null,
+    from_path: true,
+    config_dir: null,
+    config_dir_from_default: true,
+    cache_dir: null,
+    cache_dir_from_default: true,
+  },
   projects: [],
   selectedId: null,
   mapBase: null,
@@ -1804,6 +1812,16 @@ function nvimFacts() {
         }
       : { label: t("facts.config"), text: t("facts.nvim.noConfig"), missing: true }
   );
+  // Where the telemetry is read from: worked out from the environment, the
+  // way Neovim does, unless a folder was chosen. No Neovim is started for it.
+  if (view.nvim.cache_dir) {
+    rows.push({
+      label: t("facts.cache"),
+      path: view.nvim.cache_dir,
+      tag: view.nvim.cache_dir_from_default ? { text: t("facts.tag.default") } : { text: t("facts.tag.chosen") },
+      title: view.nvim.cache_dir,
+    });
+  }
   return rows;
 }
 
@@ -1843,6 +1861,17 @@ els.pickNvimConfig.addEventListener("click", async () => {
     if (!dir) return;
     view.nvim = await invoke("set_nvim_config_dir", { path: dir });
     say("Neovim config directory set");
+  } catch (e) {
+    say(errorText(e));
+  }
+});
+
+els.pickNvimCache.addEventListener("click", async () => {
+  try {
+    const dir = await open({ directory: true, multiple: false, title: "Locate Neovim's cache folder" });
+    if (!dir) return;
+    view.nvim = await invoke("set_nvim_cache_dir", { path: dir });
+    say("Neovim cache folder set");
   } catch (e) {
     say(errorText(e));
   }
@@ -2496,19 +2525,47 @@ nvimImportBtn.addEventListener("click", async () => {
   }
 });
 
-/** Clone whatever the URL field holds. Shared by the button and the list. */
+const urlGo = document.getElementById("run-url-import");
+const urlStop = document.getElementById("stop-url-import");
+/** A clone runs: Stop is shown, and closing the dialog stops it. */
+let cloning = false;
+
+/**
+ * Clone whatever the URL field holds. Shared by the button and the list.
+ *
+ * The dialog stays open while git runs, with a Stop next to the busy button:
+ * a clone of a large repository takes minutes, and the person must be able to
+ * end it. Stop, or closing the dialog, ends git with everything it started
+ * (`cancel_import`); the half-cloned folder is removed on that side.
+ */
 async function cloneUrl(url) {
-  if (!url) return;
-  await closeThen(async () => {
-    say(`Cloning ${url}…`);
-    await refresh(await invoke("import_from_url", { url }));
+  if (!url || cloning) return;
+  cloning = true;
+  urlStop.hidden = false;
+  say(`Cloning ${url}…`);
+  try {
+    const projects = await withBusyButton(urlGo, t("add.url.cloning"), () =>
+      invoke("import_from_url", { url })
+    );
+    cloning = false;
+    addbox.el.close();
+    await refresh(projects);
     say(`Added ${url}`);
-  });
+  } catch (e) {
+    say(errorText(e));
+  } finally {
+    cloning = false;
+    urlStop.hidden = true;
+  }
 }
 
-document
-  .getElementById("run-url-import")
-  .addEventListener("click", () => cloneUrl(addbox.url.value.trim()));
+function stopClone() {
+  if (cloning) invoke("cancel_import").catch(() => {});
+}
+
+urlGo.addEventListener("click", () => cloneUrl(addbox.url.value.trim()));
+urlStop.addEventListener("click", stopClone);
+addbox.el.addEventListener("close", stopClone);
 addbox.url.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter") {
     ev.preventDefault();

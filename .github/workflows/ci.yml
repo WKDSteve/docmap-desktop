@@ -175,6 +175,11 @@ jobs:
       - name: no colour outside the tokens
         run: python tools/check-colors.py
 
+      # Every process the app starts goes through src-tauri/src/proc.rs (appkit_core::child) or
+      # appkit_core::launch; tools/process-starts.allow names the rest, with a reason and a count.
+      - name: no process started by hand
+        run: python tools/check-process-starts.py
+
       - name: unit tests of the tools
         run: python -m unittest discover -s tools -p "test_*.py"
 

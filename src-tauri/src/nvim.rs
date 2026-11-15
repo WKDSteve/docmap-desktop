@@ -48,6 +48,11 @@ pub(crate) struct NvimInfo {
     /// that default actually exists on disk, or none.
     pub(crate) config_dir: Option<String>,
     pub(crate) config_dir_from_default: bool,
+    /// Neovim's cache folder (`stdpath('cache')`, where telemetry lives): the
+    /// chosen one when it exists, else what Neovim would use by its
+    /// environment ([`default_nvim_cache_dir`]).
+    pub(crate) cache_dir: Option<String>,
+    pub(crate) cache_dir_from_default: bool,
 }
 
 #[tauri::command]
@@ -66,12 +71,36 @@ pub(crate) fn nvim_info(app: tauri::AppHandle) -> Result<NvimInfo, AppError> {
         _ => (default_nvim_config_dir(), true),
     };
 
+    let (cache_dir, cache_dir_from_default) = match ws.nvim_cache_dir.clone() {
+        Some(p) if Path::new(&p).is_dir() => (Some(p), false),
+        _ => (default_nvim_cache_dir(), true),
+    };
+
     Ok(NvimInfo {
         path,
         from_path,
         config_dir,
         config_dir_from_default,
+        cache_dir,
+        cache_dir_from_default,
     })
+}
+
+#[tauri::command]
+pub(crate) fn set_nvim_cache_dir(
+    app: tauri::AppHandle,
+    path: Option<String>,
+) -> Result<NvimInfo, AppError> {
+    if let Some(ref p) = path {
+        if !Path::new(p).is_dir() {
+            return Err(AppError::not_dir(p));
+        }
+    }
+    with_workspace(&app, |ws| {
+        ws.nvim_cache_dir = path;
+        Ok(())
+    })?;
+    nvim_info(app)
 }
 
 #[tauri::command]
@@ -168,8 +197,8 @@ io.stdout:write(vim.json.encode(p) .. '\n') os.exit(0)";
 /// fully-resolved plugin policy. The `qa` after it never runs (the chunk
 /// exits), it is there so a chunk that somehow returns does not leave a
 /// headless Neovim waiting for input until the timeout.
-pub(crate) fn nvim_export_command(nvim: &str) -> std::process::Command {
-    let mut cmd = std::process::Command::new(nvim);
+pub(crate) fn nvim_export_command(nvim: &str) -> proc::Cmd {
+    let mut cmd = proc::Cmd::new("docmap-desktop import from the Neovim config", nvim);
     cmd.args(["--headless", "-c", NVIM_EXPORT_LUA, "-c", "qa"]);
     cmd
 }
@@ -250,26 +279,20 @@ pub(crate) async fn import_from_nvim_config(
         .ok_or_else(|| AppError::new("err.nvim.noConfig"))?;
 
     let out = tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = nvim_export_command(&nvim_path);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        proc::run_with_timeout(&mut cmd, NVIM_TIMEOUT).map_err(|e| e.into_nvim(&nvim_path))
+        let cmd = nvim_export_command(&nvim_path);
+        proc::run(&cmd, NVIM_TIMEOUT).map_err(|e| e.into_nvim(&nvim_path))
     })
     .await
     .map_err(AppError::task)??;
 
-    if out.status.code() == Some(3) {
+    if out.code == Some(3) {
         return Err(AppError::new("err.nvim.noExport")
             .with("dir", &config_dir)
             .detail(String::from_utf8_lossy(&out.stderr)));
     }
-    if !out.status.success() {
+    if !out.success() {
         return Err(AppError::new("err.nvim.exit")
-            .with("code", out.status.code().unwrap_or(-1))
+            .with("code", out.code.unwrap_or(-1))
             .detail(String::from_utf8_lossy(&out.stderr)));
     }
 
@@ -277,43 +300,40 @@ pub(crate) async fn import_from_nvim_config(
     with_workspace(&app, |ws| Ok(import_entries(ws, Some(&config_dir), &found)))
 }
 
-/// Neovim's own cache root, asked of Neovim.
+/// Neovim's own cache root (`stdpath('cache')`), worked out the way Neovim
+/// does it, without starting Neovim.
 ///
-/// Not guessed from the platform: `stdpath("cache")` answers differently
-/// under `XDG_CACHE_HOME`, and a hardcoded guess would read an empty
-/// directory and report "no telemetry" for a machine full of it. One
-/// subprocess, cached for the window's lifetime — the answer cannot change
-/// while Neovim's environment does not.
-pub(crate) static CACHE_ROOT: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+/// It used to be asked of a headless Neovim, without a time limit: a
+/// configuration that stops to ask something hung the Telemetry panel for
+/// good, for a path that follows from three variables. Neovim's rule
+/// (`:help base-directories`, `stdpath()`): `$XDG_CACHE_HOME/<name>` when the
+/// variable is set, else `%LOCALAPPDATA%\Temp\<name>` on Windows and
+/// `~/.cache/<name>` elsewhere; `<name>` is `$NVIM_APPNAME`, or `nvim`.
+/// A machine where that is not the answer (a wrapper that sets another
+/// environment) names the folder in Settings ([`set_nvim_cache_dir`]).
+pub(crate) fn default_nvim_cache_dir() -> Option<String> {
+    nvim_cache_dir_from(|name| std::env::var_os(name), cfg!(windows))
+}
+
+/// [`default_nvim_cache_dir`] over any environment, for the tests.
+pub(crate) fn nvim_cache_dir_from(
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+    windows: bool,
+) -> Option<String> {
+    let set = |name: &str| var(name).filter(|v| !v.is_empty());
+    let app_name = set("NVIM_APPNAME")
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "nvim".to_string());
+    let base = match set("XDG_CACHE_HOME") {
+        Some(dir) => PathBuf::from(dir),
+        None if windows => PathBuf::from(set("LOCALAPPDATA")?).join("Temp"),
+        None => PathBuf::from(set("HOME")?).join(".cache"),
+    };
+    Some(portable(&base.join(app_name)))
+}
 
 pub(crate) fn nvim_cache_root(app: &tauri::AppHandle) -> Option<String> {
-    CACHE_ROOT
-        .get_or_init(|| {
-            let info = nvim_info(app.clone()).ok()?;
-            let nvim = info.path?;
-            let mut cmd = std::process::Command::new(&nvim);
-            cmd.args([
-                "--headless",
-                "-c",
-                "lua io.write(vim.fn.stdpath('cache'))",
-                "-c",
-                "qa",
-            ]);
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-                cmd.creation_flags(CREATE_NO_WINDOW);
-            }
-            let out = cmd.output().ok()?;
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if path.is_empty() {
-                None
-            } else {
-                Some(path.replace('\\', "/"))
-            }
-        })
-        .clone()
+    nvim_info(app.clone()).ok()?.cache_dir
 }
 
 /// What is known about a project's telemetry.
@@ -352,20 +372,14 @@ pub(crate) async fn set_telemetry(
     let failed = AppError::new("err.telemetry.failed").with("namespace", &namespace);
 
     let out = tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new(&nvim);
+        let mut cmd = proc::Cmd::new("docmap-desktop telemetry switch", &nvim);
         cmd.args(["--headless", "-c", &arg, "-c", "qa"]);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        proc::run_with_timeout(&mut cmd, NVIM_TIMEOUT).map_err(|e| e.into_nvim(&nvim))
+        proc::run(&cmd, NVIM_TIMEOUT).map_err(|e| e.into_nvim(&nvim))
     })
     .await
     .map_err(AppError::task)??;
 
-    if out.status.success() {
+    if out.success() {
         Ok(())
     } else {
         // The plugin's own message, verbatim: it knows why better than a

@@ -27,6 +27,7 @@ the code, not recalled.
 - [The note that appears over some panels](#the-note-that-appears-over-some-panels)
 - [Keyboard navigation](#keyboard-navigation)
 - [Where things live](#where-things-live)
+- [Programs this window starts](#programs-this-window-starts)
 - [The menu bar](#the-menu-bar)
 - [Sending feedback](#sending-feedback)
 - [Limits of a rules run through ai-desktop](#limits-of-a-rules-run-through-ai-desktop)
@@ -721,6 +722,13 @@ with `:RATelemetry snapshot <name>`, never automatically; to compare two,
 the map's own **Analysis → Telemetry** panel is the place, since it can
 hold two at once.
 
+The telemetry is read from Neovim's cache folder, which this window works
+out the way Neovim does, without starting it: `$XDG_CACHE_HOME/nvim` when
+that variable is set, else `%LOCALAPPDATA%\Temp\nvim` on Windows and
+`~/.cache/nvim` elsewhere (`$NVIM_APPNAME` in place of `nvim` when it is
+set). If your Neovim keeps it somewhere else, **Settings → Neovim →
+Locate cache…** names the folder.
+
 ## GitHub traffic
 
 **Optional, read-only, and this app never talks to GitHub or sees a token.**
@@ -1045,6 +1053,30 @@ on what went wrong.
 
 A workspace name is typed by a person and becomes a path, so it is reduced
 to alphanumerics, `-`, `_` and space before it is used as one.
+
+## Programs this window starts
+
+| Program | When | Limit |
+|---|---|---|
+| the engine (`docmap`) | Generate, Check, the map page's panels, the Rules tab, a rules run; `--capabilities` once per engine file | 30 min for Generate and Check, 2 min otherwise; the Rules tab's run also has a memory limit |
+| `nvim --headless` | Import from the Neovim config, switching telemetry, **Ask Neovim** in the traffic settings | 60 s (30 s for Ask Neovim) |
+| `git clone --depth 1` | Clone in the URL tab | 15 min, or **Stop** |
+| `gh repo list` | **List my GitHub repositories** in the URL tab | 60 s |
+
+Each of them is a child of the window: no console window, its output read by
+the window and capped, and it ends with the window, also when the window
+crashes or is killed (on Windows the system ends it through a job object, with
+everything it started). None of them may ask anything: `git` and `gh` are told
+not to prompt, since there is no terminal to answer in. The first start of each
+kind is written to `processes.log` in the app's log folder.
+
+A clone of a large repository can take minutes: **Stop**, or closing the
+dialog, ends `git` and everything it started, and removes the half-cloned
+folder.
+
+Your editor, the file manager and the browser are your programs, not the
+window's: they are started visibly, are handed nothing of the window's, and
+stay open when it closes.
 
 ## The menu bar
 

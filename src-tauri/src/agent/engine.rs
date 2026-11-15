@@ -174,28 +174,82 @@ pub trait Judge: Send + Sync {
     ) -> Result<Value, AppError>;
 }
 
-/// The engine binary as a process to start: its grammars named, no console
-/// window. Shared with the Rules tab's own calls (`rules/engine.rs`).
-pub(crate) fn command(program: &str, grammars: Option<&str>) -> std::process::Command {
-    let mut cmd = std::process::Command::new(program);
+/// The engine binary as a process to start (`proc`: bound to the app, no
+/// console window), its grammars named. Shared with the Rules tab's own calls
+/// (`rules/engine.rs`), the map server and Generate.
+pub(crate) fn command(caller: &'static str, program: &str, grammars: Option<&str>) -> proc::Cmd {
+    let mut cmd = proc::Cmd::new(caller, program);
     if let Some(g) = grammars {
         cmd.env("DOCMAP_TS_DIR", g);
     }
-    crate::server::no_window(&mut cmd);
     cmd
+}
+
+/// What makes an answer of `--capabilities` stale: another engine file at the
+/// same path (size, modification time), or a change in the grammars folder
+/// (a grammar added or removed changes which languages the engine has).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Stamp {
+    engine: Option<(u64, std::time::SystemTime)>,
+    grammars: Option<std::time::SystemTime>,
+}
+
+impl Stamp {
+    fn of(program: &str, grammars: Option<&str>) -> Stamp {
+        let engine = proc::resolve(Path::new(program))
+            .and_then(|p| std::fs::metadata(p).ok())
+            .and_then(|m| Some((m.len(), m.modified().ok()?)));
+        let grammars = grammars
+            .and_then(|g| std::fs::metadata(g).ok())
+            .and_then(|m| m.modified().ok());
+        Stamp { engine, grammars }
+    }
+}
+
+type Answers = std::collections::HashMap<(String, Option<String>), (Stamp, Option<Vec<u8>>)>;
+
+/// The answer of `--capabilities` of `program` (stdout of an exit 0; `None`
+/// when the engine cannot be asked: one from before exits 2 without doing
+/// anything), asked once per engine path and grammars folder and remembered
+/// until the engine file or the folder changes.
+///
+/// It used to be asked before every request of the map page, two processes per
+/// request; the answer only changes with the binary. A failure (the engine is
+/// missing, hangs) is not remembered: the next call asks again.
+pub(crate) fn capabilities_answer(
+    program: &str,
+    grammars: Option<&str>,
+) -> Result<Option<Vec<u8>>, AppError> {
+    static ANSWERS: std::sync::OnceLock<std::sync::Mutex<Answers>> = std::sync::OnceLock::new();
+    let answers = ANSWERS.get_or_init(Default::default);
+    let key = (program.to_string(), grammars.map(str::to_string));
+    let stamp = Stamp::of(program, grammars);
+    {
+        let known = answers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((seen, answer)) = known.get(&key) {
+            if *seen == stamp && stamp.engine.is_some() {
+                return Ok(answer.clone());
+            }
+        }
+    }
+    let mut cmd = command("docmap-desktop engine capabilities", program, grammars);
+    cmd.arg("--capabilities").max_output(1024 * 1024, 64 * 1024);
+    let out = proc::run(&cmd, PROBE_TIMEOUT).map_err(|e| e.into_app(program))?;
+    let answer = out.success().then_some(out.stdout);
+    answers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(key, (stamp, answer.clone()));
+    Ok(answer)
 }
 
 /// What `--capabilities` of the engine lists; nothing when it does not answer
 /// the question (an engine from before it exits 2 without doing anything).
 pub(crate) fn capabilities(program: &str, grammars: Option<&str>) -> Result<Vec<String>, AppError> {
-    let mut cmd = command(program, grammars);
-    cmd.arg("--capabilities");
-    let out = proc::run_with_timeout(&mut cmd, PROBE_TIMEOUT).map_err(|e| e.into_app(program))?;
-    Ok(out
-        .status
-        .success()
-        .then(|| serde_json::from_slice::<Value>(&out.stdout).ok())
-        .flatten()
+    Ok(capabilities_answer(program, grammars)?
+        .and_then(|stdout| serde_json::from_slice::<Value>(&stdout).ok())
         .and_then(|v| v.get("capabilities").cloned())
         .and_then(|c| serde_json::from_value(c).ok())
         .unwrap_or_default())
@@ -221,16 +275,19 @@ impl CliEngine {
         Ok(CliEngine { program, grammars })
     }
 
-    fn command(&self) -> std::process::Command {
-        command(&self.program, self.grammars.as_deref())
+    fn command(&self) -> proc::Cmd {
+        command(
+            "docmap-desktop rules agent",
+            &self.program,
+            self.grammars.as_deref(),
+        )
     }
 
     fn call(&self, root: &Path, route: &str, flags: &[String]) -> Result<Value, AppError> {
         let mut cmd = self.command();
         cmd.arg(root).arg(format!("--api={route}")).args(flags);
-        let out = proc::run_with_timeout(&mut cmd, CALL_TIMEOUT)
-            .map_err(|e| e.into_app(&self.program))?;
-        if !out.status.success() {
+        let out = proc::run(&cmd, CALL_TIMEOUT).map_err(|e| e.into_app(&self.program))?;
+        if !out.success() {
             return Err(
                 AppError::new("err.agent.engine").detail(String::from_utf8_lossy(&out.stderr))
             );
@@ -439,6 +496,60 @@ impl Drop for TempAnswer {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// An engine that counts how often it is asked: every start appends a
+    /// line to `count.txt` next to it, and it answers `--capabilities`.
+    fn counting_engine(dir: &Path, version: &str) -> String {
+        #[cfg(windows)]
+        let (name, body) = (
+            "engine.cmd",
+            format!(
+                "@echo off\r\necho x>>\"%~dp0count.txt\"\r\necho {{\"capabilities\":[\"api\"],\"v\":\"{version}\"}}\r\n"
+            ),
+        );
+        #[cfg(not(windows))]
+        let (name, body) = (
+            "engine.sh",
+            format!(
+                "#!/bin/sh\necho x >> \"$(dirname \"$0\")/count.txt\"\necho '{{\"capabilities\":[\"api\"],\"v\":\"{version}\"}}'\n"
+            ),
+        );
+        let file = dir.join(name);
+        std::fs::write(&file, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        file.to_string_lossy().into_owned()
+    }
+
+    fn asked(dir: &Path) -> usize {
+        std::fs::read_to_string(dir.join("count.txt"))
+            .map(|t| t.lines().count())
+            .unwrap_or(0)
+    }
+
+    // The map page asked `--capabilities` before every request: two processes
+    // per request. Now once per engine, and again only when the file changes.
+    #[test]
+    fn capabilities_are_asked_once_per_engine_file() {
+        let dir = std::env::temp_dir().join(format!("docmap-caps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let engine = counting_engine(&dir, "1");
+
+        assert_eq!(capabilities(&engine, None).unwrap(), ["api"]);
+        assert_eq!(capabilities(&engine, None).unwrap(), ["api"]);
+        assert!(capabilities_answer(&engine, None).unwrap().is_some());
+        assert_eq!(asked(&dir), 1, "asked again for the same engine");
+
+        // Another engine at the same path (a different size): asked anew.
+        counting_engine(&dir, "22");
+        assert_eq!(capabilities(&engine, None).unwrap(), ["api"]);
+        assert_eq!(asked(&dir), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_plan_is_read_with_empty_lists_in_either_encoding() {

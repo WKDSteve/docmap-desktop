@@ -557,9 +557,7 @@ pub(crate) fn reveal_in_file_manager(native: &str) -> Result<(), AppError> {
     }
     #[cfg(target_os = "macos")]
     {
-        let mut cmd = std::process::Command::new("open");
-        cmd.arg("-R").arg(native);
-        cmd.spawn().map(|_| ()).map_err(|e| failed(e.to_string()))
+        hand_to_system(&["-R", native]).map_err(failed)
     }
     #[cfg(all(unix, not(target_os = "macos")))]
     {
@@ -568,15 +566,34 @@ pub(crate) fn reveal_in_file_manager(native: &str) -> Result<(), AppError> {
             .parent()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| native.to_string());
-        let mut cmd = std::process::Command::new("xdg-open");
-        cmd.arg(folder);
-        cmd.spawn().map(|_| ()).map_err(|e| failed(e.to_string()))
+        hand_to_system(&[folder.as_str()]).map_err(failed)
     }
 }
 
-/// The Windows creation flags of the editor command: a console of its own
-/// (`CREATE_NEW_CONSOLE`) and a process group of its own
-/// (`CREATE_NEW_PROCESS_GROUP`).
+/// Hand `args` to the system's opener (`/usr/bin/open` on macOS, `xdg-open`
+/// elsewhere), the way `appkit_core::launch` starts a program of somebody
+/// else: an argv, stdin, stdout and stderr the null device, a process group of
+/// its own. It is not a child of this app: what it opens (a file manager, a
+/// browser) is the person's and outlives the window, and `xdg-open` may become
+/// that program. Windows asks the shell instead (`shellopen`).
+#[cfg(unix)]
+pub(crate) fn hand_to_system(args: &[&str]) -> Result<(), String> {
+    use appkit_core::launch::{spawn, LaunchOpts, Window};
+    let program = if cfg!(target_os = "macos") {
+        std::path::PathBuf::from("/usr/bin/open")
+    } else {
+        crate::proc::resolve(Path::new("xdg-open"))
+            .ok_or_else(|| "xdg-open was not found on PATH".to_string())?
+    };
+    let opts = LaunchOpts {
+        cwd: Path::new("/"),
+        window: Window::Default,
+    };
+    spawn(&program, args, &opts).map(|_| ())
+}
+
+/// The kind of window the editor command gets: a console of its own
+/// (`CREATE_NEW_CONSOLE`, with `CREATE_NEW_PROCESS_GROUP` from `launch`).
 ///
 /// Never `CREATE_NO_WINDOW` and never `DETACHED_PROCESS`. The command is
 /// whatever the user typed into the Editor setting; a terminal editor
@@ -585,35 +602,30 @@ pub(crate) fn reveal_in_file_manager(native: &str) -> Result<(), AppError> {
 /// leave behind. With its own console it is a window the user ordered and
 /// works in (the named exception of the plan). A windowed editor ignores the
 /// console flag; a `.cmd` wrapper shows its console for as long as it runs.
-#[cfg(windows)]
-pub(crate) const fn editor_creation_flags() -> u32 {
-    const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
-    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    CREATE_NEW_CONSOLE | CREATE_NEW_PROCESS_GROUP
-}
+pub(crate) const EDITOR_WINDOW: appkit_core::launch::Window =
+    appkit_core::launch::Window::NewConsole;
 
-/// Start the editor command, detached on purpose: the editor is the user's
-/// program, it outlives the app, and nothing of the app's is handed to it —
-/// no pipe to its input or output, no console of the app's.
-pub(crate) fn start_editor(program: &str, args: &[String]) -> std::io::Result<()> {
-    use std::process::Stdio;
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(editor_creation_flags());
-    }
-    let mut child = cmd.spawn()?;
-    // Waited for on a thread of its own, so the editor's exit is collected
-    // whenever it comes and the command returns now.
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
+/// Start the editor command through `appkit_core::launch`, detached on
+/// purpose: the editor is the user's program, it outlives the app, and nothing
+/// of the app's is handed to it — no pipe to its input or output, no console
+/// and no inheritable handle of the app's. A bare name (`code`, `nvim`) is
+/// looked up on `PATH` here, as the system used to.
+pub(crate) fn start_editor(program: &str, args: &[String]) -> Result<(), String> {
+    use appkit_core::launch::{spawn, LaunchOpts};
+    let path = crate::proc::resolve(Path::new(program))
+        .ok_or_else(|| format!("{program} was not found (neither a file nor a program on PATH)"))?;
+    // The folder it starts in: the app's own, as before, or the temp folder
+    // when that is not an absolute local folder.
+    let cwd = std::env::current_dir()
+        .ok()
+        .filter(|d| appkit_core::child::local_absolute(d) && d.is_dir())
+        .unwrap_or_else(std::env::temp_dir);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let opts = LaunchOpts {
+        cwd: &cwd,
+        window: EDITOR_WINDOW,
+    };
+    spawn(&path, &args, &opts).map(|_| ())
 }
 
 /// Open a source file in an editor, at a line where one is known.

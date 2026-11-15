@@ -1,29 +1,61 @@
-//! Running a child process with a time limit.
+//! Every process this app starts for its own work, through `appkit_core::child`.
 //!
-//! `Command::output()` waits forever. For the processes this app starts on a
-//! button -- a headless Neovim that loads the user's whole configuration, a
-//! `git clone`, the engine -- "forever" is a real outcome: a configuration that
-//! stops to ask something, a credential prompt nobody can see, a hung binary.
-//! The button then never comes back and a pool thread is lost with it.
+//! The engine, a headless Neovim, `git clone` and `gh repo list` are children
+//! of the app, and the helper of appkit is what makes that visible from
+//! outside (`appkit/docs/PROCESSES.md`):
+//!
+//! - no console window, and its three streams are pipes of the app;
+//! - it ends with the app: on Windows it is in a job object with
+//!   `KILL_ON_JOB_CLOSE` (also when the app crashes or is killed), on Linux and
+//!   macOS it leads a process group that is ended with the call;
+//! - a time limit for the whole call and a size limit per output stream; when
+//!   one is passed the child and everything it started are ended;
+//! - an argv and an absolute program path, never a shell line;
+//! - a line in the process log for the first call of each caller and program
+//!   (`processes.log` in the app's log folder, see [`log_to`]).
+//!
+//! `Command::output()` used to wait forever, and nothing bound a child to the
+//! app: a configuration that stops to ask something, a credential prompt
+//! nobody can see or a hung binary kept a pool thread and a process for as long
+//! as they liked, and outlived the window.
+//!
+//! The commands of this app are synchronous functions on a blocking thread; the
+//! helper is async. [`run`] bridges the two (see [`block_on`]).
 
-use std::io::Read;
-use std::time::{Duration, Instant};
+use std::ffi::{OsStr, OsString};
+use std::future::Future;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::time::Duration;
+
+use appkit_core::child::{self, Environment, Leftovers, Start};
 
 use crate::apperr::AppError;
 
-/// Why [`run_with_timeout`] has no output to hand back. Not an [`AppError`]
-/// itself: which sentence fits depends on the program (a Neovim that does not
-/// answer is most likely waiting for input), so the caller picks it.
+/// The most a child may write to stdout by default: an engine answer of a large
+/// project is a few megabytes, a report of a run a few kilobytes.
+pub const MAX_STDOUT: usize = 64 * 1024 * 1024;
+/// The most a child may write to stderr by default.
+pub const MAX_STDERR: usize = 8 * 1024 * 1024;
+
+/// Why [`run`] has no output to hand back. Not an [`AppError`] itself: which
+/// sentence fits depends on the program (a Neovim that does not answer is most
+/// likely waiting for input), so the caller picks it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProcError {
-    /// It could not be started or waited for; the OS error, verbatim.
+    /// It could not be started, was ended for writing too much, or a pipe
+    /// failed; the reason, verbatim.
     Failed(String),
-    /// It was killed after this many seconds without finishing.
+    /// It was ended after this many seconds without finishing.
     Timeout(u64),
+    /// The person cancelled it ([`Cancel::cancel`]); it was ended with what it
+    /// started.
+    Cancelled,
 }
 
 impl ProcError {
-    /// `err.proc.run` or `err.proc.timeout`, naming `program`.
+    /// `err.proc.run`, `err.proc.timeout` or `err.proc.cancelled`, naming
+    /// `program`.
     pub fn into_app(self, program: &str) -> AppError {
         match self {
             ProcError::Failed(e) => AppError::new("err.proc.run")
@@ -32,6 +64,7 @@ impl ProcError {
             ProcError::Timeout(secs) => AppError::new("err.proc.timeout")
                 .with("program", program)
                 .with("secs", secs),
+            ProcError::Cancelled => AppError::new("err.proc.cancelled").with("program", program),
         }
     }
 
@@ -42,269 +75,302 @@ impl ProcError {
             ProcError::Timeout(secs) => AppError::new("err.nvim.timeout")
                 .with("program", program)
                 .with("secs", secs),
-            failed => failed.into_app(program),
+            other => other.into_app(program),
+        }
+    }
+
+    fn from_child(e: child::ProcError) -> ProcError {
+        match e {
+            child::ProcError::Timeout(limit) => ProcError::Timeout(limit.as_secs()),
+            other => ProcError::Failed(other.to_string()),
         }
     }
 }
 
-/// Run `cmd` to completion and collect its output, or kill it after `limit`.
-///
-/// Only the child this function started is killed, by its handle. The output
-/// is read on separate threads so a full pipe cannot stall the child while this
-/// one waits, and after a kill the readers get a short grace period rather
-/// than being joined: a grandchild that inherited the pipe would otherwise keep
-/// them (and this call) alive.
-pub fn run_with_timeout(
-    cmd: &mut std::process::Command,
-    limit: Duration,
-) -> Result<std::process::Output, ProcError> {
-    run_limited(cmd, limit, None)
+/// What a finished child left: its exit code (`None` when a signal ended it)
+/// and what it wrote.
+#[derive(Debug, Clone, Default)]
+pub struct Output {
+    pub code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
 }
 
-/// [`run_with_timeout`], and with `memory` the child may not hold more than
-/// that many bytes.
-///
-/// For a child that runs somebody else's code: the engine evaluating the
-/// `lua_predicate` checks of a ruleset. Its sandbox counts instructions, not
-/// bytes, so one call can ask for gigabytes; with the limit that allocation
-/// fails inside the child (Lua reports "not enough memory", the rule is an
-/// `error` row) or the child dies, and neither takes the machine with it.
-///
-/// What the limit is, per platform:
-///
-/// - **Windows**: a job object with a memory limit for the whole job, so a
-///   grandchild counts too, and `KILL_ON_JOB_CLOSE`: nothing of the job
-///   outlives this call. The child is assigned right after it starts; the few
-///   milliseconds before that are not covered.
-/// - **Linux**: `RLIMIT_AS`, set in the child before it becomes the program.
-///   It bounds address space, which is more than what is used; the limit has
-///   to leave room for that.
-/// - **macOS and the rest**: none. The kernel there does not enforce an
-///   address-space limit a process sets for itself, so only the time limit
-///   holds; saying otherwise would be a promise nothing keeps.
-///
-/// A limit that cannot be set is a failure, not a run without one.
-pub fn run_limited(
-    cmd: &mut std::process::Command,
-    limit: Duration,
+impl Output {
+    /// Exit code 0.
+    pub fn success(&self) -> bool {
+        self.code == Some(0)
+    }
+}
+
+/// One process to start: the program, its argv, what changes in the app's
+/// environment, and the limits. The shape of `std::process::Command` where the
+/// call sites need it, so a test can read the arguments.
+#[derive(Debug, Clone)]
+pub struct Cmd {
+    caller: &'static str,
+    program: OsString,
+    args: Vec<OsString>,
+    set: Vec<(OsString, OsString)>,
     memory: Option<u64>,
-) -> Result<std::process::Output, ProcError> {
-    use std::process::Stdio;
-    use std::sync::mpsc;
-
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    #[cfg(target_os = "linux")]
-    if let Some(bytes) = memory {
-        limit::before_exec(cmd, bytes);
-    }
-    let mut child = cmd.spawn().map_err(|e| ProcError::Failed(e.to_string()))?;
-    #[cfg(windows)]
-    let _job = match memory {
-        Some(bytes) => match limit::Job::around(&child, bytes) {
-            Ok(job) => Some(job),
-            Err(e) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(ProcError::Failed(e));
-            }
-        },
-        None => None,
-    };
-    #[cfg(not(any(windows, target_os = "linux")))]
-    let _ = memory;
-
-    fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Vec<u8>> {
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            if let Some(mut p) = pipe {
-                let _ = p.read_to_end(&mut buf);
-            }
-            let _ = tx.send(buf);
-        });
-        rx
-    }
-    let out_rx = drain(child.stdout.take());
-    let err_rx = drain(child.stderr.take());
-
-    let deadline = Instant::now() + limit;
-    // `None` covers both ways out of the loop without a status: the deadline
-    // passed, or `try_wait` itself errored. Either way the child is killed
-    // before this function returns -- a bare `?` on the error would have
-    // left it running, unread and un-reaped, for as long as it lives.
-    let mut wait_err: Option<String> = None;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) if Instant::now() >= deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
-            Err(e) => {
-                wait_err = Some(e.to_string());
-                let _ = child.kill();
-                let _ = child.wait();
-                break None;
-            }
-        }
-    };
-
-    let grace = Duration::from_millis(500);
-    let stdout = out_rx.recv_timeout(grace).unwrap_or_default();
-    let stderr = err_rx.recv_timeout(grace).unwrap_or_default();
-    match (status, wait_err) {
-        (Some(status), _) => Ok(std::process::Output {
-            status,
-            stdout,
-            stderr,
-        }),
-        (None, Some(e)) => Err(ProcError::Failed(e)),
-        (None, None) => Err(ProcError::Timeout(limit.as_secs())),
-    }
+    max_stdout: usize,
+    max_stderr: usize,
 }
 
-/// The memory limit of [`run_limited`], Windows: a job object.
-#[cfg(windows)]
-mod limit {
-    use std::ffi::c_void;
-    use std::os::windows::io::AsRawHandle;
-
-    type Handle = *mut c_void;
-
-    const EXTENDED_LIMIT_INFORMATION: u32 = 9;
-    const LIMIT_JOB_MEMORY: u32 = 0x0000_0200;
-    const LIMIT_KILL_ON_JOB_CLOSE: u32 = 0x0000_2000;
-
-    #[repr(C)]
-    #[derive(Default)]
-    struct BasicLimits {
-        per_process_user_time: i64,
-        per_job_user_time: i64,
-        limit_flags: u32,
-        minimum_working_set: usize,
-        maximum_working_set: usize,
-        active_process_limit: u32,
-        affinity: usize,
-        priority_class: u32,
-        scheduling_class: u32,
-    }
-
-    #[repr(C)]
-    #[derive(Default)]
-    struct IoCounters([u64; 6]);
-
-    #[repr(C)]
-    #[derive(Default)]
-    struct ExtendedLimits {
-        basic: BasicLimits,
-        io: IoCounters,
-        process_memory_limit: usize,
-        job_memory_limit: usize,
-        peak_process_memory: usize,
-        peak_job_memory: usize,
-    }
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn CreateJobObjectW(attributes: *mut c_void, name: *const u16) -> Handle;
-        fn SetInformationJobObject(job: Handle, class: u32, info: *const c_void, len: u32) -> i32;
-        fn AssignProcessToJobObject(job: Handle, process: Handle) -> i32;
-        fn CloseHandle(handle: Handle) -> i32;
-    }
-
-    /// A job that holds one child. Closing it (the drop) ends whatever of the
-    /// job is still running.
-    pub struct Job(Handle);
-
-    impl Job {
-        /// A job with a memory limit of `bytes`, and `child` in it.
-        pub fn around(child: &std::process::Child, bytes: u64) -> Result<Job, String> {
-            let last = || std::io::Error::last_os_error().to_string();
-            // SAFETY: no attributes and no name are valid arguments; the handle is checked below.
-            let handle = unsafe { CreateJobObjectW(std::ptr::null_mut(), std::ptr::null()) };
-            if handle.is_null() {
-                return Err(last());
-            }
-            let job = Job(handle);
-            let mut info = ExtendedLimits::default();
-            info.basic.limit_flags = LIMIT_JOB_MEMORY | LIMIT_KILL_ON_JOB_CLOSE;
-            info.job_memory_limit = usize::try_from(bytes).unwrap_or(usize::MAX);
-            let len =
-                u32::try_from(std::mem::size_of::<ExtendedLimits>()).map_err(|e| e.to_string())?;
-            // SAFETY: `info` is the structure class 9 asks for, alive for the call, `len` its size.
-            let set = unsafe {
-                SetInformationJobObject(
-                    job.0,
-                    EXTENDED_LIMIT_INFORMATION,
-                    (&info as *const ExtendedLimits).cast(),
-                    len,
-                )
-            };
-            if set == 0 {
-                return Err(last());
-            }
-            // SAFETY: both handles are open: the job above, the child for as long as `child` lives.
-            if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle().cast()) } == 0 {
-                return Err(last());
-            }
-            Ok(job)
+impl Cmd {
+    /// `caller` says in plain words who asks (`docmap-desktop generate`), for
+    /// the log. `program` is a path, or a name that is looked up on `PATH`
+    /// when the call starts (`git`, `gh`, `nvim`).
+    pub fn new(caller: &'static str, program: impl AsRef<OsStr>) -> Cmd {
+        Cmd {
+            caller,
+            program: program.as_ref().to_owned(),
+            args: Vec::new(),
+            set: Vec::new(),
+            memory: None,
+            max_stdout: MAX_STDOUT,
+            max_stderr: MAX_STDERR,
         }
     }
 
-    impl Drop for Job {
-        fn drop(&mut self) {
-            // SAFETY: the handle came from `CreateJobObjectW` and is closed nowhere else.
-            unsafe {
-                CloseHandle(self.0);
-            }
+    pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Cmd {
+        self.args.push(arg.as_ref().to_owned());
+        self
+    }
+
+    pub fn args<I, S>(&mut self, args: I) -> &mut Cmd
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        self.args
+            .extend(args.into_iter().map(|a| a.as_ref().to_owned()));
+        self
+    }
+
+    /// `name` set to `value` on top of the app's own environment.
+    pub fn env(&mut self, name: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> &mut Cmd {
+        self.set
+            .push((name.as_ref().to_owned(), value.as_ref().to_owned()));
+        self
+    }
+
+    pub fn envs<I, K, V>(&mut self, vars: I) -> &mut Cmd
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: AsRef<OsStr>,
+        V: AsRef<OsStr>,
+    {
+        for (k, v) in vars {
+            self.env(k, v);
         }
-    }
-}
-
-/// The memory limit of [`run_limited`], Linux: `RLIMIT_AS` in the child.
-#[cfg(target_os = "linux")]
-mod limit {
-    use std::os::unix::process::CommandExt;
-
-    const RLIMIT_AS: i32 = 9;
-
-    #[repr(C)]
-    struct RLimit {
-        cur: u64,
-        max: u64,
+        self
     }
 
-    extern "C" {
-        fn setrlimit(resource: i32, limit: *const RLimit) -> i32;
+    /// The child may not hold more than `bytes` (`Start::memory`: Windows and
+    /// Linux; macOS has no such limit).
+    pub fn memory(&mut self, bytes: Option<u64>) -> &mut Cmd {
+        self.memory = bytes;
+        self
     }
 
-    /// Have the child lower its own address-space limit to `bytes` before it
-    /// becomes the program; a child that cannot does not start.
-    pub fn before_exec(cmd: &mut std::process::Command, bytes: u64) {
-        // SAFETY: the closure runs between fork and exec and only calls `setrlimit`, which is
-        // async-signal-safe; it allocates nothing and touches no lock.
-        unsafe {
-            cmd.pre_exec(move || {
-                let limit = RLimit {
-                    cur: bytes,
-                    max: bytes,
-                };
-                if setrlimit(RLIMIT_AS, &limit) != 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-                Ok(())
+    /// Other size limits for stdout and stderr than [`MAX_STDOUT`] and
+    /// [`MAX_STDERR`].
+    pub fn max_output(&mut self, stdout: usize, stderr: usize) -> &mut Cmd {
+        self.max_stdout = stdout;
+        self.max_stderr = stderr;
+        self
+    }
+
+    #[cfg(test)]
+    pub fn get_program(&self) -> &OsStr {
+        &self.program
+    }
+
+    #[cfg(test)]
+    pub fn get_args(&self) -> impl Iterator<Item = &OsStr> {
+        self.args.iter().map(OsString::as_os_str)
+    }
+
+    #[cfg(test)]
+    pub fn get_envs(&self) -> impl Iterator<Item = (&OsStr, &OsStr)> {
+        self.set.iter().map(|(k, v)| (k.as_os_str(), v.as_os_str()))
+    }
+
+    fn start(&self) -> Result<Start, ProcError> {
+        let program = resolve(Path::new(&self.program)).ok_or_else(|| {
+            ProcError::Failed(format!(
+                "{} was not found (neither a file nor a program on PATH)",
+                Path::new(&self.program).display()
+            ))
+        })?;
+        let mut start = Start::new(self.caller, program)
+            .args(self.args.iter().cloned())
+            .env(Environment::Inherited {
+                set: self.set.clone(),
+                remove: Vec::new(),
             });
+        if let Some(bytes) = self.memory {
+            start = start.memory(bytes);
         }
+        Ok(start)
+    }
+}
+
+/// The absolute path of `program`: itself when it is absolute, else the first
+/// match on `PATH` (on Windows with the extensions of `PATHEXT` when it has
+/// none). The helper starts nothing by a bare name, so the lookup the system
+/// used to do happens here, once per call, visibly.
+pub fn resolve(program: &Path) -> Option<PathBuf> {
+    if program.is_absolute() {
+        return program.is_file().then(|| program.to_path_buf());
+    }
+    // A relative path with a folder in it is not a name to look up.
+    if program.components().count() != 1 {
+        return None;
+    }
+    let path = std::env::var_os("PATH")?;
+    let extensions: Vec<OsString> = if cfg!(windows) && program.extension().is_none() {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
+            .split(';')
+            .filter(|e| !e.is_empty())
+            .map(OsString::from)
+            .collect()
+    } else {
+        vec![OsString::new()]
+    };
+    std::env::split_paths(&path)
+        .filter(|dir| dir.is_absolute())
+        .flat_map(|dir| {
+            extensions.iter().map(move |ext| {
+                let mut name = program.as_os_str().to_owned();
+                name.push(ext);
+                dir.join(name)
+            })
+        })
+        .find(|candidate| candidate.is_file())
+}
+
+/// Run `cmd` to its end and collect its output, or end it (with everything it
+/// started) after `limit`.
+pub fn run(cmd: &Cmd, limit: Duration) -> Result<Output, ProcError> {
+    run_cancellable(cmd, limit, None)
+}
+
+/// [`run`], and ended early when `cancel` is cancelled.
+pub fn run_cancellable(
+    cmd: &Cmd,
+    limit: Duration,
+    cancel: Option<&Cancel>,
+) -> Result<Output, ProcError> {
+    let start = cmd.start()?;
+    let call = child::run(child::Run {
+        start,
+        stdin: Vec::new(),
+        timeout: limit,
+        max_stdout: cmd.max_stdout,
+        max_stderr: cmd.max_stderr,
+        leftovers: Leftovers::End,
+    });
+    let cancelled = cancel.map(Cancel::watch);
+    let out = block_on(async move {
+        match cancelled {
+            // Dropping the call drops the child, and with it its job (Windows)
+            // or its process group (Unix): the clone and its helpers end.
+            Some(mut cancelled) => tokio::select! {
+                out = call => out.map_err(ProcError::from_child),
+                _ = cancelled.wait_for(|c| *c) => Err(ProcError::Cancelled),
+            },
+            None => call.await.map_err(ProcError::from_child),
+        }
+    })?;
+    Ok(Output {
+        code: out.code,
+        stdout: out.stdout,
+        stderr: out.stderr,
+    })
+}
+
+/// A switch that ends a running call ([`run_cancellable`]) from elsewhere: the
+/// person cancels an import while `git clone` runs.
+#[derive(Debug, Clone)]
+pub struct Cancel(Arc<tokio::sync::watch::Sender<bool>>);
+
+impl Default for Cancel {
+    fn default() -> Cancel {
+        Cancel(Arc::new(tokio::sync::watch::channel(false).0))
+    }
+}
+
+impl Cancel {
+    pub fn cancel(&self) {
+        self.0.send_replace(true);
+    }
+
+    fn watch(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.0.subscribe()
+    }
+}
+
+/// Wait for `future` on a thread that is not async.
+///
+/// The commands of this app run on Tauri's blocking pool, the local server on
+/// threads of its own, the tests on test threads. On a thread of a runtime
+/// (the blocking pool, or a worker that a synchronous `async` command blocks
+/// anyway) `block_in_place` hands the worker's tasks on and the runtime's own
+/// handle waits; elsewhere Tauri's runtime does. Either way the child's pipes
+/// and timers belong to a runtime that lives as long as the app.
+fn block_on<F: Future>(future: F) -> F::Output {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => tokio::task::block_in_place(move || handle.block_on(future)),
+        Err(_) => tauri::async_runtime::block_on(future),
+    }
+}
+
+static LOG: OnceLock<PathBuf> = OnceLock::new();
+static LOG_LOCK: Mutex<()> = Mutex::new(());
+/// The size at which the process log starts over.
+const LOG_LIMIT: u64 = 1024 * 1024;
+
+/// Send the helper's lines to `file` (the app's log folder): a release build
+/// has no console, so stderr reaches nobody. Once, at start-up; the folder is
+/// made when the first line is written.
+pub fn log_to(file: PathBuf) {
+    if LOG.set(file).is_ok() {
+        child::set_log(write_log);
+    }
+}
+
+fn write_log(line: &str) {
+    use std::io::Write;
+    let Some(file) = LOG.get() else { return };
+    let _guard = LOG_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let too_big = std::fs::metadata(file).is_ok_and(|m| m.len() > LOG_LIMIT);
+    let opened = if too_big {
+        std::fs::File::create(file)
+    } else {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file)
+    };
+    if let Ok(mut f) = opened {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "{secs} {line}");
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     /// Not a test of its own: the child of the two memory tests below. Started
     /// as this test binary with `DOCMAP_TEST_HOLD_MB` set, it takes that much
@@ -330,29 +396,25 @@ mod tests {
     }
 
     #[cfg(any(windows, target_os = "linux"))]
-    fn holding(mb: usize) -> std::process::Command {
-        let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+    fn holding(mb: usize, memory: u64) -> Cmd {
+        let mut cmd = Cmd::new("docmap-desktop test", std::env::current_exe().unwrap());
         cmd.args([
             "--exact",
             "proc::tests::child_holds_memory",
             "--nocapture",
             "--test-threads=1",
         ])
-        .env("DOCMAP_TEST_HOLD_MB", mb.to_string());
+        .env("DOCMAP_TEST_HOLD_MB", mb.to_string())
+        .memory(Some(memory));
         cmd
     }
 
     #[cfg(any(windows, target_os = "linux"))]
     #[test]
     fn a_child_within_its_memory_limit_runs() {
-        let out = run_limited(
-            &mut holding(8),
-            Duration::from_secs(60),
-            Some(1024 * 1024 * 1024),
-        )
-        .unwrap();
+        let out = run(&holding(8, 1024 * 1024 * 1024), Duration::from_secs(60)).unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
-        assert!(out.status.success(), "{text}");
+        assert!(out.success(), "{text}");
         assert!(text.contains("held 8 MB"), "{text}");
     }
 
@@ -361,34 +423,29 @@ mod tests {
     fn a_child_that_takes_more_than_its_limit_does_not_get_it() {
         // 2 GB asked for under a limit of 256 MB: the allocation fails in the child (the Rust
         // runtime aborts on that), so it neither succeeds nor says it held the memory.
-        let out = run_limited(
-            &mut holding(2048),
-            Duration::from_secs(60),
-            Some(256 * 1024 * 1024),
-        )
-        .unwrap();
+        let out = run(&holding(2048, 256 * 1024 * 1024), Duration::from_secs(60)).unwrap();
         let text = String::from_utf8_lossy(&out.stdout);
-        assert!(!out.status.success(), "{text}");
+        assert!(!out.success(), "{text}");
         assert!(!text.contains("held 2048 MB"), "{text}");
     }
 
     #[cfg(windows)]
-    fn shell(line: &str) -> std::process::Command {
-        let mut c = std::process::Command::new("cmd");
+    fn shell(line: &str) -> Cmd {
+        let mut c = Cmd::new("docmap-desktop test", "cmd");
         c.args(["/c", line]);
         c
     }
     #[cfg(not(windows))]
-    fn shell(line: &str) -> std::process::Command {
-        let mut c = std::process::Command::new("sh");
+    fn shell(line: &str) -> Cmd {
+        let mut c = Cmd::new("docmap-desktop test", "sh");
         c.args(["-c", line]);
         c
     }
 
     #[test]
     fn a_finished_process_returns_its_output() {
-        let out = run_with_timeout(&mut shell("echo hello"), Duration::from_secs(20)).unwrap();
-        assert!(out.status.success());
+        let out = run(&shell("echo hello"), Duration::from_secs(20)).unwrap();
+        assert!(out.success());
         assert!(String::from_utf8_lossy(&out.stdout).contains("hello"));
     }
 
@@ -399,7 +456,7 @@ mod tests {
         #[cfg(not(windows))]
         let line = "sleep 30";
         let started = Instant::now();
-        let err = run_with_timeout(&mut shell(line), Duration::from_millis(1300)).unwrap_err();
+        let err = run(&shell(line), Duration::from_millis(1300)).unwrap_err();
         assert_eq!(err, ProcError::Timeout(1));
         assert!(
             started.elapsed() < Duration::from_secs(10),
@@ -408,27 +465,76 @@ mod tests {
     }
 
     #[test]
-    fn a_program_that_cannot_start_is_a_failure_with_the_os_error() {
-        let mut cmd = std::process::Command::new("docmap-desktop-no-such-program-x");
-        let err = run_with_timeout(&mut cmd, Duration::from_secs(5)).unwrap_err();
+    fn a_process_that_writes_more_than_its_limit_is_ended() {
+        let mut cmd = shell("echo 0123456789012345678901234567890123456789");
+        cmd.max_output(16, 1024);
+        let err = run(&cmd, Duration::from_secs(20)).unwrap_err();
         let ProcError::Failed(text) = &err else {
             panic!("{err:?}")
         };
-        assert!(!text.is_empty());
+        assert!(text.contains("stdout"), "{text}");
+    }
+
+    // The import's Cancel: the call comes back at once, and the child with
+    // what it started is ended (the job, or the process group, goes with it).
+    #[test]
+    fn a_cancelled_call_returns_at_once() {
+        #[cfg(windows)]
+        let line = "ping -n 30 127.0.0.1 >nul";
+        #[cfg(not(windows))]
+        let line = "sleep 30";
+        let cancel = Cancel::default();
+        let later = cancel.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            later.cancel();
+        });
+        let started = Instant::now();
+        let err =
+            run_cancellable(&shell(line), Duration::from_secs(60), Some(&cancel)).unwrap_err();
+        assert_eq!(err, ProcError::Cancelled);
+        assert!(started.elapsed() < Duration::from_secs(10));
+        assert_eq!(err.into_app("git").key(), "err.proc.cancelled");
+    }
+
+    // The same, from a thread of Tauri's blocking pool, where every command of
+    // this app calls it: the bridge must neither panic nor deadlock there.
+    #[test]
+    fn a_call_from_the_blocking_pool_runs() {
+        let out = tauri::async_runtime::block_on(tauri::async_runtime::spawn_blocking(|| {
+            run(&shell("echo pool"), Duration::from_secs(20))
+        }))
+        .unwrap()
+        .unwrap();
+        assert!(String::from_utf8_lossy(&out.stdout).contains("pool"));
+    }
+
+    #[test]
+    fn a_program_that_cannot_start_is_a_failure_with_the_reason() {
+        let cmd = Cmd::new("docmap-desktop test", "docmap-desktop-no-such-program-x");
+        let err = run(&cmd, Duration::from_secs(5)).unwrap_err();
+        let ProcError::Failed(text) = &err else {
+            panic!("{err:?}")
+        };
+        assert!(text.contains("not found"), "{text}");
         let app = err.into_app("x");
         assert_eq!(app.key(), "err.proc.run");
         assert_eq!(app.param("program"), Some("x"));
     }
 
     #[test]
-    fn a_silent_neovim_is_asked_whether_it_waits_for_input() {
-        let e = ProcError::Timeout(60).into_nvim("nvim");
-        assert_eq!(e.key(), "err.nvim.timeout");
-        assert_eq!(e.param("secs"), Some("60"));
-        let e = ProcError::Timeout(60).into_app("git");
-        assert_eq!(e.key(), "err.proc.timeout");
-        let e = ProcError::Failed("nope".into()).into_nvim("nvim");
-        assert_eq!(e.key(), "err.proc.run");
-        assert_eq!(e.detail_text(), Some("nope"));
+    fn a_name_is_found_on_path_and_a_relative_path_is_not_looked_up() {
+        #[cfg(windows)]
+        let name = "cmd";
+        #[cfg(not(windows))]
+        let name = "sh";
+        let found = resolve(Path::new(name)).expect("the shell is on PATH");
+        assert!(
+            found.is_absolute() && found.is_file(),
+            "{}",
+            found.display()
+        );
+        assert_eq!(resolve(Path::new("sub/cmd")), None);
+        assert_eq!(resolve(&found), Some(found.clone()));
     }
 }

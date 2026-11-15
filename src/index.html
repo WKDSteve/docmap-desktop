@@ -502,6 +502,9 @@
         <div class="addbox-row">
           <input id="url-input" type="url" data-i18n-placeholder="add.url.placeholder" placeholder="https://github.com/owner/repo" autocomplete="off" />
           <button id="run-url-import" class="addbox-go" type="button" data-i18n="add.url.go">Clone</button>
+          <!-- Only while a clone runs: ends git with everything it started.
+               Closing the dialog does the same. -->
+          <button id="stop-url-import" class="addbox-secondary" type="button" data-i18n="add.url.stop" hidden>Stop</button>
         </div>
 
         <!-- The pick-list is opt-in. Listing repositories is a network call
@@ -949,6 +952,7 @@
         <div class="prefs-buttons">
           <button id="pick-nvim" data-i18n-help="help.nvimLocate" type="button" data-i18n="nvim.locate">Locate nvim…</button>
           <button id="pick-nvim-config" data-i18n-help="help.nvimConfig" type="button" data-i18n="nvim.locateConfig">Locate config…</button>
+          <button id="pick-nvim-cache" data-i18n-help="help.nvimCache" type="button" data-i18n="nvim.locateCache">Locate cache…</button>
         </div>
       </section>
     </dialog>

@@ -452,21 +452,11 @@ pub(crate) fn engine_languages(app: tauri::AppHandle) -> Result<EngineLanguages,
     let info = engine_info(app)?;
     let engine = info.path.ok_or_else(|| AppError::new("err.engine.none"))?;
 
-    let mut cmd = std::process::Command::new(&engine);
-    cmd.arg("--capabilities");
-    if let Some(g) = info.grammars {
-        cmd.env("DOCMAP_TS_DIR", g);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    let out =
-        proc::run_with_timeout(&mut cmd, ENGINE_PROBE_TIMEOUT).map_err(|e| e.into_app(&engine))?;
-    if !out.status.success() {
+    // Asked once per engine and grammars folder (`capabilities_answer`), the
+    // same answer the map server and the Rules tab read.
+    let Some(stdout) =
+        crate::agent::engine::capabilities_answer(&engine, info.grammars.as_deref())?
+    else {
         // An older engine exits non-zero here. Not an error to show: it is
         // the "cannot be asked" case, which the frontend renders as unknown.
         return Ok(EngineLanguages {
@@ -476,9 +466,9 @@ pub(crate) fn engine_languages(app: tauri::AppHandle) -> Result<EngineLanguages,
             routes: None,
             contract: contract::pinned(),
         });
-    }
+    };
 
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout).map_err(|e| {
+    let value: serde_json::Value = serde_json::from_slice(&stdout).map_err(|e| {
         AppError::new("err.engine.notJson")
             .with("program", &engine)
             .detail(e)
@@ -557,8 +547,8 @@ pub(crate) fn generate_command(
     root: &str,
     full: bool,
     flags: &ProjectFlags,
-) -> std::process::Command {
-    let mut cmd = std::process::Command::new(engine);
+) -> proc::Cmd {
+    let mut cmd = proc::Cmd::new("docmap-desktop generate", engine);
     // Just the root: the engine detects `source` itself, verified against
     // three unrelated repositories. Passing a guess would be worse than
     // letting it look.
@@ -622,21 +612,10 @@ pub(crate) async fn generate(
         if let Some(g) = info.grammars {
             cmd.env("DOCMAP_TS_DIR", g);
         }
-        #[cfg(windows)]
-        {
-            // Without this a console window flashes up on every generation.
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let out = cmd.output().map_err(|e| {
-            AppError::new("err.proc.run")
-                .with("program", &engine)
-                .detail(e)
-        })?;
+        let out = proc::run(&cmd, ENGINE_RUN_TIMEOUT).map_err(|e| e.into_app(&engine))?;
         Ok(GenerateResult {
-            ok: out.status.success(),
-            code: out.status.code().unwrap_or(-1),
+            ok: out.success(),
+            code: out.code.unwrap_or(-1),
             stdout: String::from_utf8_lossy(&out.stdout).to_string(),
             stderr: String::from_utf8_lossy(&out.stderr).to_string(),
         })
@@ -699,7 +678,7 @@ pub(crate) async fn check_map(
     let engine = info.path.ok_or_else(|| AppError::new("err.engine.none"))?;
 
     tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new(&engine);
+        let mut cmd = proc::Cmd::new("docmap-desktop check map", &engine);
         cmd.arg(&root);
         cmd.arg("--check");
         cmd.arg("--lenient");
@@ -707,20 +686,10 @@ pub(crate) async fn check_map(
         if let Some(g) = info.grammars {
             cmd.env("DOCMAP_TS_DIR", g);
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        let out = cmd.output().map_err(|e| {
-            AppError::new("err.proc.run")
-                .with("program", &engine)
-                .detail(e)
-        })?;
+        let out = proc::run(&cmd, ENGINE_RUN_TIMEOUT).map_err(|e| e.into_app(&engine))?;
         Ok(CheckResult {
-            current: out.status.success(),
-            code: out.status.code().unwrap_or(-1),
+            current: out.success(),
+            code: out.code.unwrap_or(-1),
             stdout: String::from_utf8_lossy(&out.stdout).to_string(),
             stderr: String::from_utf8_lossy(&out.stderr).to_string(),
         })

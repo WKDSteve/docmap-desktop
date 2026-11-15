@@ -1,0 +1,12 @@
+# Files that start a process themselves (tools/check-process-starts.py, a copy of appkit's; see
+# appkit/docs/PROCESSES.md): <path> <count of lines found> <reason>
+#
+# Everything else goes through src-tauri/src/proc.rs (appkit_core::child) for a child of the app,
+# or appkit_core::launch for a program of the person's (the editor, open, xdg-open).
+
+# Windows asks the shell to open a folder, a document or an address, or to show a file in its
+# folder: no process of this app is started (named exception (c) of PROCESSES.md).
+src-tauri/src/shellopen.rs 2 the shell opens a folder, document or address (ShellExecuteExW, SHOpenFolderAndSelectItems)
+
+# Test code outside a #[cfg(test)] module of its own file: main.rs declares it `#[cfg(test)] mod testutil;`.
+src-tauri/src/testutil.rs 1 test helper only (mklink /J for a junction); compiled only into the tests

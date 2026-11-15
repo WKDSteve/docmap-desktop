@@ -173,15 +173,9 @@ pub(crate) async fn traffic_ask_neovim(app: tauri::AppHandle) -> Result<traffic:
     let nvim = info.path.ok_or_else(|| AppError::new("err.nvim.none"))?;
 
     let out = tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new(&nvim);
+        let mut cmd = proc::Cmd::new("docmap-desktop traffic folder", &nvim);
         cmd.args(["--headless", "-c", traffic::ASK_LUA, "-c", "qa"]);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        proc::run_with_timeout(&mut cmd, traffic::ASK_TIMEOUT).map_err(|e| e.into_nvim(&nvim))
+        proc::run(&cmd, traffic::ASK_TIMEOUT).map_err(|e| e.into_nvim(&nvim))
     })
     .await
     .map_err(AppError::task)??;

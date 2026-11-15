@@ -36,6 +36,7 @@ const CATALOGS = {
     "facts.grammars": "Grammars",
     "facts.reads": "Reads",
     "facts.config": "Config",
+    "facts.cache": "Cache",
     "facts.tag.bundled": "bundled",
     "facts.tag.path": "on PATH",
     "facts.tag.chosen": "chosen",
@@ -59,6 +60,7 @@ const CATALOGS = {
     "nvim.label": "Neovim",
     "nvim.locate": "Locate nvim…",
     "nvim.locateConfig": "Locate config…",
+    "nvim.locateCache": "Locate cache…",
     "prefs.theme.system": "System",
     "prefs.theme.light": "Light",
     "prefs.theme.dark": "Dark",
@@ -96,6 +98,8 @@ const CATALOGS = {
     "add.url.lead":
       "A repository URL. We clone it shallow into this app's own cache and then add it like any folder. Whatever a plain <code>git clone</code> of that URL needs on this machine is what runs here — this app keeps no credentials of its own.",
     "add.url.go": "Clone",
+    "add.url.cloning": "Cloning…",
+    "add.url.stop": "Stop",
     "add.url.placeholder": "https://github.com/owner/repo",
     "add.repos.load": "List my GitHub repositories",
     "add.repos.filter": "Filter…",
@@ -116,6 +120,8 @@ const CATALOGS = {
       "Point at the nvim binary used for importing plugin specs. You only need this if it is not on your PATH.",
     "help.nvimConfig":
       "Point at the Neovim config folder to read plugin specs from, if yours is not in the usual place for this platform.",
+    "help.nvimCache":
+      "Point at Neovim's cache folder, where the Telemetry panel reads from. Only needed if it is not where XDG_CACHE_HOME, NVIM_APPNAME and the platform put it.",
     "help.theme":
       "Light, dark, or whatever your operating system is set to. System is the default and stays available, so you can always hand the choice back.",
     "help.language":
@@ -781,6 +787,7 @@ const CATALOGS = {
     "err.git.cloneFailed": "git clone failed",
     "err.proc.run": "Could not run {program}",
     "err.proc.timeout": "{program} gave no answer within {secs} s",
+    "err.proc.cancelled": "{program} was stopped",
     "err.agent.unreachable": "ai-desktop does not answer at {url}. Is it running, and is this the port it listens on?",
     "err.agent.origin": "ai-desktop at {url} refused the request as cross-origin (403). The request must come from the app, not from a page",
     "err.agent.rejected": "ai-desktop did not accept the request (status {status})",
@@ -890,6 +897,7 @@ const CATALOGS = {
     "facts.grammars": "Grammatiken",
     "facts.reads": "Liest",
     "facts.config": "Konfiguration",
+    "facts.cache": "Cache",
     "facts.tag.bundled": "mitgeliefert",
     "facts.tag.path": "im PATH",
     "facts.tag.chosen": "gewählt",
@@ -914,6 +922,7 @@ const CATALOGS = {
     "nvim.label": "Neovim",
     "nvim.locate": "nvim suchen…",
     "nvim.locateConfig": "Config suchen…",
+    "nvim.locateCache": "Cache suchen…",
     "prefs.theme.system": "System",
     "prefs.theme.light": "Hell",
     "prefs.theme.dark": "Dunkel",
@@ -951,6 +960,8 @@ const CATALOGS = {
     "add.url.lead":
       "Eine Repository-URL. Wir klonen sie flach in den Zwischenspeicher der App und legen sie dann an wie jeden Ordner. Was ein einfaches <code>git clone</code> dieser URL auf deinem Rechner braucht, läuft auch hier — eigene Zugangsdaten hält diese App nicht.",
     "add.url.go": "Klonen",
+    "add.url.cloning": "Klone…",
+    "add.url.stop": "Abbrechen",
     "add.url.placeholder": "https://github.com/besitzer/repo",
     "add.repos.load": "Meine GitHub-Repositories auflisten",
     "add.repos.filter": "Filtern…",
@@ -971,6 +982,8 @@ const CATALOGS = {
       "Auf das nvim-Binary zeigen, mit dem Plugin-Specs gelesen werden. Brauchst du nur, wenn es nicht auf deinem PATH liegt.",
     "help.nvimConfig":
       "Auf den Neovim-Config-Ordner zeigen, aus dem Plugin-Specs gelesen werden — falls deiner nicht am plattformüblichen Ort liegt.",
+    "help.nvimCache":
+      "Auf den Cache-Ordner von Neovim zeigen, aus dem das Telemetrie-Panel liest. Nur nötig, wenn er nicht dort liegt, wo XDG_CACHE_HOME, NVIM_APPNAME und die Plattform ihn hinlegen.",
     "help.theme":
       "Hell, dunkel, oder was dein Betriebssystem eingestellt hat. System ist die Vorgabe und bleibt wählbar — du kannst die Wahl also jederzeit wieder abgeben.",
     "help.language":
@@ -1587,6 +1600,7 @@ const CATALOGS = {
     "err.git.cloneFailed": "git clone ist fehlgeschlagen",
     "err.proc.run": "{program} ließ sich nicht starten",
     "err.proc.timeout": "{program} hat innerhalb von {secs} s nicht geantwortet",
+    "err.proc.cancelled": "{program} wurde abgebrochen",
     "err.agent.unreachable": "ai-desktop antwortet unter {url} nicht. Läuft es, und ist das der Port, auf dem es lauscht?",
     "err.agent.origin": "ai-desktop unter {url} hat die Anfrage als seitenübergreifend abgelehnt (403). Die Anfrage muss von der App kommen, nicht von einer Seite",
     "err.agent.rejected": "ai-desktop hat die Anfrage nicht angenommen (Status {status})",

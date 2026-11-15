@@ -96,6 +96,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     // Running other programs.
     ("err.proc.run", "Could not run {program}"),
     ("err.proc.timeout", "{program} gave no answer within {secs} s"),
+    ("err.proc.cancelled", "{program} was stopped"),
     ("err.open.failed", "Could not open {target}"),
     ("err.open.reveal", "Could not show {path}"),
     // The engine.

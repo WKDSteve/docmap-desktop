@@ -233,16 +233,6 @@ fn respond_json_error(stream: &mut TcpStream, code: u16, error: &AppError) {
     );
 }
 
-#[cfg(windows)]
-pub(crate) fn no_window(cmd: &mut std::process::Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    cmd.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(windows))]
-pub(crate) fn no_window(_cmd: &mut std::process::Command) {}
-
 /// Does this engine understand `--api=`?
 ///
 /// **This check is not optional, and asking the obvious way would be
@@ -256,21 +246,13 @@ pub(crate) fn no_window(_cmd: &mut std::process::Command) {}
 /// in the root-argument position, which an older binary rejects with exit 2
 /// before doing any work. So a failed probe means "too old" and "no API" at
 /// once, which is the only thing this caller needs to distinguish.
-fn engine_supports_api(engine: &str) -> bool {
-    let mut cmd = std::process::Command::new(engine);
-    cmd.arg("--capabilities");
-    no_window(&mut cmd);
-    let Ok(out) = cmd.output() else { return false };
-    if !out.status.success() {
-        return false;
-    }
-    serde_json::from_slice::<serde_json::Value>(&out.stdout)
-        .ok()
-        .and_then(|v| {
-            v.get("capabilities")
-                .and_then(|c| c.as_array())
-                .map(|c| c.iter().any(|x| x.as_str() == Some("api")))
-        })
+///
+/// Asked once per engine path and remembered until the engine file changes
+/// (`capabilities`): it used to be a second process before every request of
+/// the page.
+fn engine_supports_api(engine: &str, grammars: Option<&str>) -> bool {
+    crate::agent::engine::capabilities(engine, grammars)
+        .map(|caps| caps.iter().any(|c| c == "api"))
         .unwrap_or(false)
 }
 
@@ -287,28 +269,32 @@ fn engine_api(cfg: &ServeConfig, route: &str, param: Option<&str>) -> Result<Str
         .as_ref()
         .ok_or_else(|| AppError::new("api.engine.none"))?;
 
-    if !engine_supports_api(engine) {
+    if !engine_supports_api(engine, cfg.grammars.as_deref()) {
         return Err(AppError::new("api.engine.old").with("engine", engine));
     }
 
-    let mut cmd = std::process::Command::new(engine);
+    let mut cmd =
+        crate::agent::engine::command("docmap-desktop map page", engine, cfg.grammars.as_deref());
     cmd.arg(&cfg.root).arg(format!("--api={route}"));
     if let Some(p) = param {
         cmd.arg(format!("--snapshot={p}"));
     }
-    if let Some(g) = &cfg.grammars {
-        cmd.env("DOCMAP_TS_DIR", g);
-    }
-    no_window(&mut cmd);
 
-    let out = cmd.output().map_err(|e| {
+    // A time limit, which it never had: a hung engine kept a thread of the
+    // server and a process for as long as it liked.
+    let out = crate::proc::run(&cmd, crate::ENGINE_API_TIMEOUT).map_err(|e| {
+        let detail = match e {
+            crate::proc::ProcError::Failed(why) => why,
+            crate::proc::ProcError::Timeout(secs) => format!("no answer within {secs} s"),
+            crate::proc::ProcError::Cancelled => "cancelled".to_string(),
+        };
         AppError::new("api.engine.run")
             .with("engine", engine)
-            .detail(e)
+            .detail(detail)
     })?;
-    if !out.status.success() {
+    if !out.success() {
         return Err(AppError::new("api.engine.exit")
-            .with("code", out.status.code().unwrap_or(-1))
+            .with("code", out.code.unwrap_or(-1))
             .detail(String::from_utf8_lossy(&out.stderr)));
     }
 

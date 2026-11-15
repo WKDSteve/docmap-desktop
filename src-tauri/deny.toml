@@ -23,6 +23,8 @@ wildcards = "deny"
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# appkit-core (src/proc.rs), by tag; Cargo.lock pins the commit.
+allow-git = ["https://github.com/WKDSteve/appkit"]
 
 [advisories]
 yanked = "deny"

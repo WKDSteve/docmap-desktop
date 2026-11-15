@@ -1,6 +1,7 @@
 //! Adding projects: a folder with its sub-repositories, a clone from a URL, the GitHub list.
 
 use super::*;
+use std::sync::PoisonError;
 
 /// One candidate directory found under a folder someone pointed at, before
 /// it becomes a `Project`.
@@ -528,40 +529,72 @@ pub(crate) async fn import_from_url(
         return add_imported(&app, &dir, &url);
     }
 
-    let dest_str = portable(&dest);
-    let url_owned = url.clone();
-    let dest_for_cleanup = dest.clone();
+    let cmd = clone_command(&url, &portable(&dest));
+    let cancel = proc::Cancel::default();
+    *CLONING.lock().unwrap_or_else(PoisonError::into_inner) = Some(cancel.clone());
     let out = tauri::async_runtime::spawn_blocking(move || {
-        let mut cmd = std::process::Command::new("git");
-        // `--` ends the options: nothing after it is read as one, whatever
-        // the URL or the destination looks like.
-        cmd.args(["clone", "--depth", "1", "--", &url_owned, &dest_str]);
-        // No credential prompt, ever: there is no terminal to answer it on,
-        // and a prompt nobody can see is a clone that never ends.
-        cmd.env("GIT_TERMINAL_PROMPT", "0");
-        cmd.env("GIT_ALLOW_PROTOCOL", CLONE_PROTOCOLS);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-        proc::run_with_timeout(&mut cmd, CLONE_TIMEOUT).map_err(|e| e.into_app("git"))
+        proc::run_cancellable(&cmd, CLONE_TIMEOUT, Some(&cancel)).map_err(|e| e.into_app("git"))
     })
     .await
-    .map_err(AppError::task)??;
+    .map_err(AppError::task)
+    .and_then(|r| r);
+    CLONING
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
 
-    if !out.status.success() {
-        // A partial clone would otherwise permanently occupy `dest`, so
-        // every retry after a failure would hit "directory already exists"
-        // instead of trying again.
-        let _ = fs::remove_dir_all(&dest_for_cleanup);
+    // A partial clone would otherwise permanently occupy `dest`, so every
+    // retry after a failure, a timeout or a Cancel would hit "directory
+    // already exists" instead of trying again. The clone and everything it
+    // started have ended by now (`proc`), so nothing writes there any more.
+    let out = match out {
+        Ok(out) => out,
+        Err(e) => {
+            let _ = fs::remove_dir_all(&dest);
+            return Err(e);
+        }
+    };
+    if !out.success() {
+        let _ = fs::remove_dir_all(&dest);
         return Err(
             AppError::new("err.git.cloneFailed").detail(String::from_utf8_lossy(&out.stderr))
         );
     }
 
     add_imported(&app, &dest, &url)
+}
+
+/// The `git clone` of an import (`proc`: bound to the app, no window).
+pub(crate) fn clone_command(url: &str, dest: &str) -> proc::Cmd {
+    let mut cmd = proc::Cmd::new("docmap-desktop clone a repository", "git");
+    // `--` ends the options: nothing after it is read as one, whatever the URL
+    // or the destination looks like.
+    cmd.args(["clone", "--depth", "1", "--", url, dest]);
+    // No credential prompt, ever: there is no terminal to answer it on, and a
+    // prompt nobody can see is a clone that never ends.
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
+    cmd.env("GIT_ALLOW_PROTOCOL", CLONE_PROTOCOLS);
+    // git's progress goes to stderr only on a terminal; what is left is a few
+    // lines, and a clone's errors.
+    cmd.max_output(1024 * 1024, 1024 * 1024);
+    cmd
+}
+
+/// The clone that runs now, to end it from [`cancel_import`].
+static CLONING: Mutex<Option<proc::Cancel>> = Mutex::new(None);
+
+/// End the running clone of an import, with everything it started (git's
+/// remote helper, ssh, a credential helper): the window's Stop, or the dialog
+/// closed while it clones. Nothing runs: nothing to do.
+#[tauri::command]
+pub(crate) fn cancel_import() {
+    if let Some(cancel) = CLONING
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+    {
+        cancel.cancel();
+    }
 }
 
 /// The signed-in user's GitHub repositories, for the URL tab's picker.

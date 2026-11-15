@@ -42,6 +42,13 @@ ureq = { version = "3", default-features = false }
 # naming it adds no crate.
 sha2 = "0.10"
 gix = { version = "0.90.0", default-features = false, features = ["dirwalk", "sha1"] }
+# Every process this app starts for its own work (src/proc.rs): appkit_core::child binds it to the app
+# (job object, process group), limits time and output and logs the start; appkit_core::launch starts a
+# program of the person's (open, xdg-open). By tag; Cargo.lock pins the commit.
+appkit-core = { git = "https://github.com/WKDSteve/appkit", tag = "v0.59.0", version = "0.0.0" }
+# The runtime appkit_core::child runs on is Tauri's own; `rt-multi-thread` for `block_in_place` (proc.rs).
+# The version tauri already has in the tree: no new package.
+tokio = { version = "1", default-features = false, features = ["rt-multi-thread", "sync", "macros"] }
 
 # Opening a folder, a document or an address, and showing a file in its
 # folder, by asking the shell (src/shellopen.rs) instead of starting

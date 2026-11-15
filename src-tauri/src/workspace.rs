@@ -230,7 +230,7 @@ pub(crate) fn project_flags(app: &tauri::AppHandle, root: &str) -> ProjectFlags 
 /// file by design: the person holding the window is answering for this
 /// machine, and the file is answering for everyone. That order is the
 /// engine's, not this program's — see `config/file.lua` there.
-pub(crate) fn apply_flags(cmd: &mut std::process::Command, flags: &ProjectFlags) {
+pub(crate) fn apply_flags(cmd: &mut crate::proc::Cmd, flags: &ProjectFlags) {
     for path in &flags.exclude {
         if !path.trim().is_empty() {
             cmd.arg(format!("--exclude={}", path.trim()));
@@ -286,6 +286,10 @@ pub(crate) struct Workspace {
     pub(crate) nvim_path: Option<String>,
     #[serde(default)]
     pub(crate) nvim_config_dir: Option<String>,
+    /// Neovim's cache folder, when the one worked out from the environment
+    /// (`nvim::default_nvim_cache_dir`) is not where this Neovim keeps it.
+    #[serde(default)]
+    pub(crate) nvim_cache_dir: Option<String>,
     /// A folder the user chose as the home of `github_stats.nvim`'s traffic
     /// digest — either the plugin's data folder (has `root.json`), a
     /// `digest_dir`, or the `digest/` folder itself. First step of the
@@ -552,6 +556,7 @@ pub(crate) fn write_workspace(app: &tauri::AppHandle, ws: &Workspace) -> Result<
     settings.grammars = ws.grammars.clone();
     settings.nvim_path = ws.nvim_path.clone();
     settings.nvim_config_dir = ws.nvim_config_dir.clone();
+    settings.nvim_cache_dir = ws.nvim_cache_dir.clone();
     settings.traffic_dir = ws.traffic_dir.clone();
     settings.traffic_asked_dir = ws.traffic_asked_dir.clone();
     settings.editor = ws.editor.clone();

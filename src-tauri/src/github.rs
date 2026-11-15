@@ -91,25 +91,16 @@ struct GhLanguage {
     name: String,
 }
 
-#[cfg(windows)]
-fn no_window(cmd: &mut std::process::Command) {
-    use std::os::windows::process::CommandExt;
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    cmd.creation_flags(CREATE_NO_WINDOW);
-}
-
-#[cfg(not(windows))]
-fn no_window(_cmd: &mut std::process::Command) {}
-
-/// List the signed-in user's repositories, newest first.
+/// The `gh` command line of the list (`proc`: bound to the app, no window).
 ///
-/// `limit` is capped rather than trusted: this renders into a scrollable
-/// list, and a five-thousand-entry response would cost a long wait for
-/// something nobody scrolls to the end of.
-pub fn list(limit: u32) -> RepoList {
+/// `gh` never asks anything here: a question needs a terminal this app does
+/// not have, and a `gh` waiting for an answer nobody can give waited for ever
+/// (it had no time limit either). `GH_PROMPT_DISABLED` turns its prompts into
+/// failures, `GH_NO_UPDATE_NOTIFIER` keeps it from checking for a newer `gh`
+/// on the way, and `GIT_TERMINAL_PROMPT` covers a git it might start.
+pub(crate) fn list_command(limit: u32) -> crate::proc::Cmd {
     let limit = limit.clamp(1, 300);
-
-    let mut cmd = std::process::Command::new("gh");
+    let mut cmd = crate::proc::Cmd::new("docmap-desktop list GitHub repositories", "gh");
     cmd.args([
         "repo",
         "list",
@@ -117,23 +108,48 @@ pub fn list(limit: u32) -> RepoList {
         &limit.to_string(),
         "--json",
         "name,nameWithOwner,url,description,isPrivate,updatedAt,primaryLanguage",
-    ]);
-    no_window(&mut cmd);
+    ])
+    .env("GH_PROMPT_DISABLED", "1")
+    .env("GH_NO_UPDATE_NOTIFIER", "1")
+    .env("GIT_TERMINAL_PROMPT", "0")
+    // 300 repositories are some 150 kB of JSON.
+    .max_output(8 * 1024 * 1024, 1024 * 1024);
+    cmd
+}
 
-    let out = match cmd.output() {
+/// List the signed-in user's repositories, newest first.
+///
+/// `limit` is capped rather than trusted: this renders into a scrollable
+/// list, and a five-thousand-entry response would cost a long wait for
+/// something nobody scrolls to the end of.
+pub fn list(limit: u32) -> RepoList {
+    // Distinguished from every other failure because it is the only one with
+    // an action attached that is not "log in".
+    if crate::proc::resolve(std::path::Path::new("gh")).is_none() {
+        return RepoList {
+            repos: vec![],
+            problem: Some(ListProblem::NotInstalled),
+            message: None,
+        };
+    }
+    let out = match crate::proc::run(&list_command(limit), crate::GH_LIST_TIMEOUT) {
         Ok(o) => o,
-        // Distinguished from every other failure because it is the only one
-        // with an action attached that is not "log in".
-        Err(_) => {
+        Err(e) => {
             return RepoList {
                 repos: vec![],
-                problem: Some(ListProblem::NotInstalled),
-                message: None,
+                problem: Some(ListProblem::Failed),
+                message: Some(match e {
+                    crate::proc::ProcError::Timeout(secs) => {
+                        format!("gh gave no answer within {secs} s")
+                    }
+                    crate::proc::ProcError::Failed(why) => why,
+                    crate::proc::ProcError::Cancelled => "cancelled".to_string(),
+                }),
             }
         }
     };
 
-    if !out.status.success() {
+    if !out.success() {
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
         // `gh` says "To get started with GitHub CLI, please run: gh auth
         // login" (and variations) on an unauthenticated account. Matched on
@@ -191,6 +207,37 @@ mod tests {
         assert_ne!(ListProblem::NotInstalled, ListProblem::NotAuthenticated);
         assert_ne!(ListProblem::NotAuthenticated, ListProblem::Failed);
         assert_ne!(ListProblem::Failed, ListProblem::Unreadable);
+    }
+
+    // `gh` without a terminal: a prompt would wait for ever, so none may come.
+    #[test]
+    fn gh_is_told_never_to_ask() {
+        let cmd = list_command(200);
+        let envs: Vec<(String, String)> = cmd
+            .get_envs()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        for pair in [
+            ("GH_PROMPT_DISABLED", "1"),
+            ("GH_NO_UPDATE_NOTIFIER", "1"),
+            ("GIT_TERMINAL_PROMPT", "0"),
+        ] {
+            assert!(
+                envs.contains(&(pair.0.to_string(), pair.1.to_string())),
+                "{envs:?}"
+            );
+        }
+        let args: Vec<String> = cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(&args[..4], ["repo", "list", "--limit", "200"]);
+        assert_eq!(cmd.get_program(), "gh");
     }
 
     #[test]

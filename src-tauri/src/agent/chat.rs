@@ -610,7 +610,9 @@ pub fn propose(
     // block of one rule ends where the next one starts.
     let ids: Vec<String> = batch.rules.iter().map(|r| r.id.clone()).collect();
     let hash = rule_hashes(&batch.prompt, &ids).get(rule).cloned();
-    let outcome = engine.validate(root, rule, judgement_of(text));
+    let outcome = store
+        .scratch(run_id)
+        .and_then(|scratch| engine.validate(root, rule, judgement_of(text), &scratch));
     if let Err(e) = &outcome {
         if e.key() == "err.agent.answerUnreadable" {
             return Err(e.clone());
@@ -706,6 +708,8 @@ mod tests {
     struct FakeEngine {
         plan: Plan,
         validated: Mutex<Vec<(String, String)>>,
+        /// Per validate: whether its scratch folder was the run's own.
+        in_run_dir: Mutex<Vec<bool>>,
         attached: Mutex<Vec<String>>,
         unreadable: bool,
     }
@@ -715,6 +719,7 @@ mod tests {
             FakeEngine {
                 plan,
                 validated: Mutex::new(Vec::new()),
+                in_run_dir: Mutex::new(Vec::new()),
                 attached: Mutex::new(Vec::new()),
                 unreadable: false,
             }
@@ -726,7 +731,18 @@ mod tests {
             Ok(self.plan.clone())
         }
 
-        fn validate(&self, _root: &Path, rule: &str, answer: &str) -> Result<Value, AppError> {
+        fn validate(
+            &self,
+            root: &Path,
+            rule: &str,
+            answer: &str,
+            scratch: &Path,
+        ) -> Result<Value, AppError> {
+            // Where the answer file goes: the run's folder inside the project.
+            self.in_run_dir
+                .lock()
+                .unwrap()
+                .push(scratch.starts_with(root.join(crate::agent::store::DIR)) && scratch.is_dir());
             self.validated
                 .lock()
                 .unwrap()
@@ -986,7 +1002,7 @@ mod tests {
             fn plan(&self, _: &Path, _: &str) -> Result<Plan, AppError> {
                 Ok(self.0.clone())
             }
-            fn validate(&self, _: &Path, _: &str, _: &str) -> Result<Value, AppError> {
+            fn validate(&self, _: &Path, _: &str, _: &str, _: &Path) -> Result<Value, AppError> {
                 unreachable!()
             }
         }
@@ -1180,6 +1196,11 @@ mod tests {
                 "{\"results\":[{\"rule\":\"R1-1\",\"verdict\":\"violation\"}]}".to_string()
             )],
             "the judgement the answer ends with, word for word, through rules/validate"
+        );
+        assert_eq!(
+            *engine.in_run_dir.lock().unwrap(),
+            [true],
+            "the answer file goes into the run's own folder"
         );
         let rec = after
             .proposals

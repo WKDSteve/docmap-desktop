@@ -351,7 +351,7 @@ pub(super) mod tests {
         fn plan(&self, _: &Path, _: &str) -> Result<Plan, AppError> {
             Ok(self.0.clone())
         }
-        fn validate(&self, _: &Path, _: &str, _: &str) -> Result<Value, AppError> {
+        fn validate(&self, _: &Path, _: &str, _: &str, _: &Path) -> Result<Value, AppError> {
             unreachable!("a decision validates nothing")
         }
     }
@@ -777,7 +777,14 @@ pub(super) mod tests {
         let proposals = ids
             .iter()
             .map(|id| {
-                let p = engine.validate(project, id, &answer).unwrap();
+                let p = engine
+                    .validate(
+                        project,
+                        id,
+                        &answer,
+                        &Store::new(project).scratch("r1").unwrap(),
+                    )
+                    .unwrap();
                 ProposalRec {
                     rule_id: id.clone(),
                     batch: b.id.clone(),

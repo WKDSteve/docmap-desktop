@@ -141,8 +141,15 @@ pub trait Engine: Send + Sync {
     fn plan(&self, root: &Path, select: &str) -> Result<Plan, AppError>;
 
     /// `rules/validate` of one rule's raw `answer`: the engine's `proposal`
-    /// object, never a verdict.
-    fn validate(&self, root: &Path, rule: &str, answer: &str) -> Result<Value, AppError>;
+    /// object, never a verdict. `scratch` is the folder of the run inside the
+    /// project, for the answer file (as for [`Judge::accept`]).
+    fn validate(
+        &self,
+        root: &Path,
+        rule: &str,
+        answer: &str,
+        scratch: &Path,
+    ) -> Result<Value, AppError>;
 
     /// `rules/attach`: whether the file `path` (relative to `root`) may go into
     /// a request, and its text as a request carries it. The planner's decision
@@ -319,10 +326,18 @@ impl Engine for CliEngine {
         Plan::from_engine(&self.call(root, "rules/plan", &[format!("--select={select}")])?)
     }
 
-    fn validate(&self, root: &Path, rule: &str, answer: &str) -> Result<Value, AppError> {
+    fn validate(
+        &self,
+        root: &Path,
+        rule: &str,
+        answer: &str,
+        scratch: &Path,
+    ) -> Result<Value, AppError> {
         // A file, not stdin (the engine's own choice: a host that forgets to
-        // close a pipe would leave it waiting for ever). Removed when done.
-        let file = TempAnswer::write(answer)?;
+        // close a pipe would leave it waiting for ever), in the run's own
+        // folder rather than the temp folder (`TempAnswer::write_in`). Removed
+        // when done.
+        let file = TempAnswer::write_in(scratch, "answer", answer)?;
         let v = self
             .call(
                 root,
@@ -498,19 +513,16 @@ fn answer_unreadable(e: AppError) -> AppError {
     e
 }
 
-/// An answer on disk for the length of one `rules/validate` call.
+/// An answer or a proposal on disk for the length of one engine call.
 pub struct TempAnswer(std::path::PathBuf);
 
 impl TempAnswer {
-    pub fn write(text: &str) -> Result<TempAnswer, AppError> {
-        Self::write_in(&std::env::temp_dir(), "answer", text)
-    }
-
-    /// The same in `dir`. A proposal to accept goes into the folder of its run
-    /// inside the project rather than the temp folder: the standalone engine has
+    /// The file in `dir`, always the folder of its run inside the project,
+    /// never the temp folder: the standalone engine has
     /// been seen not to come back from paths below `AppData\Local\Temp` on
-    /// Windows (`rules/tab.rs` measured it for a project there), and a decision a
-    /// person waits for should not depend on whether a file there is read.
+    /// Windows (`rules/tab.rs` measured it for a project there), and neither a
+    /// run nor a decision a person waits for should depend on whether a file
+    /// there is read.
     pub fn write_in(dir: &Path, stem: &str, text: &str) -> Result<TempAnswer, AppError> {
         use std::sync::atomic::{AtomicU64, Ordering};
         static N: AtomicU64 = AtomicU64::new(0);
@@ -634,7 +646,7 @@ mod tests {
 
     #[test]
     fn a_plain_path_goes_as_it_is() {
-        let file = TempAnswer::write("{}").unwrap();
+        let file = TempAnswer::write_in(&std::env::temp_dir(), "answer", "{}").unwrap();
         if file.path().to_str().is_some_and(str::is_ascii) {
             assert_eq!(answer_arg(file.path()), file.path());
         }
@@ -699,7 +711,7 @@ mod tests {
     #[test]
     fn the_answer_file_holds_the_text_and_goes_away() {
         let text = "{\"results\": []}\nline two";
-        let file = TempAnswer::write(text).unwrap();
+        let file = TempAnswer::write_in(&std::env::temp_dir(), "answer", text).unwrap();
         let path = file.path().to_path_buf();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
         drop(file);

@@ -757,7 +757,9 @@ fn execute(ctx: &Ctx, mut run: Run, plan: &Plan, stop: &Stop, refresh: bool) {
         let hashes = rule_hashes(&pb.prompt, &ids);
         let mut handover: Option<AppError> = None;
         for id in &ids {
-            let outcome = ctx.engine.validate(&ctx.root, id, &text);
+            let outcome = store
+                .scratch(&run.id)
+                .and_then(|scratch| ctx.engine.validate(&ctx.root, id, &text, &scratch));
             if let Err(e) = &outcome {
                 if e.key() == "err.agent.answerUnreadable" {
                     handover = Some(e.clone());
@@ -857,6 +859,8 @@ mod tests {
     struct FakeEngine {
         plan: Mutex<Plan>,
         validated: Mutex<Vec<(String, String)>>,
+        /// Per validate: whether its scratch folder was the run's own.
+        in_run_dir: Mutex<Vec<bool>>,
         selections: Mutex<Vec<String>>,
         /// Claim `verified = true` in what comes back.
         lie: AtomicBool,
@@ -871,6 +875,7 @@ mod tests {
             Arc::new(FakeEngine {
                 plan: Mutex::new(plan),
                 validated: Mutex::new(Vec::new()),
+                in_run_dir: Mutex::new(Vec::new()),
                 selections: Mutex::new(Vec::new()),
                 lie: AtomicBool::new(false),
                 fail: Mutex::new(None),
@@ -885,7 +890,18 @@ mod tests {
             Ok(self.plan.lock().unwrap().clone())
         }
 
-        fn validate(&self, _root: &Path, rule: &str, answer: &str) -> Result<Value, AppError> {
+        fn validate(
+            &self,
+            root: &Path,
+            rule: &str,
+            answer: &str,
+            scratch: &Path,
+        ) -> Result<Value, AppError> {
+            // Where the answer file goes: the run's folder inside the project.
+            self.in_run_dir
+                .lock()
+                .unwrap()
+                .push(scratch.starts_with(root.join(crate::agent::store::DIR)) && scratch.is_dir());
             self.validated
                 .lock()
                 .unwrap()
@@ -1036,6 +1052,8 @@ mod tests {
         assert!(first["prompt"].as_str().unwrap().contains("first rule 1"));
         // Each answer was handed to validate, once per rule.
         assert_eq!(engine.validated.lock().unwrap().len(), 4);
+        // ... as a file in the run's own folder, never below the temp folder.
+        assert_eq!(*engine.in_run_dir.lock().unwrap(), [true; 4]);
         wait_idle(&runner);
     }
 
@@ -1635,10 +1653,16 @@ mod tests {
         fn plan(&self, root: &Path, select: &str) -> Result<Plan, AppError> {
             self.inner.plan(root, select)
         }
-        fn validate(&self, root: &Path, rule: &str, answer: &str) -> Result<Value, AppError> {
+        fn validate(
+            &self,
+            root: &Path,
+            rule: &str,
+            answer: &str,
+            scratch: &Path,
+        ) -> Result<Value, AppError> {
             self.entered.store(true, Ordering::SeqCst);
             std::thread::sleep(Duration::from_millis(self.ms));
-            self.inner.validate(root, rule, answer)
+            self.inner.validate(root, rule, answer, scratch)
         }
     }
 

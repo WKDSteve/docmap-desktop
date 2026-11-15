@@ -97,6 +97,17 @@ have a column each and never share one.
 - **Usercmds:** the **Rules** tab of the project bar
 - **Docs:** [USAGE.md](../USAGE.md#rules)
 
+## An agent run over manual rules
+
+A model reads the files in scope of the selected manual rules and proposes an answer for each; a proposal is never
+a verdict. The run dialog says what would be sent and where before anything is, and its Start button names the
+destination. The run view lists a run's rules with their state, the proposal and the outcome of the evidence check
+side by side, and a model's "compliant" as "no violation found". Runs outlive the view: pause, resume, cancel.
+
+- **Module:** `src-tauri/src/agent/`, `src/lib/rules-run.js`
+- **Usercmds:** **Agent run for N manual rules…** in the Rules tab
+- **Docs:** [USAGE.md](../USAGE.md#an-agent-run-over-manual-rules)
+
 ## Trusting a ruleset
 
 A ruleset can bring Lua code (`lua_predicate` checks). That code runs only for a

@@ -3081,3 +3081,394 @@ body.has-bar {
 .rules-trust-row.unreadable .rules-trust-state {
   border-style: dashed;
 }
+
+/* ------------------------------------------------------------- agent runs
+
+   The runs of a project (a few rows above the list), one run (in place of
+   the list), and the dialog a run starts from. As everywhere in this tab a
+   state is a shape and a word; what a run says about a rule, what the model
+   proposed and what the check of the evidence did are three slots of a row
+   and never one. */
+.rules-runs {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.rules-runs[hidden],
+.rules-run[hidden] {
+  display: none;
+}
+
+.rules-runs-head {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rules-runs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 3px 0;
+  font-size: 12px;
+}
+
+.rules-runs-title {
+  flex: 1 1 160px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rules-run-state {
+  flex: none;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+.rules-run-state.running {
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.rules-run-state.failed,
+.rules-run-state.paused {
+  border-style: dashed;
+  color: var(--ink);
+}
+
+.rules-run {
+  padding-bottom: 14px;
+}
+
+.rules-run-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 4px;
+}
+
+.rules-run-head h3 {
+  flex: 1 1 200px;
+  min-width: 0;
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.rules-run-actions {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.rules-run-actions button[hidden] {
+  display: none;
+}
+
+/* Queue and detail side by side where there is room, stacked at the minimum
+   window width (the pane is 524px wide there). */
+.rules-run-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+  gap: 12px;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .rules-run-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.rules-run-queue {
+  margin: 0;
+  padding: 0;
+  max-height: 46vh;
+  overflow: auto;
+  scrollbar-width: thin;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.rules-run-row {
+  display: grid;
+  grid-template-columns: 14px 64px 86px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0 8px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rules-run-queue li:last-child .rules-run-row {
+  border-bottom: none;
+}
+
+.rules-run-row.on {
+  background: var(--accent-soft);
+}
+
+.rules-run-row:hover {
+  background: var(--panel);
+}
+
+.rules-run-shape {
+  color: var(--muted);
+  text-align: center;
+}
+
+.rules-run-word {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.rules-run-row.error .rules-run-word,
+.rules-run-row.unclear .rules-run-word {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.rules-run-says {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The evidence check on a line of its own under the three words. */
+.rules-run-evidence {
+  grid-column: 3 / 5;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.rules-run-evidence:empty {
+  display: none;
+}
+
+.rules-run-detail {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+}
+
+.rules-run-detail h4 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.rules-run-detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.rules-run-detail-head .rules-text {
+  display: block;
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+}
+
+.rules-run-proposal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+/* "proposed, not verified": said on every proposal, as its own mark. */
+.rules-run-tag {
+  padding: 0 7px;
+  border: 1px dashed var(--accent);
+  border-radius: var(--radius-pill);
+  color: var(--accent);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.rules-run-verdict {
+  font-weight: 600;
+}
+
+.rules-run-reason {
+  margin: 0 0 4px;
+  overflow-wrap: anywhere;
+}
+
+.rules-run-findings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rules-run-findings li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.rules-run-findings li:last-child {
+  border-bottom: none;
+}
+
+.rules-run-findings.dropped {
+  color: var(--muted);
+}
+
+.rules-run-quote {
+  flex: 1 1 100%;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--panel);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+}
+
+/* The run dialog. */
+.runbox {
+  width: min(720px, 94vw);
+}
+
+.runbox h3 {
+  margin: 12px 0 4px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.runbox-field {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 12.5px;
+}
+
+.runbox-field input,
+.runbox-field textarea {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12.5px;
+  resize: vertical;
+}
+
+.run-batches {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.run-batches[hidden] {
+  display: none;
+}
+
+.run-batches th,
+.run-batches td {
+  padding: 3px 8px 3px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: baseline;
+}
+
+.run-batches th {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.run-batches .n {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.run-batch-rules {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.run-skipped {
+  margin: 0;
+  padding: 0;
+  max-height: 96px;
+  overflow: auto;
+  list-style: none;
+  font-size: 12px;
+}
+
+.run-skipped li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 1px 0;
+}
+
+#run-ignore button {
+  margin-left: 8px;
+}
+
+/* Where the files go: the one line of the dialog that must not be missed. */
+.run-egress {
+  /* The margin below keeps its border clear of the ring of the pinned buttons. */
+  margin: 12px 0 10px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 12.5px;
+}
+
+.run-egress.leaves {
+  border: 2px solid var(--ink);
+  font-weight: 600;
+}
+
+.run-go:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* The dialog is taller than the window at its minimum height (600): the two
+   buttons and the line that says where the files go stay in view while the
+   rest scrolls, for the reason `.addbox > .addbox-go` gives. */
+.runbox .trust-actions {
+  position: sticky;
+  bottom: 0;
+  margin-top: 0;
+  padding: 10px 0 2px;
+  background: var(--bg);
+  box-shadow: 0 0 0 7px var(--bg);
+}

@@ -67,6 +67,7 @@ import {
   engineVerdict,
 } from "./lib/languages.js";
 import {
+  MAX_SELECTION_BYTES,
   list as rulesList,
   titleOf,
   laneOf,
@@ -88,6 +89,18 @@ import {
   notSendable,
   untrustedRulesets,
 } from "./lib/rules.js";
+import {
+  backendName,
+  defaultTitle as defaultRunTitle,
+  egress,
+  startBlocker,
+  queueRows,
+  proposalKey,
+  tokensUsed,
+  progress as runProgress,
+  actionsFor as runActions,
+  isLive as isRunLive,
+} from "./lib/rules-run.js";
 
 function fatal(what, err) {
   const box = document.getElementById("placeholder");
@@ -3929,6 +3942,9 @@ async function renderRules(force = false) {
   if (id !== view.selectedId || !rulesOpen) return;
   drawRules(id);
   renderRulesCount();
+  // the runs of the project, from their records (no engine, no network)
+  loadRuns(id);
+  if (rulesOf(id).openRun) refreshRun(id);
   // the picker's mark for this project, now that there is something to say
   void render();
 }
@@ -3958,6 +3974,8 @@ function drawRulesNow(id) {
   const st = rulesOf(id);
   const catalog = st.catalog;
   if (!catalog || catalog.available !== true) {
+    runUi.view.hidden = true;
+    runUi.runs.hidden = true;
     rulesUi.body.hidden = true;
     rulesUi.trust.hidden = true;
     rulesUi.problems.hidden = true;
@@ -4032,6 +4050,9 @@ function drawRulesNow(id) {
   if (!shown.length) rulesUi.list.append(node("p", "rules-note", t("rules.noMatch")));
   for (const group of groups) rulesUi.list.append(ruleGroup(id, st, group, order));
   drawRulesBar(id);
+  drawAgentButton(id);
+  drawRuns(id);
+  syncRunView(id);
 }
 
 /** What the engine could not read of the rulesets, and what it warns about. */
@@ -4542,6 +4563,580 @@ trustUi.go.addEventListener("click", async () => {
   }
   trustUi.box.close();
   renderRules(true);
+});
+
+// ---------------------------------------------------------------------
+// Agent runs over the manual rules.
+//
+// A run is the backend's (`agent_*`): it plans, asks ai-desktop, checks
+// every quote against the tree and stores proposals in the project. This is
+// its dialog and its view. Two things are fixed here on purpose:
+//
+// - **Nothing is asked of a model unless the person presses Start in the
+//   dialog**, and the dialog says before that what would be sent and where.
+//   Opening the dialog asks the engine for the plan and ai-desktop for its
+//   health; neither sends a file.
+// - **The view decides nothing.** A proposal is shown as a proposal, a
+//   model's "compliant" as "no violation found" with what it covered, and
+//   there is no button here that turns either into a verdict.
+// ---------------------------------------------------------------------
+
+const runUi = {
+  agent: document.getElementById("rules-agent"),
+  runs: document.getElementById("rules-runs"),
+  view: document.getElementById("rules-run"),
+  back: document.getElementById("rules-run-back"),
+  title: document.getElementById("rules-run-title"),
+  state: document.getElementById("rules-run-state"),
+  meta: document.getElementById("rules-run-meta"),
+  error: document.getElementById("rules-run-error"),
+  pause: document.getElementById("rules-run-pause"),
+  resume: document.getElementById("rules-run-resume"),
+  cancel: document.getElementById("rules-run-cancel"),
+  queue: document.getElementById("rules-run-queue"),
+  detail: document.getElementById("rules-run-detail"),
+  box: document.getElementById("runbox"),
+  fTitle: document.getElementById("run-title"),
+  fNotes: document.getElementById("run-notes"),
+  fModel: document.getElementById("run-model"),
+  models: document.getElementById("run-models"),
+  service: document.getElementById("run-service"),
+  refused: document.getElementById("run-refused"),
+  previewState: document.getElementById("run-preview-state"),
+  batches: document.getElementById("run-batches"),
+  batchRows: document.getElementById("run-batch-rows"),
+  skippedBox: document.getElementById("run-skipped-box"),
+  skipped: document.getElementById("run-skipped"),
+  ignore: document.getElementById("run-ignore"),
+  egress: document.getElementById("run-egress"),
+  dontStart: document.getElementById("run-cancel"),
+  go: document.getElementById("run-go"),
+};
+
+/** The shape that goes with a row's state in the queue. */
+const RUN_ROW_SHAPE = { queued: "·", asking: "…", proposed: "◇", unclear: "?", error: "!", notSent: "–" };
+const RUN_MODEL_KEY = "docmap.rules.model";
+
+/** The agent button of the selection bar: how many manual rules a run would be about. */
+function drawAgentButton(id) {
+  const st = rulesOf(id);
+  const { manual } = splitSelection(rulesList(st.catalog?.rules), st.selected);
+  runUi.agent.disabled = manual.length === 0;
+  runUi.agent.textContent = manual.length ? plural("rules.agent", manual.length) : t("rules.agent.none");
+}
+
+/** The runs of the project, read from its records. Cheap: no engine, no network. */
+async function loadRuns(id) {
+  const st = rulesOf(id);
+  try {
+    st.runs = await invoke("agent_list", { id });
+  } catch (e) {
+    st.runs = [];
+    void e;
+  }
+  if (id === view.selectedId && rulesOpen) drawRuns(id);
+}
+
+function runStateWord(state) {
+  return t("rules.run.state." + state);
+}
+
+function runDestination(run) {
+  return run.local
+    ? fill(t("rules.run.dest.local"), { model: run.model })
+    : fill(t("rules.run.dest.cloud"), { backend: backendName(run.backend), model: run.model });
+}
+
+function drawRuns(id) {
+  const st = rulesOf(id);
+  const runs = rulesList(st.runs);
+  runUi.runs.replaceChildren();
+  runUi.runs.hidden = runs.length === 0 || !!st.openRun;
+  if (!runs.length) return;
+  runUi.runs.append(node("p", "rules-runs-head", fill(t("rules.runs"), { n: runs.length })));
+  const SHOWN = 6;
+  for (const run of runs.slice(0, SHOWN)) {
+    const row = node("div", "rules-runs-row " + run.state);
+    const done = runProgress(run);
+    row.append(
+      node("span", "rules-run-state " + run.state, runStateWord(run.state)),
+      node("span", "rules-runs-title", run.title),
+      node(
+        "span",
+        "rules-trust-by",
+        fill(t("rules.runs.meta"), {
+          done: done.done,
+          total: done.total,
+          proposals: run.proposals,
+          dest: runDestination(run),
+          date: new Date(run.createdMs).toLocaleDateString(locale),
+        })
+      )
+    );
+    const open = node("button", "addbox-secondary", t("rules.runs.open"));
+    open.type = "button";
+    open.dataset.fk = "run:" + run.id;
+    open.addEventListener("click", () => openRun(id, run.id));
+    row.append(open);
+    runUi.runs.append(row);
+  }
+  if (runs.length > SHOWN) {
+    runUi.runs.append(node("p", "rules-note", fill(t("rules.more"), { n: runs.length - SHOWN })));
+  }
+}
+
+/** The list or one run: only one of the two is on screen. */
+function syncRunView(id) {
+  const st = rulesOf(id);
+  const open = !!st.openRun && !!st.run;
+  runUi.view.hidden = !open;
+  if (!open) return;
+  // One run fills the pane: the list, and the notes about rulesets that sit
+  // above it, make room (at the minimum window height they took half of it).
+  rulesUi.body.hidden = true;
+  rulesUi.trust.hidden = true;
+  rulesUi.problems.hidden = true;
+  drawRunView(id);
+}
+
+async function openRun(id, runId) {
+  const st = rulesOf(id);
+  st.openRun = runId;
+  st.run = null;
+  st.runRule = null;
+  await refreshRun(id);
+  if (id === view.selectedId && rulesOpen) drawRules(id);
+}
+
+/** Read the open run again; while it is running, again in a moment. */
+async function refreshRun(id) {
+  const st = rulesOf(id);
+  const runId = st.openRun;
+  if (!runId) return;
+  clearTimeout(st.runTimer);
+  try {
+    const run = await invoke("agent_status", { id, runId });
+    if (st.openRun !== runId) return;
+    st.run = run;
+    st.runError = null;
+  } catch (e) {
+    if (st.openRun !== runId) return;
+    st.runError = errorText(e);
+    if (!st.run) {
+      st.openRun = null;
+      say(st.runError);
+      return;
+    }
+  }
+  if (id === view.selectedId && rulesOpen) syncRunView(id);
+  // Only while somebody is looking: a run goes on without this, and the list
+  // of runs says so the next time the tab is opened.
+  if (st.run && isRunLive(st.run.state) && id === view.selectedId && rulesOpen) {
+    st.runTimer = setTimeout(() => {
+      refreshRun(id).then(() => {
+        if (st.run && !isRunLive(st.run.state)) loadRuns(id);
+      });
+    }, 1500);
+  }
+}
+
+function closeRun(id) {
+  const st = rulesOf(id);
+  clearTimeout(st.runTimer);
+  st.openRun = null;
+  st.run = null;
+  runUi.view.hidden = true;
+  drawRules(id);
+  loadRuns(id);
+}
+
+function drawRunView(id) {
+  const st = rulesOf(id);
+  const run = st.run;
+  runUi.title.textContent = run.title;
+  runUi.state.className = "rules-run-state " + run.state;
+  runUi.state.textContent = runStateWord(run.state);
+  const done = runProgress(run);
+  const used = tokensUsed(run);
+  const nf = new Intl.NumberFormat(locale);
+  runUi.meta.textContent = fill(t("rules.run.meta"), {
+    dest: runDestination(run),
+    done: done.done,
+    total: done.total,
+    tokens: nf.format(used.total),
+    prompt: nf.format(used.prompt),
+    completion: nf.format(used.completion),
+  });
+  const problem = st.runError || (run.error ? errorText(run.error) : "");
+  runUi.error.hidden = !problem;
+  runUi.error.textContent = problem;
+  const can = runActions(run.state);
+  runUi.pause.hidden = !can.pause;
+  runUi.resume.hidden = !can.resume;
+  runUi.cancel.hidden = !can.cancel;
+
+  const rows = queueRows(run);
+  if (!st.runRule || !rows.some((r) => r.id === st.runRule)) st.runRule = rows[0]?.id ?? null;
+  const rules = new Map(rulesList(st.catalog?.rules).map((r) => [r.id, r]));
+  const held = runUi.queue.contains(document.activeElement) ? document.activeElement.dataset.fk : undefined;
+  runUi.queue.replaceChildren();
+  for (const row of rows) {
+    const li = node("li");
+    const pick = node("button", "rules-run-row " + row.state + (row.id === st.runRule ? " on" : ""));
+    pick.type = "button";
+    pick.dataset.fk = "runrow:" + row.id;
+    pick.setAttribute("aria-current", String(row.id === st.runRule));
+    const rule = rules.get(row.id);
+    pick.append(
+      node("span", "rules-run-shape", RUN_ROW_SHAPE[row.state] ?? "·"),
+      node("span", "rules-id", row.id),
+      node("span", "rules-run-word", t("rules.run.row." + row.state)),
+      // What the model proposed, in its own slot: never blended with the state.
+      node("span", "rules-run-says", row.status && row.state !== "error" ? t(proposalKey(row.status)) : ""),
+      // And what the check of the evidence did with it, in a third.
+      node("span", "rules-run-evidence", row.evidence ? runEvidence(row) : "")
+    );
+    if (rule) pick.title = titleOf(rule);
+    pick.addEventListener("click", () => {
+      st.runRule = row.id;
+      drawRunView(id);
+    });
+    li.append(pick);
+    runUi.queue.append(li);
+  }
+  if (held) {
+    const again = [...runUi.queue.querySelectorAll("[data-fk]")].find((el) => el.dataset.fk === held);
+    if (again) again.focus({ preventScroll: true });
+  }
+  drawRunDetail(id, rows.find((r) => r.id === st.runRule) ?? null, rules.get(st.runRule) ?? null);
+}
+
+/** The evidence check in a few words: what held, what was dropped, what was covered. */
+function runEvidence(row) {
+  const e = row.evidence;
+  if (row.status === "violation") {
+    return fill(t("rules.run.evidence.findings"), { held: e.held, dropped: e.dropped });
+  }
+  if (row.status === "compliant") {
+    return fill(t("rules.run.evidence.files"), { checked: e.checked, unchecked: e.unchecked });
+  }
+  return e.dropped ? fill(t("rules.run.evidence.dropped"), { dropped: e.dropped }) : "";
+}
+
+function drawRunDetail(id, row, rule) {
+  const st = rulesOf(id);
+  const box = runUi.detail;
+  box.replaceChildren();
+  if (!row) {
+    box.append(node("p", "rules-note", t("rules.run.empty")));
+    return;
+  }
+  const head = node("p", "rules-run-detail-head");
+  head.append(node("span", "rules-id", row.id), node("span", "rules-text", rule ? titleOf(rule) : ""));
+  box.append(head);
+  if (rule && rule.text) box.append(node("p", "rules-rule-text", rule.text));
+
+  const rec = rulesList(st.run.proposals).find((p) => p.ruleId === row.id);
+  if (!rec) {
+    const why = row.state === "notSent" ? fill(t("rules.blocked"), { reason: row.reason ?? "" }) : t("rules.run.row." + row.state);
+    box.append(node("p", "rules-note", why));
+    if (row.error) box.append(node("p", "rules-blocked", errorText(row.error)));
+    return;
+  }
+  const p = rec.proposal && typeof rec.proposal === "object" ? rec.proposal : {};
+  const says = node("p", "rules-run-proposal");
+  // `proposed` in words on every proposal: this is an agent's answer, not a verdict.
+  says.append(
+    node("span", "rules-run-tag", t("rules.run.proposed")),
+    node("span", "rules-run-verdict", t(proposalKey(rec.status)))
+  );
+  box.append(says);
+  if (rec.status === "compliant") {
+    box.append(
+      node(
+        "p",
+        "rules-note",
+        fill(t("rules.run.covered"), {
+          checked: rulesList(p.checked).length,
+          unchecked: rulesList(p.unchecked).length,
+        })
+      )
+    );
+  }
+  if (rec.error) box.append(node("p", "rules-blocked", errorText(rec.error)));
+  if (p.reason) box.append(node("p", "rules-run-reason", String(p.reason)));
+
+  const findings = rulesList(p.findings);
+  if (findings.length) {
+    box.append(node("h4", null, fill(t("rules.run.findings"), { n: findings.length })));
+    const ul = node("ul", "rules-run-findings");
+    for (const f of findings) {
+      const li = node("li");
+      const where = node("button", "rules-finding-file", `${f.file}:${f.line}`);
+      where.type = "button";
+      where.title = t("rules.run.openFile");
+      where.addEventListener("click", () => {
+        invoke("open_in_editor", { id, path: f.file, line: f.line ?? null }).catch((err) => say(errorText(err)));
+      });
+      li.append(where, node("code", "rules-run-quote", f.quote ?? ""));
+      if (f.why) li.append(node("span", "rules-finding-text", f.why));
+      ul.append(li);
+    }
+    box.append(ul);
+  }
+  const dropped = rulesList(p.dropped);
+  if (dropped.length) {
+    box.append(node("h4", null, fill(t("rules.run.dropped"), { n: dropped.length })));
+    const ul = node("ul", "rules-run-findings dropped");
+    for (const d of dropped.slice(0, 20)) {
+      const f = d.finding && typeof d.finding === "object" ? d.finding : {};
+      const li = node("li");
+      li.append(
+        node("span", "rules-source", `${f.file ?? "?"}${f.line ? ":" + f.line : ""}`),
+        node("span", "rules-finding-text", String(d.reason ?? ""))
+      );
+      ul.append(li);
+    }
+    box.append(ul);
+  }
+  if (typeof p.raw === "string" && p.raw) {
+    box.append(node("h4", null, t("rules.run.raw")));
+    box.append(node("pre", "trust-code", p.raw.length > 4000 ? p.raw.slice(0, 4000) + "\n…" : p.raw));
+  }
+  if (row.fromCache) box.append(node("p", "rules-note", t("rules.run.fromCache")));
+}
+
+/**
+ * Pause, resume or cancel the open run. `call` is the command itself, written
+ * out at the button, so the check that every invoked command is registered
+ * (and the web variant's list of what it refuses) sees all three by name.
+ */
+async function runCommand(call) {
+  const id = view.selectedId;
+  if (!id) return;
+  const st = rulesOf(id);
+  const runId = st.openRun;
+  if (!runId) return;
+  for (const b of [runUi.pause, runUi.resume, runUi.cancel]) b.disabled = true;
+  try {
+    const run = await call({ id, runId });
+    if (st.openRun === runId) st.run = run;
+    st.runError = null;
+  } catch (e) {
+    st.runError = errorText(e);
+  } finally {
+    for (const b of [runUi.pause, runUi.resume, runUi.cancel]) b.disabled = false;
+  }
+  await refreshRun(id);
+  loadRuns(id);
+}
+
+runUi.pause.addEventListener("click", () => runCommand((args) => invoke("agent_pause", args)));
+runUi.resume.addEventListener("click", () => runCommand((args) => invoke("agent_resume", args)));
+runUi.cancel.addEventListener("click", () => runCommand((args) => invoke("agent_cancel", args)));
+runUi.back.addEventListener("click", () => {
+  if (view.selectedId) closeRun(view.selectedId);
+});
+
+// ---- the dialog ----------------------------------------------------
+
+/** The open dialog: `{ id, ids, preview, previewError, health, healthError, loading, seq }`. */
+let runForm = null;
+
+function drawRunDialog() {
+  const f = runForm;
+  if (!f) return;
+  // ai-desktop: where it is, and which cloud backends it has a key for.
+  if (f.healthError) {
+    runUi.service.textContent = f.healthError;
+  } else if (f.health) {
+    const have = Object.entries(f.health.backends || {})
+      .filter(([, on]) => on)
+      .map(([name]) => backendName(name));
+    runUi.service.textContent = fill(t("rules.run.service"), {
+      url: f.health.url,
+      backends: have.length ? have.join(", ") : t("rules.run.service.none"),
+    });
+  } else {
+    runUi.service.textContent = t("rules.run.service.asking");
+  }
+
+  const p = f.preview;
+  runUi.models.replaceChildren();
+  for (const name of rulesList(p?.models)) {
+    const option = document.createElement("option");
+    option.value = name;
+    runUi.models.append(option);
+  }
+  const blocker = startBlocker({
+    title: runUi.fTitle.value,
+    model: runUi.fModel.value,
+    preview: p,
+    health: f.health,
+    healthError: !!f.healthError,
+    loading: f.loading,
+  });
+  const refused = p && p.refused ? errorText(p.refused) : "";
+  // The project's refusal in its own words where there is one, else why Start is off.
+  const why = refused && runUi.fModel.value.trim() ? refused : blocker && blocker !== "rules.run.block.loading" ? t(blocker) : "";
+  runUi.refused.hidden = !why;
+  runUi.refused.textContent = why;
+
+  runUi.previewState.textContent = f.loading ? t("rules.run.reading") : (f.previewError ?? "");
+  const batches = rulesList(p?.batches);
+  runUi.batches.hidden = f.loading || batches.length === 0;
+  runUi.batchRows.replaceChildren();
+  const nf = new Intl.NumberFormat(locale);
+  for (const b of batches) {
+    const tr = document.createElement("tr");
+    tr.append(
+      node("td", null, b.id),
+      node("td", "run-batch-rules", rulesList(b.rules).map((r) => r.id).join(", ")),
+      node("td", "n", nf.format(rulesList(b.files).length)),
+      node("td", "n", formatBytes(b.bytes ?? 0)),
+      node("td", "n", nf.format(b.tokens ?? 0))
+    );
+    tr.title = rulesList(b.files).join("\n");
+    runUi.batchRows.append(tr);
+  }
+  const skipped = f.loading ? [] : rulesList(p?.skipped);
+  runUi.skippedBox.hidden = skipped.length === 0;
+  runUi.skipped.replaceChildren();
+  for (const s of skipped) {
+    const li = node("li");
+    li.append(node("span", "rules-id", s.id ?? ""), node("span", "rules-finding-text", String(s.reason ?? s.status ?? "")));
+    runUi.skipped.append(li);
+  }
+
+  // The proposals are written into the project; say so when git would pick them up.
+  const ig = p?.ignore;
+  runUi.ignore.replaceChildren();
+  runUi.ignore.hidden = !(ig && ig.git && !ig.ignored) || f.loading;
+  if (!runUi.ignore.hidden) {
+    runUi.ignore.append(node("span", null, fill(t("rules.run.ignore"), { entry: ig.entry })));
+    const add = node("button", "addbox-secondary", t("rules.run.ignore.add"));
+    add.type = "button";
+    add.addEventListener("click", async () => {
+      add.disabled = true;
+      try {
+        const state = await invoke("agent_ignore", { id: f.id, add: true });
+        if (f.preview) f.preview.ignore = state;
+      } catch (e) {
+        say(errorText(e));
+      }
+      drawRunDialog();
+    });
+    runUi.ignore.append(add);
+  }
+
+  const out = f.loading ? null : egress(p);
+  if (out && out.requests) {
+    const facts = { files: nf.format(out.files), size: formatBytes(out.bytes), model: out.model, backend: backendName(out.backend) };
+    runUi.egress.textContent = out.local ? fill(t("rules.run.egress.local"), facts) : fill(t("rules.run.egress.cloud"), facts);
+    runUi.egress.classList.toggle("leaves", !out.local);
+    runUi.go.textContent = out.local ? t("rules.run.go.local") : fill(t("rules.run.go.cloud"), facts);
+  } else {
+    runUi.egress.textContent = t("rules.run.egress.none");
+    runUi.egress.classList.remove("leaves");
+    runUi.go.textContent = t("rules.run.go");
+  }
+  runUi.go.disabled = blocker !== null;
+}
+
+/** Ask the engine what a run with this model would send. Sends nothing. */
+async function refreshRunPreview() {
+  const f = runForm;
+  if (!f) return;
+  const seq = ++f.seq;
+  f.loading = true;
+  f.previewError = null;
+  drawRunDialog();
+  const selection = f.ids.join(",");
+  try {
+    if (selection.length > MAX_SELECTION_BYTES) throw new Error(t("rules.run.tooMany"));
+    const preview = await invoke("agent_preview", { id: f.id, selection, model: runUi.fModel.value.trim() });
+    if (runForm !== f || seq !== f.seq) return;
+    f.preview = preview;
+  } catch (e) {
+    if (runForm !== f || seq !== f.seq) return;
+    f.preview = null;
+    f.previewError = errorText(e);
+  }
+  f.loading = false;
+  drawRunDialog();
+}
+
+function openRunDialog(id) {
+  const st = rulesOf(id);
+  const { manual } = splitSelection(rulesList(st.catalog?.rules), st.selected);
+  if (!manual.length) return;
+  runForm = { id, ids: manual, preview: null, previewError: null, health: null, healthError: null, loading: true, seq: 0 };
+  const form = runForm;
+  runUi.fTitle.value = defaultRunTitle(manual, new Date().toISOString().slice(0, 10));
+  runUi.fNotes.value = "";
+  let model = "";
+  try {
+    model = localStorage.getItem(RUN_MODEL_KEY) || "";
+  } catch (e) {
+    void e;
+  }
+  runUi.fModel.value = model;
+  runUi.box.showModal();
+  drawRunDialog();
+  invoke("agent_health")
+    .then((h) => {
+      form.health = h;
+    })
+    .catch((e) => {
+      form.healthError = errorText(e);
+    })
+    .finally(() => {
+      if (runForm === form) drawRunDialog();
+    });
+  refreshRunPreview();
+}
+
+runUi.agent.addEventListener("click", () => {
+  if (view.selectedId) openRunDialog(view.selectedId);
+});
+runUi.fTitle.addEventListener("input", drawRunDialog);
+runUi.fModel.addEventListener("change", refreshRunPreview);
+runUi.dontStart.addEventListener("click", () => runUi.box.close());
+runUi.box.addEventListener("close", () => {
+  runForm = null;
+});
+runUi.go.addEventListener("click", async () => {
+  const f = runForm;
+  if (!f || runUi.go.disabled) return;
+  const model = runUi.fModel.value.trim();
+  runUi.go.disabled = true;
+  let run;
+  try {
+    run = await invoke("agent_start", {
+      id: f.id,
+      args: {
+        title: runUi.fTitle.value.trim(),
+        notes: runUi.fNotes.value,
+        selection: f.ids.join(","),
+        model,
+        refresh: false,
+      },
+    });
+  } catch (e) {
+    // Nothing was started: the dialog stays and says why.
+    runUi.refused.hidden = false;
+    runUi.refused.textContent = errorText(e);
+    runUi.go.disabled = false;
+    return;
+  }
+  try {
+    localStorage.setItem(RUN_MODEL_KEY, model);
+  } catch (e) {
+    void e;
+  }
+  runUi.box.close();
+  loadRuns(f.id);
+  openRun(f.id, run.id);
 });
 
 // =====================================================================

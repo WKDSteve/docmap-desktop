@@ -291,6 +291,31 @@
              machine trusts them. Only there when a ruleset has such rules. -->
         <div id="rules-trust" class="rules-trust" hidden></div>
         <ul id="rules-problems" class="rules-problems" hidden></ul>
+        <!-- The agent runs of this project, running and finished, to open
+             again. A run belongs to the backend, not to this view: leaving
+             the tab or the project does not stop one. -->
+        <div id="rules-runs" class="rules-runs" hidden></div>
+        <!-- One run: what was asked, what came back, what the check of the
+             evidence did with it. Takes the place of the list while it is
+             open. Nothing here turns a proposal into a verdict. -->
+        <div id="rules-run" class="rules-run" hidden>
+          <header class="rules-run-head">
+            <button id="rules-run-back" type="button" class="addbox-secondary" data-i18n="rules.run.back">Back to the rules</button>
+            <h3 id="rules-run-title"></h3>
+            <span id="rules-run-state" class="rules-run-state"></span>
+          </header>
+          <p id="rules-run-meta" class="rules-note"></p>
+          <p id="rules-run-error" class="rules-blocked" hidden></p>
+          <div class="rules-run-actions">
+            <button id="rules-run-pause" type="button" class="addbox-secondary" data-i18n="rules.run.pause">Pause</button>
+            <button id="rules-run-resume" type="button" class="addbox-secondary" data-i18n="rules.run.resume">Resume</button>
+            <button id="rules-run-cancel" type="button" class="addbox-secondary" data-i18n="rules.run.cancel">Cancel run</button>
+          </div>
+          <div class="rules-run-cols">
+            <ul id="rules-run-queue" class="rules-run-queue" data-i18n-aria="rules.run.queue" aria-label="Rules of this run"></ul>
+            <div id="rules-run-detail" class="rules-run-detail"></div>
+          </div>
+        </div>
         <div id="rules-body" class="rules-body" hidden>
           <div class="rules-tools">
             <div class="rules-seg" role="group" data-i18n-aria="rules.group.label" aria-label="Group by">
@@ -315,6 +340,9 @@
               <span id="rules-sel-auto" class="rules-lane auto"></span>
               <span id="rules-sel-manual" class="rules-lane manual"></span>
               <button id="rules-clear" type="button" class="addbox-secondary" data-i18n="rules.clear">Clear selection</button>
+              <!-- The only way an agent run starts: this button, then a dialog
+                   that says what would leave the machine. -->
+              <button id="rules-agent" type="button" class="addbox-secondary" disabled></button>
             </div>
             <p id="rules-start-note" class="rules-note"></p>
             <button id="rules-start" type="button" class="addbox-go" disabled></button>
@@ -672,6 +700,64 @@
       <div class="trust-actions">
         <button id="trust-cancel" type="button" class="addbox-secondary" autofocus data-i18n="rules.trust.cancel">Do not trust</button>
         <button id="trust-go" type="button" class="addbox-secondary trust-go" disabled data-i18n="rules.trust.go">Trust this ruleset</button>
+      </div>
+    </dialog>
+
+    <!-- Starting an agent run over the selected manual rules. Nothing is sent
+         before Start: the dialog asks the engine what a run would send
+         (which sends nothing itself) and ai-desktop which backends it has,
+         and says where the files would go. The destination is repeated on
+         the button. -->
+    <dialog id="runbox" class="addbox runbox">
+      <form method="dialog" class="addbox-close-form">
+        <button class="addbox-x" value="cancel" aria-label="Close">&times;</button>
+      </form>
+
+      <h2 class="addbox-title" data-i18n="rules.run.title">Agent run</h2>
+      <p class="addbox-lead" data-i18n="rules.run.lead">
+        A model reads the files in scope of each rule and proposes an answer. A proposal is not a verdict: you decide about each one.
+      </p>
+      <label class="runbox-field">
+        <span data-i18n="rules.run.field.title">Title</span>
+        <input id="run-title" type="text" autocomplete="off" spellcheck="false" maxlength="200" />
+      </label>
+      <label class="runbox-field">
+        <span data-i18n="rules.run.field.notes">Notes</span>
+        <textarea id="run-notes" rows="2" maxlength="2000"></textarea>
+      </label>
+      <p class="addbox-note" data-i18n="rules.run.notesStay">Notes are for you. They are kept with the run and are not sent.</p>
+      <label class="runbox-field">
+        <span data-i18n="rules.run.field.model">Model</span>
+        <input id="run-model" type="text" list="run-models" autocomplete="off" spellcheck="false" maxlength="200" />
+        <datalist id="run-models"></datalist>
+      </label>
+      <p id="run-service" class="addbox-note" role="status"></p>
+      <p id="run-refused" class="rules-blocked" hidden></p>
+
+      <h3 data-i18n="rules.run.preview">What would be sent</h3>
+      <p id="run-preview-state" class="addbox-note" role="status"></p>
+      <table id="run-batches" class="run-batches" hidden>
+        <thead>
+          <tr>
+            <th data-i18n="rules.run.col.batch">Request</th>
+            <th data-i18n="rules.run.col.rules">Rules</th>
+            <th class="n" data-i18n="rules.run.col.files">Files</th>
+            <th class="n" data-i18n="rules.run.col.size">Size</th>
+            <th class="n" data-i18n="rules.run.col.tokens">Tokens (estimate)</th>
+          </tr>
+        </thead>
+        <tbody id="run-batch-rows"></tbody>
+      </table>
+      <div id="run-skipped-box" hidden>
+        <h3 data-i18n="rules.run.notSent">Not sent</h3>
+        <ul id="run-skipped" class="run-skipped"></ul>
+      </div>
+      <p id="run-ignore" class="addbox-note" hidden></p>
+
+      <p id="run-egress" class="run-egress" role="status"></p>
+      <div class="trust-actions">
+        <button id="run-cancel" type="button" class="addbox-secondary" autofocus data-i18n="rules.run.dontStart">Do not start</button>
+        <button id="run-go" type="button" class="addbox-secondary run-go" disabled></button>
       </div>
     </dialog>
 

@@ -47,6 +47,14 @@ export const UNAVAILABLE = [
   'rules_trust_revoke',
   'rules_predicate_source',
   'agent_preview',
+  'agent_health',
+  'agent_list',
+  'agent_status',
+  'agent_start',
+  'agent_pause',
+  'agent_resume',
+  'agent_cancel',
+  'agent_ignore',
 ];
 
 const DEFAULT_WORKSPACE = 'Default';

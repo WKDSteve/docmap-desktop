@@ -427,6 +427,46 @@ in the mechanical one.
 Once a project's rules have been read, the sidebar shows two numbers for it:
 manual rules still open, and automated ones whose last run did not pass.
 
+### An agent run over manual rules
+
+A manual rule has no check, so somebody has to read the code. An agent run lets a model do a first reading: it gets
+the files in scope of each rule and proposes an answer. **A proposal is not a verdict.** Nothing in this window
+turns one into a pass or a failure.
+
+A run starts in one place only: select manual rules, press **Agent run for N manual rules…**, and the dialog opens.
+Until you press its Start button nothing is sent. Opening the dialog asks the engine what a run *would* send and
+asks ai-desktop which backends it has; neither sends a file.
+
+- **Title** is what the run is found by later; it defaults to the selection and the day. **Notes** are for you: they
+  are kept with the run and are not sent.
+- **Model**: a name from `agent.models` of `.rules.json` or any other. The name decides the destination (a
+  `claude-` model goes to Anthropic, a name without a known prefix to Ollama on this machine), and the project
+  decides what is allowed: `agent.backends` of `.rules.json` is the whole allow-list, and without it only local
+  models are. A model the project does not allow is refused in those words.
+- **What would be sent** lists each request with its rules, files, size and an estimate of tokens; **Not sent**
+  lists the rules that cannot go, each with its reason (no scope, files that may not be sent, too large).
+- The **egress line** says where the files go: "Stays on this machine" for a local model, "Leaves this machine. To
+  Anthropic (model): files 14, size 61 KB" for a cloud one. The Start button repeats it: **Send to Anthropic**, or
+  **Start on this machine**.
+- Start is off, with the reason shown, while there is no title, no model, nothing to send, no answer from
+  ai-desktop, or no key for the backend there.
+
+The run belongs to the app, not to the view: leaving the tab or the project does not stop it, and quitting the app
+pauses it. **Agent runs of this project** in the Rules tab lists running and finished runs; **Open** shows one.
+
+- One row per rule: where it stands (`queued`, `asking`, `proposed`, `unclear`, `error`, `not sent`), what the
+  model proposed, and, on a line of its own, what the check of the evidence did: every line a model quotes is looked
+  up in the file, and a finding whose quote is not there is dropped.
+- The detail shows the rule, the proposal marked **proposed, not verified**, each finding with its quoted line and
+  its place (a click opens the file at that line), and what was dropped and why.
+- A model's "compliant" is shown as **no violation found**, with how many files it says it looked at and how many
+  it left out. That is less than compliant, and it is said that way.
+- **Pause** stops the queue and keeps the run resumable, **Resume** continues it, **Cancel run** ends it for good.
+  What already came back is kept either way. The token count is what the backend reported, not an estimate.
+
+Accepting a proposal as a verdict, waiving a rule and rejecting a proposal are not in this window yet: a run's
+proposals can be read here, and no verdict is written from here.
+
 ### Trusting a ruleset
 
 A `lua_predicate` check is code from the ruleset, and it would run with your

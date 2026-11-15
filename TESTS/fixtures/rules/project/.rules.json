@@ -1,4 +1,9 @@
 {
   "rulesets": ["../ruleset"],
-  "gates": { "release": ["P", "Q"] }
+  "gates": { "release": ["P", "Q"] },
+  "agent": {
+    "scopes": { "M": { "include": ["lua/*.lua"] } },
+    "backends": ["ollama"],
+    "models": ["local-example"]
+  }
 }

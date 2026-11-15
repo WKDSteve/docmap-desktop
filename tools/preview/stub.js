@@ -446,11 +446,53 @@ const R = {
       }))
     };
   },
-  agent_preview: (a) => ({
-    destination: null, refused: null, models: [], batches: [], totals: {}, extra: {}, ignore: {},
-    skipped: String(a.selection || "").split(",").includes("S-02")
-      ? [{ id: "S-02", status: "manual", reason: "scope matches no file that may be sent (2 denied)" }]
-      : []
+  // The agent half, canned: what a run would send (two requests, one rule that cannot be sent), an ai-desktop that
+  // has a key for one cloud backend, one finished run to open, and a run that Start creates and that moves one
+  // request further every time its status is read. No model is anywhere near this.
+  agent_preview: (a) => stubPreview(a),
+  agent_health: () => ({ url: "http://127.0.0.1:8765", status: "ok", backends: { anthropic: true, openai: false, gemini: false } }),
+  agent_ignore: (a) => {
+    if (a.add) STUB_IGNORED = true;
+    return { ignored: STUB_IGNORED, entry: ".rules-proposals/", git: true };
+  },
+  agent_list: () => STUB_RUNS.map(stubSummary),
+  agent_status: (a) => {
+    const run = STUB_RUNS.find((r) => r.id === a.runId);
+    if (!run) throw { key: "err.agent.noRun", params: { id: a.runId }, message: "No such run: " + a.runId };
+    if (run.state === "running") stubAdvance(run);
+    return JSON.parse(JSON.stringify(run));
+  },
+  agent_start: (a) => {
+    const ids = String(a.args.selection).split(",");
+    const sent = ids.filter((id) => id !== "S-02");
+    const local = !/^(claude-|gpt-|gemini-)/.test(a.args.model);
+    const run = {
+      id: "run-" + (STUB_RUNS.length + 1), title: a.args.title, notes: a.args.notes, root: "E:/repos/docmap.nvim",
+      selection: a.args.selection, refresh: false, backend: local ? "ollama" : "anthropic", model: a.args.model, local,
+      state: "running", createdMs: 1794700000000, updatedMs: 1794700000000, finishedMs: null,
+      batches: [sent.slice(0, 2), sent.slice(2)].filter((b) => b.length).map((rules, n) => ({
+        id: "b" + (n + 1), rules, files: 2, bytes: 3000, tokens: 800, key: "k" + n,
+        state: n === 0 ? "asking" : "queued", fromCache: false, usage: { promptTokens: 0, completionTokens: 0 }, error: null
+      })),
+      proposals: [],
+      skipped: ids.includes("S-02") ? [{ id: "S-02", status: "manual", reason: "scope matches no file that may be sent (2 denied)" }] : [],
+      usage: { promptTokens: 0, completionTokens: 0 }, error: null
+    };
+    STUB_RUNS.unshift(run);
+    return JSON.parse(JSON.stringify(run));
+  },
+  agent_pause: (a) => stubSet(a.runId, (run) => {
+    run.state = "paused";
+    for (const b of run.batches) if (b.state === "asking") b.state = "queued";
+  }),
+  agent_resume: (a) => stubSet(a.runId, (run) => {
+    run.state = "running";
+    const next = run.batches.find((b) => b.state === "queued");
+    if (next) next.state = "asking";
+  }),
+  agent_cancel: (a) => stubSet(a.runId, (run) => {
+    run.state = "cancelled";
+    for (const b of run.batches) if (b.state === "asking") b.state = "queued";
   }),
   rules_trust_preview: () => ({
     path: RULESET, sha256: "3f9a5c0d1e7b42a68c1d0f6e9b7a3c5d2e4f60718293a4b5c6d7e8f9a0b1c2d3",
@@ -515,6 +557,96 @@ const SEEDED_RULES = [
   source_file: `${RULESET}/${file}`, source_line: 10 + i * 12,
   has_check: !!check, check: check || undefined
 }));
+
+// The agent runs of the Rules tab (see `R.agent_*`).
+let STUB_IGNORED = false;
+const STUB_PROPOSALS = {
+  violation: (id) => ({
+    ruleId: id, batch: "b1", key: "k", status: "violation", error: null, createdMs: 1794600000000,
+    proposal: {
+      rule_id: id, status: "violation", proposed: true, verified: false,
+      findings: [
+        { file: "lua/docmap/core/deps.lua", line: 41, quote: 'local mod = require("docmap.core." .. name)', why: "the module is loaded by a name built at run time, so the dependency is not named at the top" }
+      ],
+      dropped: [{ finding: { file: "lua/docmap/init.lua", line: 7, quote: "require(x)" }, reason: "the quote does not occur near that line" }],
+      checked: ["lua/docmap/core/deps.lua", "lua/docmap/init.lua"], unchecked: []
+    }
+  }),
+  compliant: (id) => ({
+    ruleId: id, batch: "b1", key: "k", status: "compliant", error: null, createdMs: 1794600000000,
+    proposal: {
+      rule_id: id, status: "compliant", proposed: true, verified: false, findings: [], dropped: [],
+      checked: ["lua/docmap/core/deps.lua"], unchecked: ["lua/docmap/init.lua"]
+    }
+  }),
+  unclear: (id) => ({
+    ruleId: id, batch: "b2", key: "k", status: "unclear", error: null, createdMs: 1794600000000,
+    proposal: {
+      rule_id: id, status: "unclear", proposed: true, verified: false, findings: [], dropped: [], checked: [], unchecked: [],
+      reason: "the answer is not the JSON that was asked for", raw: "Looks fine to me, nothing to report."
+    }
+  })
+};
+const STUB_KINDS = ["violation", "compliant", "unclear"];
+const STUB_RUNS = [{
+  id: "run-0", title: "D-02, D-03, L-02 +1 (2026-11-13)", notes: "", root: "E:/repos/docmap.nvim",
+  selection: "D-02,D-03,L-02,S-02", refresh: false, backend: "anthropic", model: "claude-example", local: false,
+  state: "done", createdMs: 1794600000000, updatedMs: 1794600060000, finishedMs: 1794600060000,
+  batches: [
+    { id: "b1", rules: ["D-02", "D-03"], files: 2, bytes: 4100, tokens: 1100, key: "k1", state: "done", fromCache: false, usage: { promptTokens: 1180, completionTokens: 240 }, error: null },
+    { id: "b2", rules: ["L-02"], files: 1, bytes: 1900, tokens: 500, key: "k2", state: "done", fromCache: true, usage: { promptTokens: 0, completionTokens: 0 }, error: null }
+  ],
+  proposals: [STUB_PROPOSALS.violation("D-02"), STUB_PROPOSALS.compliant("D-03"), STUB_PROPOSALS.unclear("L-02")],
+  skipped: [{ id: "S-02", status: "manual", reason: "scope matches no file that may be sent (2 denied)" }],
+  usage: { promptTokens: 1180, completionTokens: 240 }, error: null
+}];
+function stubSummary(run) {
+  return {
+    id: run.id, root: run.root, title: run.title, selection: run.selection, backend: run.backend, model: run.model,
+    local: run.local, state: run.state, createdMs: run.createdMs, updatedMs: run.updatedMs, finishedMs: run.finishedMs,
+    batchesTotal: run.batches.length, batchesDone: run.batches.filter((b) => b.state === "done").length,
+    proposals: run.proposals.length, usage: run.usage
+  };
+}
+/** One request further: the one that was asking is done and brings its proposals, the next one asks. */
+function stubAdvance(run) {
+  const asking = run.batches.find((b) => b.state === "asking");
+  if (asking) {
+    asking.state = "done";
+    asking.usage = { promptTokens: 900, completionTokens: 150 };
+    run.usage.promptTokens += 900;
+    run.usage.completionTokens += 150;
+    asking.rules.forEach((id, n) => run.proposals.push(STUB_PROPOSALS[STUB_KINDS[(run.proposals.length + n) % 3]](id)));
+  }
+  const next = run.batches.find((b) => b.state === "queued");
+  if (next) next.state = "asking";
+  else run.state = "done";
+}
+function stubSet(runId, change) {
+  const run = STUB_RUNS.find((r) => r.id === runId);
+  change(run);
+  return JSON.parse(JSON.stringify(run));
+}
+function stubPreview(a) {
+  const ids = String(a.selection || "").split(",").filter(Boolean);
+  const sent = ids.filter((id) => id !== "S-02");
+  const model = String(a.model || "").trim();
+  const cloud = /^(claude-|gpt-|gemini-)/.test(model);
+  const batches = [sent.slice(0, 2), sent.slice(2)].filter((b) => b.length).map((rules, n) => ({
+    id: "b" + (n + 1), rules: rules.map((id) => ({ id, severity: "recommended", title: id, source: "family" })),
+    files: n === 0 ? ["lua/docmap/core/deps.lua", "lua/docmap/init.lua"] : ["lua/docmap/core/deps.lua"],
+    bytes: n === 0 ? 4100 : 1900, tokens: n === 0 ? 1100 : 500
+  }));
+  return {
+    destination: model ? { backend: cloud ? "anthropic" : "ollama", model, local: !cloud } : null,
+    refused: model ? null : { key: "err.agent.model", params: {}, message: "A model is required: its name decides which backend answers" },
+    models: ["claude-example", "qwen-example"],
+    batches,
+    skipped: ids.includes("S-02") ? [{ id: "S-02", status: "manual", reason: "scope matches no file that may be sent (2 denied)" }] : [],
+    totals: { requests: batches.length, files: batches.reduce((n, b) => n + b.files.length, 0), bytes: batches.reduce((n, b) => n + b.bytes, 0), tokens: batches.reduce((n, b) => n + b.tokens, 0) },
+    extra: {}, ignore: { ignored: STUB_IGNORED, entry: ".rules-proposals/", git: true }
+  };
+}
 
 window.__stubListeners = {};
 window.__stubEmit = (name, payload) => {

@@ -127,6 +127,7 @@ test("no English catalog key is dead", () => {
     read("./traffic.js"),
     read("./finder.js"),
     read("./stats.js"),
+    read("./rules-run.js"),
     read("./engine-log.js"),
     read("./errors.js"),
     read("./contract.js"),
@@ -152,6 +153,8 @@ test("no English catalog key is dead", () => {
     "ph.",
     "rules.status.", // a mechanical status, by the engine's word for it
     "rules.trust.state.", // the trust of a ruleset, by the backend's word for it
+    "rules.run.state.", // a run's state, by the backend's word for it
+    "rules.run.row.", // a rule's state in a run (lib/rules-run.js, ROW_STATES)
   ];
   const dead = keys().filter((k) => {
     if (RUNTIME.some((p) => k.startsWith(p))) return false;
@@ -238,9 +241,53 @@ test("Start in the Rules tab asks no model: it runs the engine and only previews
   assert.match(body, /invoke\("rules_run"/);
   assert.match(body, /invoke\("agent_preview"/);
   assert.doesNotMatch(body, /agent_start|agent_resume/);
-  // and nothing else in the tab starts a run either
-  const tab = MAIN.slice(MAIN.indexOf("// Rules\n"), MAIN.indexOf("// Project statistics\n"));
-  assert.doesNotMatch(tab, /agent_start|agent_resume/);
+});
+
+test("a model is only ever asked from the Start button of the run dialog, or by resuming a run", () => {
+  // `agent_start` is the one call that sends a project's files to a model. It appears once, in the click handler
+  // of the dialog's own Start button, and nothing that merely opens or redraws the dialog reaches it.
+  assert.equal([...MAIN.matchAll(/invoke\("agent_start"/g)].length, 1);
+  const go = MAIN.indexOf('runUi.go.addEventListener("click"');
+  const start = MAIN.indexOf('invoke("agent_start"');
+  assert.ok(go > 0 && start > go && start - go < 600, "agent_start belongs to the Start button");
+  for (const fn of ["function openRunDialog(", "async function refreshRunPreview(", "function drawRunDialog("]) {
+    const at = MAIN.indexOf(fn);
+    assert.ok(at > 0, `${fn} should exist`);
+    const body = MAIN.slice(at, MAIN.indexOf("\n}\n", at));
+    assert.doesNotMatch(body, /agent_start|agent_resume/, `${fn} must not start anything`);
+  }
+  // Resume is a button of an open run (`runCommand`), never something a draw or a timer does.
+  assert.equal([...MAIN.matchAll(/"agent_resume"/g)].length, 1);
+  assert.match(MAIN, /runUi\.resume\.addEventListener\("click", \(\) => runCommand\(\(args\) => invoke\("agent_resume", args\)\)\);/);
+  const poll = MAIN.slice(MAIN.indexOf("async function refreshRun("), MAIN.indexOf("function closeRun("));
+  assert.match(poll, /invoke\("agent_status"/);
+  assert.doesNotMatch(poll, /agent_start|agent_resume|agent_preview/);
+});
+
+test("the run dialog does not start by default, and its button names where the files go", () => {
+  const at = HTML.indexOf('<dialog id="runbox"');
+  const box = HTML.slice(at, HTML.indexOf("</dialog>", at));
+  const go = box.match(/<button id="run-go"[^>]*>/)[0];
+  assert.match(go, /type="button"/, "not a submit button: Enter must not start a run");
+  assert.match(go, /disabled/);
+  assert.match(box.match(/<button id="run-cancel"[^>]*>/)[0], /autofocus/);
+  assert.match(MAIN, /runUi\.go\.textContent = out\.local \? t\("rules\.run\.go\.local"\) : fill\(t\("rules\.run\.go\.cloud"\), facts\);/);
+  // the notes are said to stay, and nothing sends them: the engine builds the prompt, not this window
+  assert.match(box, /data-i18n="rules\.run\.notesStay"/);
+});
+
+test("the words built from a run's state or a row's state exist for every one", () => {
+  const catalog = new Set(keys());
+  const wanted = [
+    ...["running", "paused", "cancelled", "done", "failed"].map((s) => `rules.run.state.${s}`),
+    ...["queued", "asking", "proposed", "unclear", "error", "notSent"].map((s) => `rules.run.row.${s}`),
+  ];
+  assert.deepEqual(wanted.filter((k) => !catalog.has(k)), []);
+  // the run states are the backend's: `RunState` in agent/store.rs, lowercased
+  const store = read("../../src-tauri/src/agent/store.rs");
+  const at = store.indexOf("pub enum RunState {");
+  const named = [...store.slice(at, store.indexOf("}", at)).matchAll(/^\s{4}([A-Z][a-z]+),/gm)].map((m) => m[1].toLowerCase());
+  assert.deepEqual(named.sort(), ["cancelled", "done", "failed", "paused", "running"]);
 });
 
 test("trusting a ruleset is never the dialog's default action", () => {

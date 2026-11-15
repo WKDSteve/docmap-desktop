@@ -108,8 +108,6 @@ const CATALOGS = {
       "Add a project three ways: a folder on this machine, every plugin your Neovim config declares, or a repository URL — including a pick-list of your own GitHub repositories.",
     "help.generate":
       "Rebuild the selected project's map, overwriting what is there. Writes into that repository's docs/map.",
-    "menu.help.engine":
-      "docmap.nvim's standalone binary — this app runs it, it does not replace it. The word beside the label tells you whether it was found, and how much detail it can read.",
     "help.engineLocate":
       "Point at docmap.nvim's standalone binary. You only need this if you want a different one than the app already uses — the line above says which that is.",
     "help.grammars":
@@ -1018,8 +1016,6 @@ const CATALOGS = {
       "Ein Projekt auf drei Wegen hinzufügen: ein Ordner auf diesem Rechner, jedes Plugin, das deine Neovim-Config deklariert, oder eine Repository-URL — samt Auswahlliste deiner eigenen GitHub-Repositories.",
     "help.generate":
       "Die Karte des gewählten Projekts neu bauen und die vorhandene überschreiben. Schreibt in dessen docs/map.",
-    "menu.help.engine":
-      "Das Standalone-Binary von docmap.nvim — diese App führt es aus, sie ersetzt es nicht. Das Wort daneben sagt dir, ob sie gefunden wurde und wie viel Detail sie lesen kann.",
     "help.engineLocate":
       "Auf das Standalone-Binary von docmap.nvim zeigen. Brauchst du nur, wenn du eine andere als die bereits benutzte willst — welche das ist, sagt die Zeile darüber.",
     "help.grammars":

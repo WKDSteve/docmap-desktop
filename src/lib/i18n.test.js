@@ -217,3 +217,25 @@ test("the telemetry note does not claim this window can do nothing", () => {
     assert.match(note, /Settings|Einstellungen/, `${code} should point at where it is switched on`);
   }
 });
+
+test("no catalog names a key twice in the source", () => {
+  // An object literal keeps the later of two equal keys and drops the earlier
+  // one without a word, so the tests above, which read the finished object,
+  // cannot see it. esbuild warns about it in the web build; this reads the
+  // source, catalog by catalog, so the duplicate fails here first.
+  const source = readSource("./i18n.js");
+  const body = source.slice(source.indexOf("const CATALOGS = {"));
+  const starts = [...body.matchAll(/^ {2}([a-z]{2}): \{$/gm)];
+  assert.ok(starts.length >= 2, "the catalogs were not found in i18n.js");
+  for (const [i, m] of starts.entries()) {
+    const end = i + 1 < starts.length ? starts[i + 1].index : body.indexOf("\n};");
+    const catalog = body.slice(m.index, end);
+    const seen = new Set();
+    const twice = [];
+    for (const [, key] of catalog.matchAll(/^ {4}"([^"]+)":/gm)) {
+      if (seen.has(key)) twice.push(key);
+      seen.add(key);
+    }
+    assert.deepEqual(twice, [], `${m[1]} names these keys twice: ${twice.join(", ")}`);
+  }
+});

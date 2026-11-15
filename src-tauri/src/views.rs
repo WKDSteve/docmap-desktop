@@ -273,7 +273,9 @@ pub(crate) fn open_externally(target: &str) -> Result<(), AppError> {
 }
 
 /// An `http://` or `https://` address, the only kind of target that is not a
-/// path on this machine.
+/// path on this machine. Only the shell of Windows needs to tell the two
+/// apart (`open_externally`); elsewhere the target goes to the system as it is.
+#[cfg(target_os = "windows")]
 pub(crate) fn is_web_address(target: &str) -> bool {
     let lower = target.to_ascii_lowercase();
     lower.starts_with("http://") || lower.starts_with("https://")

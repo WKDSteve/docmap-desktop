@@ -105,6 +105,7 @@
           "dead-see-target",
           "doc-references-missing",
           "example-does-not-parse",
+          "feature-module-missing",
           "file-holds-many-modules",
           "layer-violation",
           "missing-module-tag",

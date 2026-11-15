@@ -61,9 +61,13 @@ try {
   const page = await context.newPage();
   const problems = [];
   page.on('pageerror', (e) => problems.push(String(e)));
-  // A file of the page the preview server did not deliver (a module of main.js) leaves the window half started.
+  // A file of the page the preview server did not deliver (a module of main.js) leaves the window half started. A
+  // request the page itself dropped (a frame that loads another page, net::ERR_ABORTED) is not such a file.
   const unloaded = [];
-  page.on('requestfailed', (r) => unloaded.push(`${r.url()} ${r.failure()?.errorText ?? ''}`.trim()));
+  page.on('requestfailed', (r) => {
+    const why = r.failure()?.errorText ?? '';
+    if (!why.includes('ERR_ABORTED')) unloaded.push(`${r.url()} ${why}`.trim());
+  });
   await page.goto(URL);
   await page.waitForSelector('#sidebar');
   await page.waitForTimeout(800);

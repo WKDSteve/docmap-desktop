@@ -3391,6 +3391,13 @@ body.has-bar {
   margin: 8px 0 0;
 }
 
+/* The button that writes into the project: weight and an ink border, as Trust has. */
+.rules-decide-go:not(:disabled) {
+  border-color: var(--ink);
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .rules-decide-why {
   margin: 6px 0 0;
 }

@@ -5084,7 +5084,7 @@ function drawDecide(id, row, box) {
   wrap.append(fields);
 
   const bar = node("div", "rules-decide-bar");
-  const accept = node("button", "addbox-primary", t("rules.run.decide.accept"));
+  const accept = node("button", "addbox-secondary rules-decide-go", t("rules.run.decide.accept"));
   accept.type = "button";
   accept.dataset.fk = "decide:accept";
   accept.disabled = f.busy || !offer.accept.ok;
@@ -5117,7 +5117,8 @@ function drawDecide(id, row, box) {
       ? fill(t("rules.run.accept.unknown"), { error: st.runFresh.error })
       : t(offer.accept.why);
     accept.title = why;
-    wrap.append(node("p", "rules-note rules-decide-why", why));
+    // an outdated proposal says so above, once is enough
+    if (!freshKey(row.fresh)) wrap.append(node("p", "rules-note rules-decide-why", why));
   }
 
   if (f.waiving === row.id) {
@@ -5132,7 +5133,7 @@ function drawDecide(id, row, box) {
       decideField(t("rules.run.waive.expires"), textInput(f.expires, (v) => (f.expires = v), "date"), "waive:expires"),
       decideField(t("rules.run.waive.paths"), paths, "waive:paths")
     );
-    const go = node("button", "addbox-primary", t("rules.run.waive.go"));
+    const go = node("button", "addbox-secondary rules-decide-go", t("rules.run.waive.go"));
     go.type = "button";
     go.dataset.fk = "waive:go";
     go.disabled = f.busy;

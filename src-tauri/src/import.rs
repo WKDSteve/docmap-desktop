@@ -2,6 +2,7 @@
 
 use super::*;
 use std::sync::PoisonError;
+use std::time::Duration;
 
 /// One candidate directory found under a folder someone pointed at, before
 /// it becomes a `Project`.
@@ -543,23 +544,52 @@ pub(crate) async fn import_from_url(
 
     // A partial clone would otherwise permanently occupy `dest`, so every
     // retry after a failure, a timeout or a Cancel would hit "directory
-    // already exists" instead of trying again. The clone and everything it
-    // started have ended by now (`proc`), so nothing writes there any more.
+    // already exists" instead of trying again. After a Cancel the clone's
+    // processes are being ended, not yet gone: on Windows `git` or
+    // `git-remote-https` can still hold a pack file open for a moment, so the
+    // removal tries again for a short while (`remove_partial_clone`).
     let out = match out {
         Ok(out) => out,
         Err(e) => {
-            let _ = fs::remove_dir_all(&dest);
+            remove_partial_clone(dest).await;
             return Err(e);
         }
     };
     if !out.success() {
-        let _ = fs::remove_dir_all(&dest);
+        remove_partial_clone(dest).await;
         return Err(
             AppError::new("err.git.cloneFailed").detail(String::from_utf8_lossy(&out.stderr))
         );
     }
 
     add_imported(&app, &dest, &url)
+}
+
+/// How long [`remove_partial_clone`] keeps trying.
+const PARTIAL_CLONE_GRACE: Duration = Duration::from_secs(5);
+
+/// Remove the folder of a clone that did not finish, off the async threads.
+async fn remove_partial_clone(dest: PathBuf) {
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        remove_dir_patiently(&dest, PARTIAL_CLONE_GRACE)
+    })
+    .await;
+}
+
+/// Remove `dir`, trying again until `grace` has passed while a file in it is
+/// still held open (a process that is being ended). True when it is gone.
+pub(crate) fn remove_dir_patiently(dir: &Path, grace: Duration) -> bool {
+    let deadline = std::time::Instant::now() + grace;
+    loop {
+        match fs::remove_dir_all(dir) {
+            Ok(()) => return true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(_) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(_) => return !dir.exists(),
+        }
+    }
 }
 
 /// The `git clone` of an import (`proc`: bound to the app, no window).
@@ -635,4 +665,40 @@ pub(crate) async fn list_github_repos() -> github::RepoList {
             problem: Some(github::ListProblem::Failed),
             message: Some(e.to_string()),
         })
+}
+
+#[cfg(test)]
+mod remove_tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_partial_clone_is_removed_once_the_file_held_open_is_let_go() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir().join(format!("docmap-partial-clone-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let pack = dir.join(".git").join("tmp_pack_x");
+        std::fs::write(&pack, b"pack").unwrap();
+        // Held open without FILE_SHARE_DELETE, as a git that is being ended holds its pack.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0x1 | 0x2)
+            .open(&pack)
+            .unwrap();
+        let letting_go = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(400));
+            drop(held);
+        });
+        let gone = remove_dir_patiently(&dir, Duration::from_secs(5));
+        letting_go.join().unwrap();
+        let still_there = dir.exists();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(gone && !still_there, "the partial clone is still there");
+    }
+
+    #[test]
+    fn a_folder_that_is_not_there_counts_as_removed() {
+        let dir = std::env::temp_dir().join("docmap-partial-clone-never-made");
+        assert!(remove_dir_patiently(&dir, Duration::from_millis(10)));
+    }
 }

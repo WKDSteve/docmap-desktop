@@ -612,7 +612,7 @@ pub(crate) const EDITOR_WINDOW: appkit_core::launch::Window =
 /// looked up on `PATH` here, as the system used to.
 pub(crate) fn start_editor(program: &str, args: &[String]) -> Result<(), String> {
     use appkit_core::launch::{spawn, LaunchOpts};
-    let path = crate::proc::resolve(Path::new(program))
+    let path = crate::proc::resolve_command(Path::new(program))
         .ok_or_else(|| format!("{program} was not found (neither a file nor a program on PATH)"))?;
     // The folder it starts in: the app's own, as before, or the temp folder
     // when that is not an absolute local folder.

@@ -217,19 +217,27 @@ impl Cmd {
     }
 }
 
-/// The absolute path of `program`: itself when it is absolute, else the first
-/// match on `PATH` (on Windows with the extensions of `PATHEXT` when it has
-/// none). The helper starts nothing by a bare name, so the lookup the system
-/// used to do happens here, once per call, visibly.
+/// The absolute path of a child of the app (`git`, `gh`, `nvim`, the engine):
+/// itself when it is absolute, else the first match on `PATH`. On Windows a
+/// bare name takes `.exe` only, as `std::process::Command` did before the
+/// helper: with all of `PATHEXT` an earlier `git.bat` or `gh.cmd` on `PATH`
+/// would run through a hidden `cmd.exe`, and a `gh.js` would fail to start
+/// instead of falling through to `gh.exe`. The helper starts nothing by a bare
+/// name, so the lookup happens here, once per call, visibly.
 pub fn resolve(program: &Path) -> Option<PathBuf> {
-    if program.is_absolute() {
-        return program.is_file().then(|| program.to_path_buf());
-    }
-    // A relative path with a folder in it is not a name to look up.
-    if program.components().count() != 1 {
-        return None;
-    }
-    let path = std::env::var_os("PATH")?;
+    let extensions = if cfg!(windows) && program.extension().is_none() {
+        vec![OsString::from(".exe")]
+    } else {
+        vec![OsString::new()]
+    };
+    resolve_on(program, &std::env::var_os("PATH")?, &extensions)
+}
+
+/// The absolute path of the user's own command (the editor): like [`resolve`],
+/// but a bare name takes every extension of `PATHEXT`, as a shell would, so a
+/// `code.cmd` wrapper is found. It is started visibly in its own console
+/// (`launch`), never as a hidden child.
+pub fn resolve_command(program: &Path) -> Option<PathBuf> {
     let extensions: Vec<OsString> = if cfg!(windows) && program.extension().is_none() {
         std::env::var("PATHEXT")
             .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string())
@@ -240,7 +248,20 @@ pub fn resolve(program: &Path) -> Option<PathBuf> {
     } else {
         vec![OsString::new()]
     };
-    std::env::split_paths(&path)
+    resolve_on(program, &std::env::var_os("PATH")?, &extensions)
+}
+
+/// The lookup of [`resolve`] and [`resolve_command`] on a given `PATH`, with
+/// the extensions a bare name may take (an empty one: the name as it is).
+fn resolve_on(program: &Path, path: &OsStr, extensions: &[OsString]) -> Option<PathBuf> {
+    if program.is_absolute() {
+        return program.is_file().then(|| program.to_path_buf());
+    }
+    // A relative path with a folder in it is not a name to look up.
+    if program.components().count() != 1 {
+        return None;
+    }
+    std::env::split_paths(path)
         .filter(|dir| dir.is_absolute())
         .flat_map(|dir| {
             extensions.iter().map(move |ext| {
@@ -662,5 +683,29 @@ mod tests {
         );
         assert_eq!(resolve(Path::new("sub/cmd")), None);
         assert_eq!(resolve(&found), Some(found.clone()));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_child_takes_the_exe_of_a_name_and_skips_a_batch_file_earlier_on_path() {
+        let root = std::env::temp_dir().join(format!("docmap-resolve-{}", std::process::id()));
+        let (early, late) = (root.join("early"), root.join("late"));
+        std::fs::create_dir_all(&early).unwrap();
+        std::fs::create_dir_all(&late).unwrap();
+        std::fs::write(early.join("tool.bat"), "@echo off\r\n").unwrap();
+        std::fs::write(early.join("tool.js"), "").unwrap();
+        std::fs::write(late.join("tool.exe"), "").unwrap();
+        let path = std::env::join_paths([&early, &late]).unwrap();
+        let child = resolve_on(Path::new("tool"), &path, &[OsString::from(".exe")]);
+        let command = resolve_on(
+            Path::new("tool"),
+            &path,
+            &[".js", ".bat", ".exe"].map(OsString::from),
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        // A child of the app: the .exe, never the batch file or script before it.
+        assert_eq!(child, Some(late.join("tool.exe")));
+        // The user's command (the editor) still finds what a shell would.
+        assert_eq!(command, Some(early.join("tool.js")));
     }
 }

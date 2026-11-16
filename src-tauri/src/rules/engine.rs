@@ -1,4 +1,5 @@
-//! What the Rules tab asks of the engine: `rules/catalog` and `rules/run`.
+//! What the Rules tab asks of the engine: `rules/catalog`, `rules/run` and
+//! `rules/judged`.
 //!
 //! Both are routes of the standalone engine (`docmap.nvim`
 //! `core/rules_api.lua`, which wires `rules.nvim`), so the list of rules and
@@ -50,6 +51,9 @@ pub struct CliRoutes {
     /// vault a user names in `RULES_VAULT` is theirs to name. A test empties that variable, so
     /// its fixture is the only ruleset there is.
     env: Vec<(String, String)>,
+    /// `rules/judged` is among its routes (an engine from before it has the
+    /// rules without it).
+    judged: bool,
 }
 
 impl CliRoutes {
@@ -61,10 +65,14 @@ impl CliRoutes {
         if !(caps.iter().any(|c| c == "api") && caps.iter().any(|c| c == "rules")) {
             return Err(AppError::new("err.rules.engineOld").with("engine", &program));
         }
+        let judged = crate::agent::engine::routes(&program, grammars.as_deref())?
+            .iter()
+            .any(|r| r == crate::agent::engine::JUDGED_ROUTE);
         Ok(CliRoutes {
             program,
             grammars,
             env: Vec::new(),
+            judged,
         })
     }
 
@@ -105,6 +113,25 @@ impl CliRoutes {
         serde_json::from_slice(&out.stdout).map_err(|_| {
             AppError::new("err.rules.engine").detail("the engine did not answer with JSON")
         })
+    }
+}
+
+impl CliRoutes {
+    /// `rules/judged` of the project at `root`: what a person decided (the
+    /// verdicts and waivers), read by `rules.nvim`'s own readers, the engine's
+    /// answer as it is. It runs no ruleset code; `git log` decides whether a
+    /// verdict is stale, so it gets the catalog's time.
+    pub fn judged(&self, root: &Path) -> Result<Value, AppError> {
+        if !self.judged {
+            return Err(AppError::new("err.rules.engineNoJudged").with("engine", &self.program));
+        }
+        self.call(
+            root,
+            crate::agent::engine::JUDGED_ROUTE,
+            &[],
+            CATALOG_TIMEOUT,
+            None,
+        )
     }
 }
 

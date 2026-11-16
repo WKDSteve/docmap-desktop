@@ -3,12 +3,13 @@
 //!
 //! `RULES_AGENT_CONCEPT.md` step P3. Four parts:
 //!
-//! - [`engine`] asks the standalone engine for `rules/catalog` and
-//!   `rules/run`; the list and the run are `rules.nvim`'s, not rebuilt here;
+//! - [`engine`] asks the standalone engine for `rules/catalog`,
+//!   `rules/run` and `rules/judged`; the list, the run and the reading of
+//!   verdicts and waivers are `rules.nvim`'s, not rebuilt here;
 //! - [`trust`] is the one thing this side decides: which rulesets may run
 //!   their `lua_predicate` checks (D5), by real path and content hash;
-//! - [`judged`] reads which rules a person decided about (verdicts, waivers),
-//!   for the window only;
+//! - [`judged`] puts the engine's answer about which rules a person decided
+//!   (verdicts, waivers) into the shape the window reads;
 //! - [`tab`] puts the two together for the window, and [`commands`] are the
 //!   Tauri commands.
 //!

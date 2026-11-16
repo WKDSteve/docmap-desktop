@@ -180,6 +180,7 @@ pub const ENGLISH: &[(&str, &str)] = &[
     // The Rules tab: the catalog, the mechanical run and the trust store (`rules/`).
     ("err.rules.engine", "The docmap engine could not answer for the rules"),
     ("err.rules.engineOld", "{engine} is a docmap engine without the rules engine. Rebuild it from docmap.nvim, or point at a newer one"),
+    ("err.rules.engineNoJudged", "{engine} is a docmap engine that cannot report verdicts and waivers. Update it to the one this app was checked against"),
     ("err.rules.shape", "The docmap engine answered for the rules with something unexpected"),
     ("err.rules.timeout", "The rules run was stopped after {secs} s without an answer. A check of a ruleset does not finish"),
     ("err.rules.trustStore", "{path} is not readable as the list of trusted rulesets, so no ruleset is trusted. Repair the file or delete it"),

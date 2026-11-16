@@ -485,10 +485,11 @@ there is no "accept all".
 The two files are written by the engine, through `rules.nvim`'s own writers (`rules/accept` and `rules/waive` of
 docmap.nvim's standalone engine): the same code `:Rules` runs in Neovim, so the files stay in the shape it reads.
 When it refuses (a verdicts file it cannot use, a rule waived already), the detail says why and the file is as it
-was; the proposal stays open. An engine older than these two routes is named as such. On Windows the name, the
-note, the reason and the paths are written in plain ASCII for now (no `ä`, `ü`, `ß`): the engine reads its command
-line through the system's code page and would change such letters, so the window refuses them before anything is
-written.
+was; the proposal stays open. An engine older than these two routes, or one that cannot take the texts from a file,
+is named as such. The name, the note, the reason and the paths go to the engine as a UTF-8 file (`--input=`), not on
+its command line, so `ä`, `ü`, `ß` or `中` are written as typed, on Windows too. Which rules are decided, and whether
+a waiver has run out, the Rules tab asks the engine as well (`rules/judged`): the day a waiver ends is the engine's
+local day, the one a run waives by.
 
 **Talking about a rule or a run.** **Chat about <rule>…** in the detail of a rule, or **Chat about this run…** above
 the queue, opens a conversation with the run's model. Opening it sends nothing; a message goes out when you press

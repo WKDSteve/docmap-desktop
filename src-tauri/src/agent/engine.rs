@@ -178,7 +178,8 @@ pub trait Judge: Send + Sync {
     ) -> Result<Value, AppError>;
 
     /// `rules/waive`: a waiver of `rule` with `reason`, until `expires`
-    /// (`YYYY-MM-DD`), limited to `paths` when there are any.
+    /// (`YYYY-MM-DD`), limited to `paths` when there are any. `scratch` as for
+    /// [`Judge::accept`], for the file with the texts.
     fn waive(
         &self,
         root: &Path,
@@ -186,6 +187,7 @@ pub trait Judge: Send + Sync {
         reason: &str,
         expires: Option<&str>,
         paths: &[String],
+        scratch: &Path,
     ) -> Result<Value, AppError>;
 }
 
@@ -269,6 +271,21 @@ pub(crate) fn capabilities(program: &str, grammars: Option<&str>) -> Result<Vec<
         .and_then(|c| serde_json::from_value(c).ok())
         .unwrap_or_default())
 }
+
+/// The `/api/*` routes the engine lists in `--capabilities`; nothing when it
+/// does not answer the question.
+pub(crate) fn routes(program: &str, grammars: Option<&str>) -> Result<Vec<String>, AppError> {
+    Ok(capabilities_answer(program, grammars)?
+        .and_then(|stdout| serde_json::from_slice::<Value>(&stdout).ok())
+        .and_then(|v| v.get("routes").cloned())
+        .and_then(|r| serde_json::from_value(r).ok())
+        .unwrap_or_default())
+}
+
+/// The route that came with `--input=<file>` (docmap.nvim `0fe645e`): an
+/// engine that lists it takes the texts of `rules/accept` and `rules/waive`
+/// from a UTF-8 file, and there is no capability of its own for that.
+pub(crate) const JUDGED_ROUTE: &str = "rules/judged";
 
 /// The standalone `docmap` binary, one process per call.
 pub struct CliEngine {
@@ -389,7 +406,13 @@ impl CliJudge {
     pub fn new(program: String, grammars: Option<String>) -> Result<CliJudge, AppError> {
         let caps = capabilities(&program, grammars.as_deref())?;
         let has = |c: &str| caps.iter().any(|x| x == c);
-        if !(has("api") && has("rules") && has("rules-agent") && has("rules-write")) {
+        // `--input=` is how the texts a person typed reach the engine unchanged
+        // ([`input_file`]); an engine without it would get them through the
+        // ANSI code page on Windows.
+        let input = routes(&program, grammars.as_deref())?
+            .iter()
+            .any(|r| r == JUDGED_ROUTE);
+        if !(has("api") && has("rules") && has("rules-agent") && has("rules-write") && input) {
             return Err(AppError::new("err.agent.engineNoWrite").with("engine", &program));
         }
         Ok(CliJudge(CliEngine {
@@ -414,14 +437,17 @@ impl Judge for CliJudge {
             .map_err(|e| AppError::new("err.workspace.serialise").detail(e))?;
         // A file, as `--answer=` is, in the run's own folder (`TempAnswer::write_in`). Removed when done.
         let file = TempAnswer::write_in(scratch, "proposal", &text)?;
-        let mut flags = vec![
+        let mut texts = serde_json::Map::new();
+        texts.insert("by".into(), Value::from(by));
+        if let Some(note) = note {
+            texts.insert("note".into(), Value::from(note));
+        }
+        let input = input_file(scratch, texts)?;
+        let flags = vec![
             format!("--select={rule}"),
             format!("--proposal={}", answer_arg(file.path()).display()),
-            format!("--by={by}"),
+            format!("--input={}", answer_arg(input.path()).display()),
         ];
-        if let Some(note) = note {
-            flags.push(format!("--note={note}"));
-        }
         written(self.0.call(root, "rules/accept", &flags)?)
     }
 
@@ -432,16 +458,38 @@ impl Judge for CliJudge {
         reason: &str,
         expires: Option<&str>,
         paths: &[String],
+        scratch: &Path,
     ) -> Result<Value, AppError> {
-        let mut flags = vec![format!("--select={rule}"), format!("--reason={reason}")];
+        let mut texts = serde_json::Map::new();
+        texts.insert("reason".into(), Value::from(reason));
         if let Some(day) = expires {
-            flags.push(format!("--expires={day}"));
+            texts.insert("expires".into(), Value::from(day));
         }
         if !paths.is_empty() {
-            flags.push(format!("--paths={}", paths.join(",")));
+            texts.insert("paths".into(), Value::from(paths.to_vec()));
         }
+        let input = input_file(scratch, texts)?;
+        let flags = vec![
+            format!("--select={rule}"),
+            format!("--input={}", answer_arg(input.path()).display()),
+        ];
         written(self.0.call(root, "rules/waive", &flags)?)
     }
+}
+
+/// The texts a person typed (`by`, `note`, `reason`, `expires`, `paths`) as
+/// the UTF-8 JSON file of `--input=`, in the run's own folder like the
+/// proposal file, removed when done. On the command line the standalone
+/// engine reads them through the ANSI code page on Windows: measured
+/// 2026-11-15, a reason with `ü` was refused as "a control character" and
+/// one with `中` was written as `?`. Through the file they arrive as typed.
+fn input_file(
+    scratch: &Path,
+    texts: serde_json::Map<String, Value>,
+) -> Result<TempAnswer, AppError> {
+    let text = serde_json::to_string(&Value::Object(texts))
+        .map_err(|e| AppError::new("err.workspace.serialise").detail(e))?;
+    TempAnswer::write_in(scratch, "input", &text)
 }
 
 /// A writer's answer: as it is when the engine wrote (or found the same entry

@@ -58,22 +58,7 @@ fn one_line(value: &str, max: usize, key: &'static str) -> Result<String, AppErr
     if v.is_empty() || v.chars().count() > max || v.chars().any(char::is_control) {
         return Err(AppError::new(key));
     }
-    reaches_the_engine(v)?;
     Ok(v.to_string())
-}
-
-/// Whether `text` arrives at the engine as it was written. On Windows the
-/// standalone engine reads its command line through the ANSI code page
-/// (`answer_arg` says the same of paths): measured 2026-11-15, a reason with
-/// `ü` was refused as "a control character" and one with `中` was written into
-/// `.rules-waivers.json` as `?`. A text that would be changed on its way is
-/// refused here, before anything is written, until the engine takes these
-/// texts another way.
-fn reaches_the_engine(text: &str) -> Result<(), AppError> {
-    if cfg!(windows) && !text.is_ascii() {
-        return Err(AppError::new("err.agent.ascii").with("text", text));
-    }
-    Ok(())
 }
 
 /// An optional line: empty is none.
@@ -108,8 +93,9 @@ fn day(value: Option<&str>) -> Result<Option<String>, AppError> {
     Ok(Some(v.to_string()))
 }
 
-/// Paths of a waiver: relative, one per entry. The engine is handed them
-/// comma-joined, so a comma cannot be part of one.
+/// Paths of a waiver: relative, one per entry. A comma cannot be part of one:
+/// the engine's `--paths=` splits on it, and a waiver should mean the same
+/// whichever way it was written.
 fn paths(values: &[String]) -> Result<Vec<String>, AppError> {
     let out: Vec<String> = values
         .iter()
@@ -122,9 +108,6 @@ fn paths(values: &[String]) -> Result<Vec<String>, AppError> {
             .any(|p| p.contains(',') || p.chars().any(char::is_control))
     {
         return Err(AppError::new("err.agent.paths"));
-    }
-    for p in &out {
-        reaches_the_engine(p)?;
     }
     Ok(out)
 }
@@ -232,7 +215,8 @@ pub fn waive(
     let _one = DECIDE.lock().map_err(|_| AppError::new("err.lock"))?;
     let store = Store::new(root);
     let (mut run, _) = open(&store, run_id, rule)?;
-    let answer = judge.waive(root, rule, &reason, expires.as_deref(), &paths)?;
+    let scratch = store.scratch(run_id)?;
+    let answer = judge.waive(root, rule, &reason, expires.as_deref(), &paths, &scratch)?;
     let waiver = answer.get("waiver").cloned().unwrap_or(Value::Null);
     let written_paths = waiver
         .get("paths")
@@ -402,6 +386,7 @@ pub(super) mod tests {
             reason: &str,
             expires: Option<&str>,
             paths: &[String],
+            _: &Path,
         ) -> Result<Value, AppError> {
             self.waived.lock().unwrap().push((
                 rule.into(),
@@ -639,44 +624,37 @@ pub(super) mod tests {
         assert_eq!(waive(&root, "r1", "A-1", &none, &w).unwrap().expires, None);
     }
 
-    #[cfg(windows)]
     #[test]
-    fn a_text_the_engine_would_change_on_windows_is_refused_before_it_is_handed_over() {
+    fn a_text_beyond_ascii_is_handed_to_the_engine_as_typed() {
+        // The engine takes these texts from a UTF-8 file (`--input=`), so a name
+        // or reason in another script is no reason to refuse a decision.
         let plan = plan_of(prompt("a", "x"));
-        let root = seed("docmap-decide-ascii", &plan);
+        let root = seed("docmap-decide-unicode", &plan);
         let w = Writer::default();
-        let e = accept(
+        accept(
             &root,
             "r1",
             "A-1",
             "M\u{fc}ller",
-            None,
-            &PlanAs(plan.clone()),
+            Some("gepr\u{fc}ft"),
+            &PlanAs(plan),
             &w,
         )
-        .unwrap_err();
-        assert_eq!(e.key(), "err.agent.ascii");
-        let e = accept(&root, "r1", "A-1", "P", Some("f\u{fc}r"), &PlanAs(plan), &w).unwrap_err();
-        assert_eq!(e.key(), "err.agent.ascii");
-        for args in [
-            WaiveArgs {
-                by: "P".into(),
-                reason: "x \u{4e2d}".into(),
-                ..Default::default()
-            },
-            WaiveArgs {
-                by: "P".into(),
-                reason: "r".into(),
-                paths: vec!["lua/\u{e4}.lua".into()],
-                ..Default::default()
-            },
-        ] {
-            assert_eq!(
-                waive(&root, "r1", "A-1", &args, &w).unwrap_err().key(),
-                "err.agent.ascii"
-            );
+        .unwrap();
+        {
+            let accepted = w.accepted.lock().unwrap();
+            assert_eq!(accepted[0].2, "M\u{fc}ller");
+            assert_eq!(accepted[0].3.as_deref(), Some("gepr\u{fc}ft"));
         }
-        assert!(w.accepted.lock().unwrap().is_empty() && w.waived.lock().unwrap().is_empty());
+        let args = WaiveArgs {
+            by: "P".into(),
+            reason: "generiert \u{4e2d}".into(),
+            paths: vec!["lua/\u{e4}.lua".into()],
+            ..Default::default()
+        };
+        let d = waive(&root, "r1", "B-2", &args, &w).unwrap();
+        assert_eq!(d.reason.as_deref(), Some("generiert \u{4e2d}"));
+        assert_eq!(w.waived.lock().unwrap()[0].3, vec!["lua/\u{e4}.lua"]);
     }
 
     #[test]
@@ -698,6 +676,14 @@ pub(super) mod tests {
         crate::agent::engine::CliEngine,
         crate::agent::engine::CliJudge,
     )> {
+        let exe = real_engine_exe()?;
+        let engine = crate::agent::engine::CliEngine::new(exe.clone(), None).ok()?;
+        let judge = crate::agent::engine::CliJudge::new(exe, None).ok()?;
+        Some((engine, judge))
+    }
+
+    /// The engine binary in `src-tauri/binaries`, if one is there.
+    fn real_engine_exe() -> Option<String> {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries");
         let exe = fs::read_dir(dir)
             .ok()?
@@ -708,10 +694,7 @@ pub(super) mod tests {
                     .is_some_and(|n| n.to_string_lossy().starts_with("docmap-"))
                     && fs::metadata(p).is_ok_and(|m| m.len() > 0)
             })?;
-        let exe = exe.to_string_lossy().into_owned();
-        let engine = crate::agent::engine::CliEngine::new(exe.clone(), None).ok()?;
-        let judge = crate::agent::engine::CliJudge::new(exe, None).ok()?;
-        Some((engine, judge))
+        Some(exe.to_string_lossy().into_owned())
     }
 
     /// A project with a ruleset beside it: two manual rules with a scope, one with a check. Under the build
@@ -846,7 +829,7 @@ pub(super) mod tests {
             .unwrap()
             .flatten()
             .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.starts_with("docmap-proposal-"))
+            .filter(|n| n.starts_with("docmap-proposal-") || n.starts_with("docmap-input-"))
             .collect();
         assert!(left.is_empty(), "{left:?}");
 
@@ -861,7 +844,8 @@ pub(super) mod tests {
         // but the rule can be waived, through the engine; a second waiver of it is the engine's refusal
         let args = WaiveArgs {
             by: "A Person".into(),
-            reason: "the module is replaced next month".into(),
+            // beyond ASCII and beyond the ANSI code page: arrives as typed through `--input=`
+            reason: "the module is replaced next month (f\u{fc}r \u{4e2d})".into(),
             expires: Some("2099-12-31".into()),
             paths: vec!["lua/a.lua".into()],
         };
@@ -872,11 +856,18 @@ pub(super) mod tests {
                 .unwrap();
         assert_eq!(
             waivers["M-01"]["reason"],
-            json!("the module is replaced next month")
+            json!("the module is replaced next month (f\u{fc}r \u{4e2d})")
         );
         assert_eq!(waivers["M-01"]["expires"], json!("2099-12-31"));
         let again = judge
-            .waive(&project, "M-01", "again", None, &[])
+            .waive(
+                &project,
+                "M-01",
+                "again",
+                None,
+                &[],
+                &Store::new(&project).scratch("r1").unwrap(),
+            )
             .unwrap_err();
         assert_eq!(again.key(), "err.agent.refused");
         assert!(
@@ -886,10 +877,16 @@ pub(super) mod tests {
             "{again}"
         );
 
-        // and what the Rules tab reads of the two files agrees with what the engine wrote
-        let judged = crate::rules::judged::read(&project, "2026-11-15");
+        // and what the Rules tab reads of the two files (`rules/judged`) agrees with what the engine wrote
+        let routes =
+            crate::rules::engine::CliRoutes::new(real_engine_exe().unwrap(), None).unwrap();
+        let judged = crate::rules::judged::from_engine(&routes.judged(&project).unwrap()).unwrap();
         assert_eq!(judged.verdicts["M-02"].by, "A Person");
         assert!(judged.waivers.contains_key("M-01") && !judged.waivers["M-01"].expired);
+        assert_eq!(
+            judged.waivers["M-01"].reason,
+            "the module is replaced next month (f\u{fc}r \u{4e2d})"
+        );
         assert!(judged.unreadable.is_empty());
 
         // a rule with a check is not the writer's: refused, and the file is as it was

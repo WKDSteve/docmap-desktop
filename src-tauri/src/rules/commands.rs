@@ -207,15 +207,12 @@ pub fn rules_trust_revoke(app: tauri::AppHandle, id: String, path: String) -> Re
     tab::revoke(&known, &root, &file, &path)
 }
 
-/// The verdicts and waivers of the project, as the tab shows them. Reads two
-/// files; no engine.
+/// The verdicts and waivers of the project, as the tab shows them: the
+/// engine's `rules/judged`.
 #[tauri::command(async)]
 pub fn rules_judged(app: tauri::AppHandle, id: String) -> Result<super::judged::Judged, AppError> {
     let root = project_root(&app, &id)?;
-    Ok(super::judged::read(
-        &root,
-        &crate::agent::date_of(crate::agent::now_ms()),
-    ))
+    super::judged::from_engine(&routes(&app)?.judged(&root)?)
 }
 
 /// The code of one predicate rule, for the trust dialog.

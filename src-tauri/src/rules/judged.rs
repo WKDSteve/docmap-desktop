@@ -3,29 +3,21 @@
 //! Rules tab to show in its Agent column and to leave out of the count of
 //! open manual rules.
 //!
-//! **A reader for the window, not a second definition of either file.** The
-//! engine answers no route with them (`rules/run` reports a waived manual rule
-//! as `manual`), and they are written only by `rules.nvim`'s writers, run by the
-//! engine (`agent/decide.rs`). So this reads the few fields it shows and judges
-//! nothing a run depends on: an entry it does not understand is left out, and a
-//! file it cannot read at all is reported as such (the count then subtracts
-//! nothing for it), never taken as "no verdicts". Whether a waiver has expired
-//! is compared with today's date in UTC; `rules.nvim` uses the local day, so for
-//! a few hours around midnight the two can disagree about the last day.
+//! **The engine reads both files, not this side.** `rules/judged` (docmap.nvim
+//! `0fe645e`) answers with `rules.nvim`'s own readers, the files' only
+//! definition: a waiver is expired by the engine's local day, the day
+//! `rules/run` waives by, and a verdict is stale when a file of its evidence
+//! changed in a commit after it was accepted. This module only puts that answer
+//! into the shape the window reads (maps by rule id). A file that is there and
+//! cannot be used is in `unreadable` (the count then subtracts nothing for it),
+//! never taken as "no verdicts"; an entry without an id is left out.
 
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::Path;
 
 use serde::Serialize;
 use serde_json::Value;
 
-/// The verdicts file at the project root (`rules.engine.verdicts.FILE`).
-pub const VERDICTS: &str = ".rules-verdicts.json";
-/// The waivers file at the project root (`rules.engine.waivers.FILE`).
-pub const WAIVERS: &str = ".rules-waivers.json";
-/// Far above what the writers allow (1000 verdicts, 500 waivers).
-const MAX_BYTES: u64 = 4 * 1024 * 1024;
+use crate::apperr::AppError;
 
 /// One verdict, as the window shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -34,6 +26,9 @@ pub struct Verdict {
     pub verdict: String,
     pub date: String,
     pub by: String,
+    /// A file of its evidence changed in a commit after it was accepted;
+    /// `None` when the engine could not tell (no git).
+    pub stale: Option<bool>,
 }
 
 /// One waiver, as the window shows it.
@@ -56,133 +51,120 @@ pub struct Judged {
     pub unreadable: Vec<String>,
 }
 
-/// The JSON object in `root/name`: `Ok(None)` when there is no file, `Err`
-/// when there is one that cannot be used (a link, too large, not an object).
-fn object(root: &Path, name: &str) -> Result<Option<serde_json::Map<String, Value>>, ()> {
-    let path = root.join(name);
-    let meta = match fs::symlink_metadata(&path) {
-        Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(_) => return Err(()),
-    };
-    if !meta.is_file() || meta.len() > MAX_BYTES {
-        return Err(());
-    }
-    let text = fs::read_to_string(&path).map_err(|_| ())?;
-    match serde_json::from_str::<Value>(&text) {
-        Ok(Value::Object(o)) => Ok(Some(o)),
-        _ => Err(()),
-    }
-}
-
 fn text(v: &Value, key: &str) -> Option<String> {
     v.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
-/// The decisions of the project at `root`, judged against `today` (`YYYY-MM-DD`).
-pub fn read(root: &Path, today: &str) -> Judged {
+fn entries<'a>(answer: &'a Value, key: &str) -> Result<&'a [Value], AppError> {
+    match answer.get(key) {
+        Some(Value::Array(list)) => Ok(list),
+        // an empty list may come as an empty object from a JSON encoder
+        Some(Value::Object(o)) if o.is_empty() => Ok(&[]),
+        _ => Err(AppError::new("err.rules.shape")),
+    }
+}
+
+/// The engine's answer to `rules/judged`, as the window reads it. The engine's
+/// refusal (`available: false`) is an error with its reason, never an empty
+/// list: that would count every manual rule as open without saying why.
+pub fn from_engine(answer: &Value) -> Result<Judged, AppError> {
+    if answer.get("available").and_then(Value::as_bool) != Some(true) {
+        let reason = text(answer, "reason").unwrap_or_else(|| "no reason given".to_string());
+        return Err(AppError::new("err.rules.engine").detail(reason));
+    }
     let mut out = Judged::default();
-    match object(root, VERDICTS) {
-        Ok(Some(o)) => {
-            for (id, entry) in o {
-                let verdict = text(&entry, "verdict");
-                if let Some(verdict) = verdict.filter(|v| v == "violation" || v == "compliant") {
-                    out.verdicts.insert(
-                        id,
-                        Verdict {
-                            verdict,
-                            date: text(&entry, "date").unwrap_or_default(),
-                            by: text(&entry, "by").unwrap_or_default(),
-                        },
-                    );
-                }
-            }
-        }
-        Ok(None) => {}
-        Err(()) => out.unreadable.push(VERDICTS.to_string()),
+    for v in entries(answer, "verdicts")? {
+        let (Some(id), Some(verdict)) = (text(v, "id"), text(v, "verdict")) else {
+            continue;
+        };
+        out.verdicts.insert(
+            id,
+            Verdict {
+                verdict,
+                date: text(v, "date").unwrap_or_default(),
+                by: text(v, "by").unwrap_or_default(),
+                stale: v.get("stale").and_then(Value::as_bool),
+            },
+        );
     }
-    match object(root, WAIVERS) {
-        Ok(Some(o)) => {
-            for (id, entry) in o {
-                // `"ID": "reason"` and `"ID": { reason, expires?, paths? }`
-                let waiver = match &entry {
-                    Value::String(reason) => Some(Waiver {
-                        reason: reason.clone(),
-                        expires: None,
-                        expired: false,
-                        partial: false,
-                    }),
-                    Value::Object(_) => text(&entry, "reason").map(|reason| {
-                        let expires = text(&entry, "expires");
-                        Waiver {
-                            reason,
-                            // ISO dates compare as text
-                            expired: expires.as_deref().is_some_and(|d| d < today),
-                            expires,
-                            partial: entry
-                                .get("paths")
-                                .and_then(Value::as_array)
-                                .is_some_and(|p| !p.is_empty()),
-                        }
-                    }),
-                    _ => None,
-                };
-                if let Some(w) = waiver {
-                    out.waivers.insert(id, w);
-                }
-            }
-        }
-        Ok(None) => {}
-        Err(()) => out.unreadable.push(WAIVERS.to_string()),
+    for w in entries(answer, "waivers")? {
+        let (Some(id), Some(reason)) = (text(w, "id"), text(w, "reason")) else {
+            continue;
+        };
+        out.waivers.insert(
+            id,
+            Waiver {
+                reason,
+                expires: text(w, "expires"),
+                expired: w.get("expired").and_then(Value::as_bool) == Some(true),
+                partial: w.get("partial").and_then(Value::as_bool) == Some(true),
+            },
+        );
     }
-    out
+    for u in entries(answer, "unreadable")? {
+        if let Some(file) = text(u, "file") {
+            out.unreadable.push(file);
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testutil::fresh_dir;
+    use serde_json::json;
 
     #[test]
-    fn verdicts_and_waivers_are_read_with_the_expired_ones_marked() {
-        let root = fresh_dir("docmap-rules-judged");
-        assert_eq!(read(&root, "2026-11-15"), Judged::default());
-        fs::write(
-            root.join(VERDICTS),
-            r#"{ "M-1": { "verdict": "violation", "date": "2026-11-15", "by": "A Person", "evidence": [] },
-                 "M-2": { "verdict": "maybe" } }"#,
-        )
+    fn the_answer_of_the_engine_becomes_maps_by_rule_id() {
+        let j = from_engine(&json!({
+            "available": true, "today": "2026-11-16", "stale_checked": true,
+            "verdicts": [
+                {"id": "M-1", "verdict": "violation", "date": "2026-11-15", "by": "A Person", "evidence": 2, "stale": true},
+                {"verdict": "compliant"}
+            ],
+            "waivers": [
+                {"id": "M-3", "reason": "generated code", "expired": false, "partial": false},
+                {"id": "M-4", "reason": "until the rewrite", "expires": "2026-11-14", "expired": true, "partial": false},
+                {"id": "M-5", "reason": "f\u{fc}r \u{4e2d}", "expires": "2026-11-16", "paths": ["lua/gen"], "expired": false, "partial": true}
+            ],
+            "unreadable": []
+        }))
         .unwrap();
-        fs::write(
-            root.join(WAIVERS),
-            r#"{ "M-3": "generated code",
-                 "M-4": { "reason": "until the rewrite", "expires": "2026-11-14" },
-                 "M-5": { "reason": "today is the last day", "expires": "2026-11-15", "paths": ["lua/gen"] },
-                 "M-6": 7 }"#,
-        )
-        .unwrap();
-        let j = read(&root, "2026-11-15");
-        assert_eq!(
-            j.verdicts.len(),
-            1,
-            "an entry that is no verdict is left out"
-        );
+        assert_eq!(j.verdicts.len(), 1, "an entry without an id is left out");
         assert_eq!(j.verdicts["M-1"].by, "A Person");
+        assert_eq!(j.verdicts["M-1"].stale, Some(true));
         assert_eq!(j.waivers.len(), 3);
         assert!(!j.waivers["M-3"].expired);
-        assert!(j.waivers["M-4"].expired);
-        assert!(!j.waivers["M-5"].expired, "valid through its last day");
+        assert!(
+            j.waivers["M-4"].expired,
+            "the engine's word, not a second clock"
+        );
         assert!(j.waivers["M-5"].partial);
+        assert_eq!(j.waivers["M-5"].reason, "f\u{fc}r \u{4e2d}");
         assert!(j.unreadable.is_empty());
+        // empty lists may arrive as empty objects
+        let none = from_engine(
+            &json!({"available": true, "verdicts": {}, "waivers": {}, "unreadable": {}}),
+        );
+        assert_eq!(none.unwrap(), Judged::default());
     }
 
     #[test]
-    fn a_file_that_cannot_be_read_says_so_and_is_no_empty_list() {
-        let root = fresh_dir("docmap-rules-judged-broken");
-        fs::write(root.join(VERDICTS), "{ cut").unwrap();
-        fs::write(root.join(WAIVERS), "[]").unwrap();
-        let j = read(&root, "2026-11-15");
-        assert_eq!(j.unreadable, vec![VERDICTS, WAIVERS]);
-        assert!(j.verdicts.is_empty() && j.waivers.is_empty());
+    fn a_file_that_cannot_be_read_and_a_refusal_say_so_and_are_no_empty_list() {
+        let j = from_engine(&json!({
+            "available": true, "verdicts": [], "waivers": [],
+            "unreadable": [{"file": ".rules-verdicts.json", "reason": "not JSON"}]
+        }))
+        .unwrap();
+        assert_eq!(j.unreadable, vec![".rules-verdicts.json"]);
+        let e = from_engine(&json!({"available": false, "reason": "no rules engine"})).unwrap_err();
+        assert_eq!(e.key(), "err.rules.engine");
+        assert_eq!(e.detail_text(), Some("no rules engine"));
+        assert_eq!(
+            from_engine(&json!({"available": true, "verdicts": 3}))
+                .unwrap_err()
+                .key(),
+            "err.rules.shape"
+        );
     }
 }

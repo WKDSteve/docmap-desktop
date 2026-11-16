@@ -107,8 +107,8 @@ side by side, and a model's "compliant" as "no violation found". Runs outlive th
 A person decides about each proposal on its own: **Accept** (the verdict goes into `.rules-verdicts.json`),
 **Waive…** (a waiver into `.rules-waivers.json`) or **Reject** (nothing is written; the run remembers). The engine
 writes both files through `rules.nvim`'s own writers; an outdated proposal (its rule or files changed) is marked and
-cannot be accepted. The Rules tab shows the verdict or the waiver in the Agent column, and the sidebar counts only
-the manual rules without one.
+cannot be accepted. The Rules tab shows the verdict or the waiver in the Agent column, as the engine reads them
+(`rules/judged`), and the sidebar counts only the manual rules without one.
 
 A chat in the run view talks with the run's model about one rule or the whole run. Nothing is sent until **Send**;
 the lines above the input say where the text goes and what goes with it, with an estimated token count, and a

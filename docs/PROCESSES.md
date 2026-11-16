@@ -2,7 +2,7 @@
 
 Every program the window starts, with why, how long it lives and which way of
 [appkit's `docs/PROCESSES.md`](https://github.com/WKDSteve/appkit/blob/main/docs/PROCESSES.md)
-(rule `RS-08`) starts it. **A process that is not in this list is a bug.** The list is taken
+starts it. **A process that is not in this list is a bug.** The list is taken
 from the code (`tools/process-starts.allow`, the calls of `src-tauri/src/proc.rs`, which is
 `appkit_core::child`, and of `appkit_core::launch`) and checked against a measurement with
 `app-proc-watch`. For the buttons behind each start see

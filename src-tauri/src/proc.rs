@@ -333,7 +333,7 @@ impl Cancel {
         self.0.send_replace(true);
     }
 
-    fn is_cancelled(&self) -> bool {
+    pub fn is_cancelled(&self) -> bool {
         *self.0.borrow()
     }
 

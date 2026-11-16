@@ -506,21 +506,44 @@ pub(crate) async fn import_from_url(
     app: tauri::AppHandle,
     url: String,
 ) -> Result<Vec<Project>, AppError> {
+    // Stop can be pressed from the moment the window asked: registered before
+    // anything else of the import runs, forgotten however this command ends.
+    let cancel = proc::Cancel::default();
+    let _cloning = Cloning::set(&cancel);
+    import_into(
+        url,
+        &cancel,
+        || repos_cache_dir(&app),
+        |dir, url| add_imported(&app, dir, url),
+    )
+    .await
+}
+
+/// [`import_from_url`] without the app: `cache_dir` is where clones go, `add`
+/// adds the cloned folder as a project. A Stop before the clone starts, while
+/// the URL is checked or the target folder is looked up, ends the import
+/// there: nothing is cloned and no project is added, not even a clone that is
+/// already in the cache.
+async fn import_into(
+    url: String,
+    cancel: &proc::Cancel,
+    cache_dir: impl FnOnce() -> Result<PathBuf, AppError>,
+    add: impl FnOnce(&Path, &str) -> Result<Vec<Project>, AppError>,
+) -> Result<Vec<Project>, AppError> {
     let url = url.trim().to_owned();
     if let Some(problem) = clone_url_problem(&url) {
         return Err(AppError::new(problem));
     }
-    // Stop can be pressed from the moment the window asked: a Stop before git
-    // starts keeps it from starting. Forgotten however this command ends.
-    let cancel = proc::Cancel::default();
-    let _cloning = Cloning::set(&cancel);
-    let cache = repos_cache_dir(&app)?;
+    let cache = cache_dir()?;
     let (cache_for_lookup, url_for_lookup) = (cache.clone(), url.clone());
     let target = tauri::async_runtime::spawn_blocking(move || {
         clone_target(&cache_for_lookup, &url_for_lookup)
     })
     .await
     .map_err(AppError::task)??;
+    if cancel.is_cancelled() {
+        return Err(proc::ProcError::Cancelled.into_app("git"));
+    }
     let dest = match &target {
         CloneTarget::Existing(dir) | CloneTarget::Clone(dir) => dir.clone(),
     };
@@ -531,10 +554,11 @@ pub(crate) async fn import_from_url(
     }
 
     if let CloneTarget::Existing(dir) = target {
-        return add_imported(&app, &dir, &url);
+        return add(&dir, &url);
     }
 
     let cmd = clone_command(&url, &portable(&dest));
+    let cancel = cancel.clone();
     let out = tauri::async_runtime::spawn_blocking(move || {
         proc::run_cancellable(&cmd, CLONE_TIMEOUT, Some(&cancel)).map_err(|e| e.into_app("git"))
     })
@@ -562,7 +586,7 @@ pub(crate) async fn import_from_url(
         );
     }
 
-    add_imported(&app, &dest, &url)
+    add(&dest, &url)
 }
 
 /// How long [`remove_partial_clone`] keeps trying.
@@ -700,5 +724,69 @@ mod remove_tests {
     fn a_folder_that_is_not_there_counts_as_removed() {
         let dir = std::env::temp_dir().join("docmap-partial-clone-never-made");
         assert!(remove_dir_patiently(&dir, Duration::from_millis(10)));
+    }
+
+    /// Import `url` into `cache` with a Stop pressed while the target folder
+    /// is looked up; true when a project was added.
+    fn import_stopped_during_lookup(
+        cache: &Path,
+        url: &str,
+    ) -> (Result<Vec<Project>, AppError>, bool) {
+        let cancel = proc::Cancel::default();
+        let added = std::cell::Cell::new(false);
+        let result = tauri::async_runtime::block_on(import_into(
+            url.to_owned(),
+            &cancel,
+            || {
+                cancel.cancel();
+                Ok(cache.to_path_buf())
+            },
+            |_, _| {
+                added.set(true);
+                Ok(Vec::new())
+            },
+        ));
+        (result, added.get())
+    }
+
+    // A Stop before the clone started went nowhere for a URL that is already
+    // in the cache: the import added the project anyway.
+    #[test]
+    fn a_stop_before_the_clone_adds_no_project_already_cloned() {
+        let cache = crate::testutil::fresh_dir("import-stopped-existing");
+        let url = "https://github.com/a/foo";
+        let CloneTarget::Clone(dir) = clone_target(&cache, url).unwrap() else {
+            panic!("an empty cache has nothing to reuse");
+        };
+        std::fs::create_dir_all(dir.join(".git")).unwrap();
+        let ok = std::process::Command::new("git")
+            .arg("config")
+            .arg("--file")
+            .arg(portable(&dir.join(".git").join("config")))
+            .args(["remote.origin.url", url])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        assert_eq!(
+            clone_target(&cache, url).unwrap(),
+            CloneTarget::Existing(dir)
+        );
+
+        let (result, added) = import_stopped_during_lookup(&cache, url);
+        let _ = std::fs::remove_dir_all(&cache);
+        assert_eq!(result.unwrap_err().key(), "err.proc.cancelled");
+        assert!(!added, "a stopped import added the project");
+    }
+
+    #[test]
+    fn a_stop_before_the_clone_clones_nothing() {
+        let cache = crate::testutil::fresh_dir("import-stopped-new");
+        let (result, added) = import_stopped_during_lookup(&cache, "https://github.com/a/bar");
+        let left = std::fs::read_dir(&cache).unwrap().count();
+        let _ = std::fs::remove_dir_all(&cache);
+        assert_eq!(result.unwrap_err().key(), "err.proc.cancelled");
+        assert!(!added);
+        assert_eq!(left, 0, "a stopped import left a folder in the cache");
     }
 }

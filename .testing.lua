@@ -37,6 +37,23 @@ return {
           RULES_TRUST = "",
         },
       },
+      -- The same window, after a Lua project with two commits of a committed map is written below src-tauri/target
+      -- (scripts/e2e/map-history-fixture.mjs, with the engine of this checkout): the map's views and the comparison
+      -- of maps in the window's frame.
+      ["window-maps"] = {
+        build = {
+          { "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
+          { "node", "scripts/e2e/map-history-fixture.mjs" },
+        },
+        run = { "src-tauri/target/release/docmap-desktop.exe" },
+        env = {
+          DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
+          WEBVIEW2_USER_DATA_FOLDER = "${temp}/webview",
+          LOCALAPPDATA = "${temp}/local",
+          RULES_VAULT = "",
+          RULES_TRUST = "",
+        },
+      },
       -- The same window, after a fresh copy of the rules fixture with a finished agent run in it is made below
       -- src-tauri/target (scripts/e2e/rules-run-fixture.mjs, with the engine of this checkout): the sheet of the run
       -- view's decisions writes verdicts and waivers there, never into the tracked fixture.

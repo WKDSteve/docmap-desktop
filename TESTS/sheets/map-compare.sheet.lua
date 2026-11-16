@@ -3,12 +3,10 @@
 --   testing sheets step map-compare --headed
 -- The project is scripts/e2e/map-history-fixture.mjs's (app `window-maps`): two commits with a committed map. Its
 -- OLDER commit has `app.core.cache` and no `app.util`, so against the map on disk one node is added
--- (lua/app/util.lua), one lost (lua/app/core/cache.lua), one require gained and one lost.
+-- (lua/app/util.lua), one lost (lua/app/core/cache.lua), one require gained and one lost; app.log is the rest.
 --
--- Known red on Windows until two bugs of the engine of standalone-latest (aaf7462) are fixed and engine.lock follows:
--- `commits` is refused there ("value contains a %": git's --format goes through cmd.exe), so the bar lists no
--- commit (docmap.nvim/standalone-engine-unter-windows-git-format-mit-wird-verweige), and `shape/<sha>` stops at
--- "module 'docmap.core.diff' not found" (docmap.nvim/standalone-engine-shape-sha-bricht-ab-docmap-core-diff-fehlt).
+-- Needs the engine of docmap.nvim f1d8c36 or later (engine.lock): before it, `commits` was refused on Windows (a git
+-- --format with a % through cmd.exe) and `shape/<sha>` stopped at "module 'docmap.core.diff' not found".
 -- Needs tauri-driver and msedgedriver; not part of the CI (a desktop).
 -- (A sheet is loaded without the `table` library, so the lines are joined by hand.)
 local ADD = "(window.__mapSeed ||= (async () => {"

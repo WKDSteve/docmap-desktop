@@ -10,11 +10,13 @@
 // checkout (src-tauri/binaries) and committed with it:
 //
 //   OLDER  lua/app (requires app.core), app.core (requires app.core.store), app.core.store (requires app.core.cache),
-//          app.core.cache
+//          app.core.cache, app.log (requires nothing, required by nothing)
 //   NEWER  app.core.cache is gone; app.util is new and lua/app requires it. The map on disk is this one.
 //
 // So OLDER against the map on disk is one node added (lua/app/util.lua), one lost (lua/app/core/cache.lua), one
-// require gained (app -> app.util) and one lost (store -> cache).
+// require gained (app -> app.util) and one lost (store -> cache). app.log takes part in none of it: without a node
+// the comparison leaves alone, every box is marked and the page has no rest to dim (map-compare's "the rest is
+// dimmed" failed on exactly that once the engine answered).
 //
 // git runs without the global and system configuration of whoever runs this (GIT_CONFIG_GLOBAL is a file of the
 // fixture's own): a fixture commit carries no person's name and asks for no signing key.
@@ -86,6 +88,7 @@ module('lua/app/init.lua', 'app', ['app.core']);
 module('lua/app/core/init.lua', 'app.core', ['app.core.store']);
 module('lua/app/core/store.lua', 'app.core.store', ['app.core.cache']);
 module('lua/app/core/cache.lua', 'app.core.cache', []);
+module('lua/app/log.lua', 'app.log', []);
 commit('older: app, core, store, cache');
 
 rmSync(join(project, 'lua', 'app', 'core', 'cache.lua'));

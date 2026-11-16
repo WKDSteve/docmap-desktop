@@ -638,3 +638,13 @@ test("the chat is closed in the markup and its buttons have names before any scr
   }
   assert.match(box, /id="rules-chat-trimmed"[^>]*role="status"/, "a trimmed conversation is announced");
 });
+
+test("the decisions are asked for together with the catalog, not after it", () => {
+  // Both are engine calls since rules_judged asks the engine (rules/judged): one after the other would hold the
+  // Rules tab's count back by a whole engine call, seconds on Windows.
+  const body = MAIN.slice(MAIN.indexOf("function loadRules("), MAIN.indexOf("async function loadJudged("));
+  const judged = body.indexOf("loadJudged(id)");
+  const catalog = body.indexOf('invoke("rules_catalog"');
+  assert.ok(judged > 0 && catalog > 0, "loadRules reads both");
+  assert.ok(judged < catalog, "rules_judged starts before the catalog is asked for");
+});

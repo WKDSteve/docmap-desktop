@@ -3970,6 +3970,9 @@ function laneLabel(lane, n) {
 function loadRules(id) {
   const st = rulesOf(id);
   if (!st.loading) {
+    // Both are engine calls (seconds each on Windows), and neither needs the other's answer: started together, the
+    // count is right as soon as the catalog is there, not one engine call later.
+    const judged = loadJudged(id);
     st.loading = invoke("rules_catalog", { id })
       .then((catalog) => {
         st.catalog = catalog;
@@ -3982,8 +3985,7 @@ function loadRules(id) {
           const files = new Set(rules.map((r) => r.source_file)).size;
           st.grouping = files * 2 > rules.length && rules.length > 8 ? "family" : "file";
         }
-        // two small files, no engine: read with the catalog so the count is right at once
-        return loadJudged(id).then(() => catalog);
+        return judged.then(() => catalog);
       })
       .finally(() => {
         st.loading = null;
@@ -3994,7 +3996,7 @@ function loadRules(id) {
 
 /**
  * Read which rules a person decided about (`.rules-verdicts.json`,
- * `.rules-waivers.json`): the Agent column shows it, and the sidebar does not
+ * `.rules-waivers.json`, through the engine's `rules/judged`): the Agent column shows it, and the sidebar does not
  * count those rules as open. A failure leaves nothing decided, which counts
  * every manual rule as open: too many, never too few.
  */

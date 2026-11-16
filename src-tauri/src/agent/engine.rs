@@ -232,7 +232,8 @@ type Answers = std::collections::HashMap<(String, Option<String>), (Stamp, Optio
 ///
 /// It used to be asked before every request of the map page, two processes per
 /// request; the answer only changes with the binary. A failure (the engine is
-/// missing, hangs) is not remembered: the next call asks again.
+/// missing, hangs, exits with anything but 0 or 2) is not remembered: the
+/// next call asks again.
 pub(crate) fn capabilities_answer(
     program: &str,
     grammars: Option<&str>,
@@ -255,10 +256,16 @@ pub(crate) fn capabilities_answer(
     cmd.arg("--capabilities").max_output(1024 * 1024, 64 * 1024);
     let out = proc::run(&cmd, PROBE_TIMEOUT).map_err(|e| e.into_app(program))?;
     let answer = out.success().then_some(out.stdout);
-    answers
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(key, (stamp, answer.clone()));
+    // Only a real answer and the documented refusal of an old engine (exit 2)
+    // are facts about the binary; a one-off crash or a lock by the virus
+    // scanner is asked again next time instead of meaning "old engine" until
+    // the app restarts.
+    if answer.is_some() || out.code == Some(2) {
+        answers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key, (stamp, answer.clone()));
+    }
     Ok(answer)
 }
 
@@ -651,6 +658,53 @@ mod tests {
         counting_engine(&dir, "22");
         assert_eq!(capabilities(&engine, None).unwrap(), ["api"]);
         assert_eq!(asked(&dir), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An engine that fails its first start (exit 1) and answers from the
+    /// second on: `fails.txt` next to it marks that the failure happened.
+    fn flaky_engine(dir: &Path) -> String {
+        #[cfg(windows)]
+        let (name, body) = (
+            "flaky.cmd",
+            "@echo off
+if not exist \"%~dp0fails.txt\" (
+  echo x>\"%~dp0fails.txt\"
+  exit /b 1
+)
+echo {\"capabilities\":[\"api\"]}
+",
+        );
+        #[cfg(not(windows))]
+        let (name, body) = (
+            "flaky.sh",
+            "#!/bin/sh
+d=\"$(dirname \"$0\")\"
+if [ ! -e \"$d/fails.txt\" ]; then echo x > \"$d/fails.txt\"; exit 1; fi
+echo '{\"capabilities\":[\"api\"]}'
+",
+        );
+        let file = dir.join(name);
+        std::fs::write(&file, body).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        file.to_string_lossy().into_owned()
+    }
+
+    // A one-off crash (exit 1) was remembered as "old engine" until the app
+    // restarted; only exit 0 and the old engine's exit 2 are remembered.
+    #[test]
+    fn a_one_off_failure_of_capabilities_is_asked_again() {
+        let dir = std::env::temp_dir().join(format!("docmap-caps-flaky-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let engine = flaky_engine(&dir);
+
+        assert!(capabilities(&engine, None).unwrap().is_empty());
+        assert_eq!(capabilities(&engine, None).unwrap(), ["api"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

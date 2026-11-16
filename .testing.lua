@@ -11,6 +11,9 @@ return {
 			-- reads (LOCALAPPDATA). Never the user's own.
 			["window"] = {
 				build = { "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
+				-- A release rebuild alone takes about 8 minutes and more on a busy machine: 30 minutes per build step
+				-- (testing.nvim: build_timeout_ms, default 10).
+				build_timeout_ms = 1800000,
 				run = { "src-tauri/target/release/docmap-desktop.exe" },
 				env = {
 					DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
@@ -28,6 +31,7 @@ return {
 					{ "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
 					{ "node", "scripts/e2e/rules-scale-fixture.mjs" },
 				},
+				build_timeout_ms = 1800000,
 				run = { "src-tauri/target/release/docmap-desktop.exe" },
 				env = {
 					DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
@@ -45,6 +49,7 @@ return {
 					{ "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
 					{ "node", "scripts/e2e/map-history-fixture.mjs" },
 				},
+				build_timeout_ms = 1800000,
 				run = { "src-tauri/target/release/docmap-desktop.exe" },
 				env = {
 					DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
@@ -62,6 +67,7 @@ return {
 					{ "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
 					{ "node", "scripts/e2e/rules-run-fixture.mjs" },
 				},
+				build_timeout_ms = 1800000,
 				run = { "src-tauri/target/release/docmap-desktop.exe" },
 				env = {
 					DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",

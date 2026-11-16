@@ -1098,6 +1098,9 @@ Your editor, the file manager and the browser are your programs, not the
 window's: they are started visibly, are handed nothing of the window's, and
 stay open when it closes.
 
+The complete list, with the way each program is started, is in
+[PROCESSES.md](PROCESSES.md).
+
 ## The menu bar
 
 Everything this window does, in one place. The sidebar keeps the two things

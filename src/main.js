@@ -19,6 +19,7 @@
 // Both side-effect-free, so hoisting them above the `window.__TAURI__`
 // guard below changes nothing about what that guard catches.
 import { withBusyButton } from "./lib/busy-button.js";
+import { imeComposing, onEnterSubmit } from "./lib/enter-submit.js";
 import { closeOnBackdrop } from "./lib/backdrop.js";
 import { nvimImportSummary } from "./lib/nvim-import.js";
 import { lastKey, migrateLastKey } from "./lib/last-selection.js";
@@ -2576,12 +2577,7 @@ function stopClone() {
 urlGo.addEventListener("click", () => cloneUrl(addbox.url.value.trim()));
 urlStop.addEventListener("click", stopClone);
 addbox.el.addEventListener("close", stopClone);
-addbox.url.addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter") {
-    ev.preventDefault();
-    cloneUrl(addbox.url.value.trim());
-  }
-});
+onEnterSubmit(addbox.url, () => cloneUrl(addbox.url.value.trim()));
 
 // ---------------------------------------------------------------------
 // The GitHub pick-list
@@ -6348,6 +6344,8 @@ finder.input.addEventListener("search", scheduleFinder);
 finder.input.addEventListener("keydown", (ev) => {
   if (ev.key === "Enter") {
     ev.preventDefault();
+    // The Enter that confirms an IME conversion is not a search.
+    if (imeComposing(ev)) return;
     clearTimeout(finderTimer);
     runFinder();
   } else if (ev.key === "ArrowDown") {
@@ -6388,12 +6386,7 @@ finder.results.addEventListener("keydown", (ev) => {
 });
 
 finder.path.addEventListener("change", applyScopeText);
-finder.path.addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter") {
-    ev.preventDefault();
-    applyScopeText();
-  }
-});
+onEnterSubmit(finder.path, applyScopeText);
 
 finder.pick.addEventListener("click", async () => {
   const p = finderProject();
@@ -7237,12 +7230,7 @@ async function runDocSearch() {
 }
 
 docSearch.go.addEventListener("click", runDocSearch);
-docSearch.q.addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter" && !ev.isComposing) {
-    ev.preventDefault();
-    runDocSearch();
-  }
-});
+onEnterSubmit(docSearch.q, runDocSearch);
 
 // The name at the top of the sidebar leads to the start: the workspaces.
 document.getElementById("brand").addEventListener("click", () => openWorkspaces());

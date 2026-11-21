@@ -1,6 +1,6 @@
 // The few catalog sentences that carry markup (<strong>, <code>, <em>, a line
 // break, the grey detail line of a placeholder), turned into DOM nodes without
-// `innerHTML` (rule WEB-01; Trusted Types would refuse the assignment).
+// `innerHTML` (Trusted Types would refuse the assignment).
 //
 // Only the tags below exist. Anything else that looks like a tag (the catalog
 // has `gate:<name>` and `snapshot <name>` as plain text) stays text, and a

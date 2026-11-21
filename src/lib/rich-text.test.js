@@ -100,5 +100,5 @@ test("main.js assigns no HTML: no innerHTML, outerHTML, insertAdjacentHTML, docu
     .split("\n")
     .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
   const hits = src.filter((l) => /\.(innerHTML|outerHTML)\s*[+\-]?=(?!=)|insertAdjacentHTML\(|document\.write\(|\.srcdoc\s*=/.test(l));
-  assert.deepEqual(hits, [], "a Trusted Types sink in main.js (rule WEB-01)");
+  assert.deepEqual(hits, [], "a Trusted Types sink in main.js");
 });

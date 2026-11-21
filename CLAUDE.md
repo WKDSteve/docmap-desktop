@@ -33,9 +33,12 @@ Commits: conventional style with a scope (`fix(import): …`, `build(engine): �
 - Before writing or changing HTML, CSS or client-side JS, use the `modern-web-guidance` skill (`search` → `retrieve` → verify). Not for Rust, backend, CI or build config.
 - For open-ended modernisation: `npx -y modern-web-guidance@latest legacy-scan <ui-dir> --json` (`src/`, `web/src`), check each finding against `keepWhen`/`dropWhen`.
 - Rules: rules-vault ruleset `web` (plus the app rules `WEB-*` in ruleset `native`).
-- `src/main.js` still assigns `innerHTML` in about 30 places. That is known and tracked in tasks-vault as
-  `docmap-desktop/innerhtml-durch-dom-apis-und-trusted-types`; do not add new ones (rule WEB-01) — build nodes with
-  DOM APIs (`createElement`, `textContent`, `replaceChildren`) — and do not refactor the existing ones outside that task.
+- No HTML is assigned in `src/` or `web/src`: `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `srcdoc`.
+  Build nodes with DOM APIs (`createElement`, `textContent`, `replaceChildren`); catalog sentences with `<strong>`/`<code>` go through
+  `renderRich` (`src/lib/rich-text.js`). `src/lib/rich-text.test.js` fails for a new assignment in `main.js`. The CSP of the window
+  (`tauri.conf.json`) and of the web page (`web/build.mjs`) requires Trusted Types for scripts; the window creates no policy
+  (`trusted-types 'none'`), the web page has one (`web/src/trusted-types.js`) that passes only the build's markup and its own worker blob.
+  `node scripts/e2e/trusted-types.mjs` runs the window under that CSP in Chromium.
 - `legacy-scan` runs through the lockfile of `web` (exact devDependency, the supply-chain policy of
   `web/pnpm-workspace.yaml` applies): `cd web && DISABLE_TELEMETRY=1 pnpm exec modern-web-guidance legacy-scan ../src --json`
   (and `src` for the page). CI runs it as an informative step. `.claude/settings.json` turns the tool's telemetry off

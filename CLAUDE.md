@@ -29,10 +29,10 @@ A Tauri 2 desktop workspace for the module maps docmap.nvim generates, plus a we
 Commits: conventional style with a scope (`fix(import): …`, `build(engine): …`), a body that says why.
 
 ## Web platform
-- Browser Support: Baseline Widely available (`.mwgrc`, `browserslist` in `web/package.json`). Newer features only behind feature detection with a fallback; polyfills where browsers still in use need them (rather one too many), run only after the check: dynamic `import()`, or bundled in a `file://` page (rules-vault `BASE-02`).
+- Browser Support: Baseline Widely available (`.mwgrc`, `browserslist` in `web/package.json`). Newer features only behind feature detection with a fallback; polyfills where browsers still in use need them (rather one too many), run only after the check: dynamic `import()`, or bundled in a `file://` page.
 - Before writing or changing HTML, CSS or client-side JS, use the `modern-web-guidance` skill (`search` → `retrieve` → verify). Not for Rust, backend, CI or build config.
 - For open-ended modernisation: `npx -y modern-web-guidance@latest legacy-scan <ui-dir> --json` (`src/`, `web/src`), check each finding against `keepWhen`/`dropWhen`.
-- Rules: rules-vault ruleset `web` (plus the app rules `WEB-*` in ruleset `native`).
+- Rules: the maintainer's ruleset for the web platform (private, not cited here by name or id: this repository is public and a test keeps the current tree free of private names).
 - No HTML is assigned in `src/` or `web/src`: `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`, `srcdoc`.
   Build nodes with DOM APIs (`createElement`, `textContent`, `replaceChildren`); catalog sentences with `<strong>`/`<code>` go through
   `renderRich` (`src/lib/rich-text.js`). `src/lib/rich-text.test.js` fails for a new assignment in `main.js`. The CSP of the window

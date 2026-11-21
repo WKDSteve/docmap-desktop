@@ -22,9 +22,11 @@ test('the policy lets the page reach nothing, and allows exactly what the page i
   assert.equal(directives['frame-src'], 'blob:');
   assert.equal(directives['worker-src'], 'blob:');
   assert.equal(directives['font-src'], 'data:');
-  // Strings reach no HTML or script-address sink; the one policy is the one src/trusted-types.js creates.
-  assert.equal(directives['require-trusted-types-for'], "'script'");
-  assert.equal(directives['trusted-types'], POLICY_NAME);
+  // Trusted Types is not required while the map page of the engine assigns strings to innerHTML (see build.mjs): the
+  // map frame inherits the policy. The two directives are asserted absent so that adding them is a decision, not a drift.
+  assert.equal(directives['require-trusted-types-for'], undefined);
+  assert.equal(directives['trusted-types'], undefined);
+  assert.equal(typeof POLICY_NAME, 'string');
 });
 
 test('the markup of the window goes in without its script, its comments and anything it would load', () => {

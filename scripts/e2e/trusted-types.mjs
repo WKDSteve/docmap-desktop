@@ -1,4 +1,4 @@
-// scripts/e2e/trusted-types.mjs -- the window under the CSP of tauri.conf.json, in a real browser (rule TST-10).
+// scripts/e2e/trusted-types.mjs -- the window under the CSP of tauri.conf.json, in a real browser.
 //
 //   node scripts/e2e/trusted-types.mjs
 //

@@ -70,7 +70,16 @@ const code = (yml) => yml.replace(/^\s*#.*$/gm, "");
 
 test("no gate can fail without failing the run: no continue-on-error, no matrix exclusion", () => {
   const yml = read(".github/workflows/ci.yml");
-  assert.doesNotMatch(code(yml), /continue-on-error/, "a step or job that may fail is not a gate");
+  // A step that may fail is not a gate. The one allowed kind says so in its name: "(informative)" (the legacy-scan
+  // of the web platform), it never decides the run and no Rust or Node gate may carry the key.
+  let inSteps = 0;
+  for (const s of steps(yml)) {
+    if (!/continue-on-error/.test(code(s.body))) continue;
+    inSteps += 1;
+    assert.match(s.body, /name:\s*[^\n]*\(informative\)/, "a step that may fail must be named (informative): it is not a gate");
+  }
+  // Not on a job either: every use of the key sits in a step counted above
+  assert.equal((code(yml).match(/continue-on-error/g) ?? []).length, inSteps, "continue-on-error on a job makes the whole job optional");
   assert.doesNotMatch(code(yml), /^\s*exclude:/m, "a matrix exclusion exempts a platform from every gate");
   // Per step as well, for the Rust gates named in the findings.
   const all = steps(yml);

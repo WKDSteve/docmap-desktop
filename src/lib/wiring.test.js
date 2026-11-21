@@ -556,13 +556,13 @@ test("an answer for a project the reader has left is dropped", () => {
       files.indexOf("const mine = ++filesSeq;") < files.indexOf("if (!filesOpen || !view.selectedId) return;"),
     "renderFiles takes its ticket before it can return early"
   );
-  guardAfter(files, 'await invoke("file_tree"', "mine !== filesSeq", "crumb.innerHTML", "renderFiles");
+  guardAfter(files, 'await invoke("file_tree"', "mine !== filesSeq", "crumb.replaceChildren", "renderFiles");
   // The success path is guarded as well as the catch branch: past the end of
   // the catch block and before the first line that draws the listing.
   const catchAt = files.indexOf("} catch");
   const catchEnd = files.indexOf("\n  }\n", catchAt);
   assert.ok(catchEnd > catchAt, "renderFiles: no catch block");
-  const drawn = files.indexOf("crumb.innerHTML");
+  const drawn = files.indexOf("crumb.replaceChildren");
   const success = files.indexOf("mine !== filesSeq", catchEnd);
   assert.ok(success >= 0 && success < drawn, "renderFiles draws a stale listing");
 });

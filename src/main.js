@@ -20,6 +20,7 @@
 // guard below changes nothing about what that guard catches.
 import { withBusyButton } from "./lib/busy-button.js";
 import { imeComposing, onEnterSubmit } from "./lib/enter-submit.js";
+import { escapeHtml, renderRich } from "./lib/rich-text.js";
 import { closeOnBackdrop } from "./lib/backdrop.js";
 import { nvimImportSummary } from "./lib/nvim-import.js";
 import { lastKey, migrateLastKey } from "./lib/last-selection.js";
@@ -124,11 +125,14 @@ function fatal(what, err) {
   if (frame) frame.hidden = true;
   if (!box) return;
   box.hidden = false;
-  box.innerHTML = "<h2></h2><p></p><p class='detail'></p>";
-  box.querySelector("h2").textContent = what;
-  box.querySelector("p").textContent =
-    "This is a bug in docmap-desktop, not in the project you opened.";
-  box.querySelector(".detail").textContent = errorText(err);
+  const h2 = document.createElement("h2");
+  h2.textContent = what;
+  const lead = document.createElement("p");
+  lead.textContent = "This is a bug in docmap-desktop, not in the project you opened.";
+  const detail = document.createElement("p");
+  detail.className = "detail";
+  detail.textContent = errorText(err);
+  box.replaceChildren(h2, lead, detail);
 }
 
 window.addEventListener("error", (ev) => fatal("Something failed", ev.message));
@@ -258,17 +262,9 @@ function lastSelection() {
   }
 }
 
-/** Text into an `innerHTML` string, since `showPlaceholder` takes markup.
- *
- * Language names come from a fixed table in Rust, so nothing hostile can
- * reach here today -- this exists so that stays true if the breakdown ever
- * carries a path or a filename, which the summary line is one small change
- * away from wanting to include. */
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
+// `escapeHtml` (lib/rich-text.js) turns a value into markup text for
+// `showPlaceholder` and the other `renderRich` callers: language names come
+// from a fixed table in Rust, but a path or a file name may follow.
 
 // The view state of the window, in one store (`lib/store.js`). Code reads and
 // assigns `view.<name>`; what has to follow a change subscribes to it below
@@ -365,10 +361,11 @@ function showPlaceholder(title, body) {
   hideRunReport();
   taskLog.clear();
   els.placeholder.hidden = false;
-  els.placeholder.innerHTML =
-    "<h2></h2><p></p>";
-  els.placeholder.querySelector("h2").textContent = title;
-  els.placeholder.querySelector("p").innerHTML = body;
+  const h2 = document.createElement("h2");
+  h2.textContent = title;
+  const p = document.createElement("p");
+  renderRich(p, body);
+  els.placeholder.replaceChildren(h2, p);
   // Overlays the iframe specifically; nothing to explain about a panel
   // that is not even on screen.
   els.contextNote.hidden = true;
@@ -403,11 +400,9 @@ function applyLocale() {
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const text = t(el.dataset.i18n);
     if (!text) return;
-    // `innerHTML` because several of these carry <strong>/<code> — the
-    // catalog is this program's own source text, not user input, and the one
-    // place user content reaches the UI (project names, gh's messages) goes
-    // through textContent elsewhere.
-    el.innerHTML = text;
+    // Several of these carry <strong>/<code>: `renderRich` builds those as
+    // nodes, and only those tags (lib/rich-text.js).
+    renderRich(el, text);
   });
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
     const text = t(el.dataset.i18nPlaceholder);
@@ -700,7 +695,7 @@ async function measureAll() {
 }
 
 async function render() {
-  els.list.innerHTML = "";
+  els.list.replaceChildren();
   els.empty.hidden = view.projects.length > 0;
   els.list.hidden = view.projects.length === 0;
   // Ordering is a question about *many* projects. With one selected there
@@ -881,7 +876,7 @@ async function renderDeps() {
     ? t("deps.summary.some").replace("{n}", String(rows.length))
     : t("deps.summary.none");
 
-  els.ovDepsList.innerHTML = "";
+  els.ovDepsList.replaceChildren();
   for (const r of rows) {
     const li = document.createElement("li");
 
@@ -964,7 +959,7 @@ function renderMatrix() {
     (names[a] ?? a).localeCompare(names[b] ?? b)
   );
 
-  matrixbox.table.innerHTML = "";
+  matrixbox.table.replaceChildren();
   matrixbox.empty.hidden = ids.length > 0;
   matrixbox.wrap.hidden = ids.length === 0;
   if (ids.length === 0) return;
@@ -1062,7 +1057,7 @@ async function renderOverview() {
   els.ovGenBehind.textContent = plural("ov.genBehind", behind.length);
   els.ovGenBehind.onclick = () => generateAll(new Set(behind));
 
-  els.ovList.innerHTML = "";
+  els.ovList.replaceChildren();
   for (const r of rows) {
     const li = document.createElement("li");
     li.className = "ov-row " + (RANK_CLASS[r.rank] || "");
@@ -1552,7 +1547,7 @@ function shortPath(p) {
  * the question, and two copies of one sentence assembled twice would be two
  * sentences the first time somebody edits one.
  *
- * `innerHTML` because the sentence sets a path and a file name as `<code>`,
+ * `renderRich` because the sentence sets a path and a file name as `<code>`,
  * and both interpolated values are escaped first — a directory name is the
  * user's content, not this program's text, the same rule the scope dialog's
  * lead follows.
@@ -1569,7 +1564,7 @@ function renderGrammarDiagnosis() {
     : "";
   for (const el of [els.engineGrammars, document.getElementById("prefs-grammars-state")]) {
     if (!el) continue;
-    el.innerHTML = html;
+    renderRich(el, html);
     el.hidden = !html;
   }
 }
@@ -2295,7 +2290,7 @@ window.addEventListener("message", (ev) => {
   }
   if (data.tab) view.mapTab = data.tab;
   const note = contextNoteFor(data);
-  els.contextNote.innerHTML = note || "";
+  renderRich(els.contextNote, note || "");
   els.contextNote.hidden = !note;
 });
 
@@ -2395,7 +2390,7 @@ let scanCandidates = [];
 function resetFolderScan() {
   scanCandidates = [];
   folderScan.wrap.hidden = true;
-  folderScan.list.innerHTML = "";
+  folderScan.list.replaceChildren();
   folderScan.note.textContent = "";
 }
 
@@ -2407,7 +2402,7 @@ function updateFolderScanGo() {
 
 function renderFolderScan() {
   folderScan.note.textContent = "";
-  folderScan.list.innerHTML = "";
+  folderScan.list.replaceChildren();
   scanCandidates.forEach((c, i) => {
     const li = document.createElement("li");
     li.className = "repo";
@@ -2604,7 +2599,7 @@ function renderRepos() {
       (r.description || "").toLowerCase().includes(q)
   );
 
-  addbox.repoList.innerHTML = "";
+  addbox.repoList.replaceChildren();
   shown.forEach((r) => {
     const li = document.createElement("li");
     li.className = "repo";
@@ -3099,11 +3094,11 @@ async function renderTelemetry() {
     // The actionable sentence, not a blank. An empty list here is the normal
     // state — snapshots are never automatic — and without saying so it reads
     // as a feature that does not work.
-    tel.snapsLabel.innerHTML = t("tel.snaps.none");
+    renderRich(tel.snapsLabel, t("tel.snaps.none"));
     return;
   }
   tel.snapsLabel.textContent = t("tel.snaps");
-  tel.snaps.innerHTML = "";
+  tel.snaps.replaceChildren();
   info.snapshots.forEach((s) => {
     const li = document.createElement("li");
     const when = new Date(s.takenAt * 1000);
@@ -3678,7 +3673,7 @@ async function renderFiles() {
     listing = await invoke("file_tree", { id: view.selectedId, sub: filesPath });
   } catch (e) {
     if (mine !== filesSeq || !filesOpen) return;
-    list.innerHTML = "";
+    list.replaceChildren();
     crumb.textContent = "";
     const li = document.createElement("li");
     li.className = "files-msg";
@@ -3689,7 +3684,7 @@ async function renderFiles() {
   if (mine !== filesSeq || !filesOpen) return;
 
   // Breadcrumb: the project name, then every segment of the current path.
-  crumb.innerHTML = "";
+  crumb.replaceChildren();
   const project = view.projects.find((p) => p.id === view.selectedId);
   const segments = filesPath ? filesPath.split("/") : [];
   const crumbButton = (label, target) => {
@@ -3715,7 +3710,7 @@ async function renderFiles() {
     crumb.append(crumbButton(seg, segments.slice(0, i + 1).join("/")));
   });
 
-  list.innerHTML = "";
+  list.replaceChildren();
   if (filesPath) {
     const up = document.createElement("li");
     const b = document.createElement("button");
@@ -6524,7 +6519,7 @@ async function renderWorkspaces() {
   activeWorkspace = (entries.find((w) => w.active) || {}).name || null;
   migrateLastKey(localStorage, activeWorkspace);
   workspaceCount = entries.length;
-  ws.list.innerHTML = "";
+  ws.list.replaceChildren();
   entries.forEach((w) => {
     const li = document.createElement("li");
     li.className = "ws-row" + (w.active ? " active" : "");
@@ -6953,11 +6948,11 @@ async function openScope() {
   scopeProject = p;
 
   const lead = document.getElementById("scope-lead");
-  // `innerHTML` because the sentence carries a `<strong>` around the project
+  // `renderRich` because the sentence carries a `<strong>` around the project
   // name, and the name is the one substituted value — escaped, because a
   // directory name is not this program's text. Same rule the placeholder
   // bodies follow.
-  lead.innerHTML = fill(t("scope.lead"), { name: escapeHtml(p.name) });
+  renderRich(lead, fill(t("scope.lead"), { name: escapeHtml(p.name) }));
 
   const problem = document.getElementById("scope-problem");
   problem.hidden = true;
@@ -7299,7 +7294,7 @@ function closeProjMenu() {
 
 function openProjMenu(x, y) {
   if (!view.selectedId) return;
-  projmenu.innerHTML = "";
+  projmenu.replaceChildren();
   PROJECT_CONTEXT.forEach((id) => {
     if (id === "sep") {
       const li = document.createElement("li");

@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       appkit-web:
-        specifier: github:WKDSteve/appkit#v0.49.0&path:web-kit
-        version: https://codeload.github.com/WKDSteve/appkit/tar.gz/97dfeac45e40c0251a220a80115a69cae2310e29#path:web-kit
+        specifier: github:WKDSteve/appkit#v0.72.0&path:web-kit
+        version: https://codeload.github.com/WKDSteve/appkit/tar.gz/88a36c463095405ef6686e43ee116b75ece95043#path:web-kit
       wasmoon:
         specifier: 1.16.0
         version: 1.16.0
@@ -200,8 +200,8 @@ packages:
   '@types/emscripten@1.39.10':
     resolution: {integrity: sha512-TB/6hBkYQJxsZHSqyeuO1Jt0AB/bW6G7rHt9g7lML7SOF6lbgcHvw/Lr+69iqN0qxgXLhWKScAon73JNnptuDw==}
 
-  appkit-web@https://codeload.github.com/WKDSteve/appkit/tar.gz/97dfeac45e40c0251a220a80115a69cae2310e29#path:web-kit:
-    resolution: {path: web-kit, tarball: https://codeload.github.com/WKDSteve/appkit/tar.gz/97dfeac45e40c0251a220a80115a69cae2310e29}
+  appkit-web@https://codeload.github.com/WKDSteve/appkit/tar.gz/88a36c463095405ef6686e43ee116b75ece95043#path:web-kit:
+    resolution: {path: web-kit, tarball: https://codeload.github.com/WKDSteve/appkit/tar.gz/88a36c463095405ef6686e43ee116b75ece95043}
     version: 0.0.0
     engines: {node: '>=22'}
 
@@ -324,7 +324,7 @@ snapshots:
 
   '@types/emscripten@1.39.10': {}
 
-  appkit-web@https://codeload.github.com/WKDSteve/appkit/tar.gz/97dfeac45e40c0251a220a80115a69cae2310e29#path:web-kit: {}
+  appkit-web@https://codeload.github.com/WKDSteve/appkit/tar.gz/88a36c463095405ef6686e43ee116b75ece95043#path:web-kit: {}
 
   axe-core@4.14.0: {}
 

@@ -14,7 +14,7 @@
     "e2e": "playwright test"
   },
   "dependencies": {
-    "appkit-web": "github:WKDSteve/appkit#v0.49.0&path:web-kit",
+    "appkit-web": "github:WKDSteve/appkit#v0.72.0&path:web-kit",
     "wasmoon": "1.16.0"
   },
   "devDependencies": {

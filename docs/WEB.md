@@ -85,10 +85,10 @@ Every command the window sends has an answer in the page or a refusal that names
 ## What the page can and cannot reach
 
 - The page carries a Content-Security-Policy that forbids every request (`connect-src 'none'`, `default-src 'none'`).
-- The shell is ready for Trusted Types: its one policy (`web/src/trusted-types.js`) accepts the markup the build baked in and a
-  blob URL it made itself for the engine's worker, and throws for any other string. The policy of the page does not require it yet
-  (`require-trusted-types-for 'script'; trusted-types docmap`): the map is a blob frame, a blob frame inherits the policy, and the
-  map page of docmap.nvim still assigns strings to `innerHTML`. The directives go in when that page builds its nodes with DOM APIs.
+- The same policy requires Trusted Types for scripts (`require-trusted-types-for 'script'; trusted-types docmap`). The one policy
+  (`web/src/trusted-types.js`) accepts the markup the build baked in and a blob URL it made itself for the engine's worker, and
+  throws for any other string. The map is a blob frame and inherits the policy: the map page of docmap.nvim builds its nodes
+  without a string sink (docmap.nvim `3bd8021`), and its own test runs it under this rule.
   Scripts and styles are inline, the engine's worker and the map's frame are blobs the page makes itself, fonts and
   the icon are data in the file. The build refuses a page whose shell names an address or loads a file, and the
   browser tests open the built file and count its requests (none).

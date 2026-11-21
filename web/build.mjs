@@ -46,10 +46,11 @@ export const CSP = [
   "connect-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
-  // Trusted Types is NOT required here yet: the map is a blob frame and a blob frame inherits this policy, while the
-  // map page of docmap.nvim still assigns strings to innerHTML (a real engine in the e2e fails on it). The shell is
-  // ready (src/trusted-types.js: one policy for its markup and the worker's blob); add `require-trusted-types-for 'script'`
-  // and `trusted-types docmap` here when the map page builds its nodes with DOM APIs.
+  // Strings reach no HTML or script-address sink; the one policy (src/trusted-types.js) takes the page's own markup
+  // and the blob of the worker, nothing else. The map is a blob frame and inherits this policy: the map page of
+  // docmap.nvim builds its nodes without a string sink since 3bd8021 (its trusted_types_spec runs it under this rule).
+  "require-trusted-types-for 'script'",
+  'trusted-types docmap',
 ].join('; ');
 
 const MIME = { '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2' };

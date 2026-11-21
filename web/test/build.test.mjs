@@ -8,6 +8,7 @@ import { policyProblems, verifyShell } from 'appkit-web/pack';
 import { CSP, PART_IDS, buildPage, pageParts, styles } from '../build.mjs';
 import { PART_IDS as LOADED } from '../src/embedded.js';
 import { HIDDEN } from '../src/hidden.js';
+import { POLICY_NAME } from '../src/trusted-types.js';
 import { web } from './helpers.mjs';
 
 const INDEX = readFileSync(join(web, '..', 'src', 'index.html'), 'utf8');
@@ -21,6 +22,9 @@ test('the policy lets the page reach nothing, and allows exactly what the page i
   assert.equal(directives['frame-src'], 'blob:');
   assert.equal(directives['worker-src'], 'blob:');
   assert.equal(directives['font-src'], 'data:');
+  // Strings reach no HTML or script-address sink; the one policy is the one src/trusted-types.js creates.
+  assert.equal(directives['require-trusted-types-for'], "'script'");
+  assert.equal(directives['trusted-types'], POLICY_NAME);
 });
 
 test('the markup of the window goes in without its script, its comments and anything it would load', () => {

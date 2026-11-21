@@ -10,6 +10,7 @@ import { createBackend } from './backend.js';
 import { HIDDEN } from './hidden.js';
 import { WorkerClient } from './client.js';
 import { loadParts, startBlobWorker } from './embedded.js';
+import { createTrust } from './trusted-types.js';
 import { createMenubar } from './menubar.js';
 import { text } from './texts.js';
 
@@ -27,10 +28,11 @@ const INFO = __WEB_INFO__;
 const doc = document;
 doc.documentElement.classList.add('web');
 const mount = /** @type {HTMLElement} */ (doc.getElementById('app'));
-mount.insertAdjacentHTML(
-  'beforebegin',
-  '<div id="web-top"><nav id="web-menubar" aria-label="Menu"></nav><div id="web-strip"></div></div>' + __WEB_BODY__,
-);
+// The markup is the page's own, fixed at build time; the one Trusted Types policy accepts that string and no other.
+const SHELL_MARKUP =
+  '<div id="web-top"><nav id="web-menubar" aria-label="Menu"></nav><div id="web-strip"></div></div>' + __WEB_BODY__;
+const trust = createTrust(window, { URL, markup: SHELL_MARKUP });
+mount.insertAdjacentHTML('beforebegin', /** @type {string} */ (trust.markup(SHELL_MARKUP)));
 mount.remove();
 
 for (const selector of HIDDEN.elements) {
@@ -119,7 +121,7 @@ drawStrip();
 
 async function start() {
   const parts = await loadParts((id) => doc.getElementById(id)?.textContent ?? null);
-  const client = new WorkerClient(startBlobWorker(parts.worker, { Blob, URL, Worker }));
+  const client = new WorkerClient(startBlobWorker(parts.worker, { Blob, URL, Worker, workerUrl: trust.workerUrl }));
   await client.init({ wasm: parts.wasm, bundle: parts.bundle, host: parts.host });
   return createBackend({
     client,

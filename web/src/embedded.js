@@ -76,9 +76,11 @@ export async function loadParts(read) {
  * The worker, started from a blob. A classic one: a module worker from a blob does not start on a page opened from
  * disk. The address of the blob stays: the browser fetches the script after the constructor returns.
  * @param {string} source
- * @param {{ Blob: typeof Blob, URL: Pick<typeof URL, 'createObjectURL'>, Worker: new (url: string, options?: object) => Worker }} host
+ * @param {{ Blob: typeof Blob, URL: Pick<typeof URL, 'createObjectURL'>, Worker: new (url: any, options?: object) => Worker,
+ *   workerUrl?: (blob: Blob) => any }} host `workerUrl`: makes the address of the blob as a worker may take it (Trusted Types)
  */
 export function startBlobWorker(source, host) {
-  const url = host.URL.createObjectURL(new host.Blob([source], { type: 'text/javascript' }));
+  const blob = new host.Blob([source], { type: 'text/javascript' });
+  const url = host.workerUrl ? host.workerUrl(blob) : host.URL.createObjectURL(blob);
   return new host.Worker(url, { type: 'classic' });
 }

@@ -46,6 +46,10 @@ export const CSP = [
   "connect-src 'none'",
   "base-uri 'none'",
   "form-action 'none'",
+  // Strings reach no HTML or script-address sink; the one policy (src/trusted-types.js) takes the page's own markup
+  // and the blob of the worker, nothing else.
+  "require-trusted-types-for 'script'",
+  'trusted-types docmap',
 ].join('; ');
 
 const MIME = { '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2' };

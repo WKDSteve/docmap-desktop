@@ -85,6 +85,9 @@ Every command the window sends has an answer in the page or a refusal that names
 ## What the page can and cannot reach
 
 - The page carries a Content-Security-Policy that forbids every request (`connect-src 'none'`, `default-src 'none'`).
+- The same policy requires Trusted Types for scripts (`require-trusted-types-for 'script'; trusted-types docmap`). The one policy
+  (`web/src/trusted-types.js`) accepts the markup the build baked in and a blob URL it made itself for the engine's worker, and
+  throws for any other string.
   Scripts and styles are inline, the engine's worker and the map's frame are blobs the page makes itself, fonts and
   the icon are data in the file. The build refuses a page whose shell names an address or loads a file, and the
   browser tests open the built file and count its requests (none).

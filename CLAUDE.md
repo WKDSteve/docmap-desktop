@@ -36,3 +36,7 @@ Commits: conventional style with a scope (`fix(import): …`, `build(engine): �
 - `src/main.js` still assigns `innerHTML` in about 30 places. That is known and tracked in tasks-vault as
   `docmap-desktop/innerhtml-durch-dom-apis-und-trusted-types`; do not add new ones (rule WEB-01) — build nodes with
   DOM APIs (`createElement`, `textContent`, `replaceChildren`) — and do not refactor the existing ones outside that task.
+- `legacy-scan` runs through the lockfile of `web` (exact devDependency, the supply-chain policy of
+  `web/pnpm-workspace.yaml` applies): `cd web && DISABLE_TELEMETRY=1 pnpm exec modern-web-guidance legacy-scan ../src --json`
+  (and `src` for the page). CI runs it as an informative step. `.claude/settings.json` turns the tool's telemetry off
+  and allows only `npx -y modern-web-guidance@latest *` (the skill's search).

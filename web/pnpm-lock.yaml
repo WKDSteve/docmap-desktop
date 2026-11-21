@@ -24,6 +24,9 @@ importers:
       esbuild:
         specifier: 0.25.12
         version: 0.25.12
+      modern-web-guidance:
+        specifier: 1.0.0
+        version: 1.0.0
 
 packages:
 
@@ -211,6 +214,11 @@ packages:
     engines: {node: '>=18'}
     hasBin: true
 
+  modern-web-guidance@1.0.0:
+    resolution: {integrity: sha512-vafIZwC8AS6QjM2yyoflZbnc7n3/TVOMLbEMRdPTwcFy0f9/Tq8s5rJQ8UIqRt2KPl9ixravyaMR4nTGuUrcmg==}
+    engines: {node: '>=22.0.0', vscode: ^1.90.0}
+    hasBin: true
+
   playwright-core@1.64.1:
     resolution: {integrity: sha512-BC4s8y6SEVA6Q1rSxZTto8hI1KUI3xXlHGZgvGqP4IqPdI/a6FX9H29IDNz7vKo9l21b6LfYosScPL6M3xxyDQ==}
     engines: {node: '>=20'}
@@ -348,6 +356,8 @@ snapshots:
       '@esbuild/win32-arm64': 0.25.12
       '@esbuild/win32-ia32': 0.25.12
       '@esbuild/win32-x64': 0.25.12
+
+  modern-web-guidance@1.0.0: {}
 
   playwright-core@1.64.1: {}
 

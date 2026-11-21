@@ -326,6 +326,19 @@ jobs:
         working-directory: web
         run: pnpm e2e
 
+      # Informative only (never red): legacy web-platform patterns in the window (src) and the web page (web/src),
+      # judged against the target in .mwgrc. The scanner is an exact devDependency of web, so the supply-chain policy
+      # of web/pnpm-workspace.yaml applies to it; no telemetry.
+      - name: legacy-scan (informative)
+        if: github.event_name == 'push'
+        continue-on-error: true
+        working-directory: web
+        env:
+          DISABLE_TELEMETRY: "1"
+        run: |
+          pnpm exec modern-web-guidance legacy-scan ../src --json
+          pnpm exec modern-web-guidance legacy-scan src --json
+
       - name: traces of failed browser tests
         if: failure() && github.event_name == 'push'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

@@ -5,6 +5,9 @@
   "type": "module",
   "description": "The web variant of docmap-desktop: the page of src/ as one HTML file opened from disk, the engine of docmap.nvim in a Lua VM in the browser. The desktop app reads nothing from this folder.",
   "packageManager": "pnpm@10.29.2",
+  "browserslist": [
+    "baseline widely available"
+  ],
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
     "build": "node build.mjs",

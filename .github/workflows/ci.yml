@@ -321,6 +321,13 @@ jobs:
         working-directory: web
         run: pnpm build
 
+      # The page with its engine as one file has a number (measured 2366 kB on 2026-11-21, about a tenth of room): it is
+      # read at every open. Over it: find what grew (the output names the largest parts) before raising it.
+      - name: the built page stays within its budget
+        if: github.event_name == 'push'
+        working-directory: web
+        run: python ../tools/check-dist-size.py dist/docmap.html --budget 2600
+
       - name: open the built file from disk in Chrome
         if: github.event_name == 'push'
         working-directory: web

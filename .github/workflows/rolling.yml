@@ -64,6 +64,7 @@ jobs:
         uses: WKDSteve/appkit/release-kit/prepare@70df3786e91757f71666cfda1b254847c247c3fe # v0.75.0
         with:
           sha: ${{ github.event.inputs.sha }}
+          channels: latest
           token: ${{ github.token }}
 
   build:

@@ -43,4 +43,4 @@ Commits: conventional style with a scope (`fix(import): …`, `build(engine): �
   `web/pnpm-workspace.yaml` applies): `cd web && DISABLE_TELEMETRY=1 pnpm exec modern-web-guidance legacy-scan ../src --json`
   (and `src` for the page). CI runs it as an informative step. `.claude/settings.json` turns the tool's telemetry off
   and allows only `npx -y modern-web-guidance@latest *` (the skill's search).
-- Git: in a cloud session (`CLAUDE_CODE_REMOTE` is set) never push to `main`, only to your own `claude/…` branch; a local session lands it by rebase and the device key re-signs it (`GIT-09`). "Push to main" (`GIT-01`) applies locally only.
+- Git: in a cloud session (`CLAUDE_CODE_REMOTE` is set) never push to `main`, only to your own `claude/…` branch; a local session lands it by rebase and the device key re-signs it. Landing on `main` directly applies to local sessions only.

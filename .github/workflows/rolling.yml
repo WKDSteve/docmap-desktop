@@ -12,7 +12,7 @@
 # request), so only Windows is built: the AppImage and install.sh of the earlier hosted workflow are gone. The release-kit actions run
 # there by Git Bash (appkit v0.23.1 and later).
 #
-# Deciding (only the tip of main is built) and publishing (SHA256SUMS first, the words of the page last) are
+# Deciding (the newest green commit of main is built) and publishing (SHA256SUMS first, the words of the page last) are
 # the actions prepare and publish of appkit's release-kit, pinned by the commit of tools/release-kit.pin
 # (tools/check-release-kit-pin.py checks that they agree). The build is ours: its files go to publish as
 # artifacts. There is no macOS here: docmap.nvim publishes no macOS engine.
@@ -26,15 +26,18 @@ on:
     workflows: [CI]
     types: [completed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: A green commit of main to build again (full id); empty - the newest green commit
+        required: false
 
-# Only the run of the TIP of main may build, and a newer tip replaces a build that is still running: the
-# pre-release must end on the newest commit. For a `workflow_run` event `github.sha` is the tip of main when
-# the run started and `head_sha` is the commit the CI run was about, so a CI run of an OLDER commit that
-# finishes late lands in a group of its own (it builds nothing, `prepare` says so) and can neither cancel the
-# build of the tip nor push the waiting build of the tip out of the queue.
+# One group and nothing cancelled: `prepare` decides at the start of each run which commit is the newest green one
+# of main and whether it is newer than the build that is up (`latest` only moves forward), so an older run
+# neither replaces nor cancels a newer build, and a waiting run is replaced by a newer one of the same group.
 concurrency:
-  group: rolling-${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_sha == github.sha }}
-  cancel-in-progress: true
+  group: rolling
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -48,7 +51,7 @@ defaults:
 jobs:
   prepare:
     # Only a green run that came from a push to main (not a pull request).
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
     runs-on: [self-hosted, windows]
     timeout-minutes: 10
     permissions:
@@ -60,7 +63,7 @@ jobs:
       - id: prepare
         uses: WKDSteve/appkit/release-kit/prepare@041b49c502d2dcea62a7f753cd98f6e2da14c70d # v0.74.0
         with:
-          sha: ${{ github.event.workflow_run.head_sha }}
+          sha: ${{ github.event.inputs.sha }}
           token: ${{ github.token }}
 
   build:

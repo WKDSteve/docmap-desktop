@@ -146,3 +146,13 @@ test("a checkbox and its text are one label, so there is no dead zone", () => {
     assert.match(m[1], /<span/);
   }
 });
+
+test("the dialogs that hold typed input are guarded against a slip", () => {
+  assert.match(MAIN, /from "\.\/lib\/dirty-close\.js"/);
+  for (const target of ["fb.box", "ws.box", "runUi.box", 'document.getElementById("scopebox")', 'document.getElementById("prefsbox")']) {
+    assert.ok(MAIN.includes(`guardDirty(${target}`), `${target} is not guarded`);
+  }
+  // The feature is detected, not assumed: `closedby` is newer than the baseline.
+  const lib = readFileSync(new URL("./dirty-close.js", import.meta.url), "utf8");
+  assert.match(lib, /"closedBy" in /);
+});

@@ -22,6 +22,7 @@ import { withBusyButton } from "./lib/busy-button.js";
 import { imeComposing, onEnterSubmit } from "./lib/enter-submit.js";
 import { escapeHtml, renderRich } from "./lib/rich-text.js";
 import { closeOnBackdrop } from "./lib/backdrop.js";
+import { guardDirty } from "./lib/dirty-close.js";
 import { nvimImportSummary } from "./lib/nvim-import.js";
 import { lastKey, migrateLastKey } from "./lib/last-selection.js";
 import { createStore } from "./lib/store.js";
@@ -7089,6 +7090,7 @@ document.getElementById("scope-save").addEventListener("click", async () => {
    picker returns an absolute path; the only thing this has to do is refuse a
    directory outside the project rather than storing a path that can never
    match. */
+let scopeGuard = null;
 document.getElementById("scope-add").addEventListener("click", async () => {
   if (!scopeProject) return;
   const problem = document.getElementById("scope-problem");
@@ -7119,6 +7121,8 @@ document.getElementById("scope-add").addEventListener("click", async () => {
       lines.push(rel);
     }
     field.value = lines.join("\n");
+    // The program set the value, not a keystroke: it still is unsaved input.
+    scopeGuard?.touch();
     problem.hidden = true;
   } catch (e) {
     problem.textContent = fill(t("scope.failed"), { error: errorText(e) });
@@ -7159,6 +7163,7 @@ function openPrefs() {
   invoke("editor_command", { set: null })
     .then((cmd) => {
       document.getElementById("editor-cmd").value = cmd || "";
+      editorSaved = cmd || "";
     })
     .catch((e) => void e);
   // Asked when the dialog opens rather than kept live: reading it walks a
@@ -7226,7 +7231,11 @@ document.getElementById("about-copy").addEventListener("click", async () => {
   }
 });
 
+// What the backend holds: the field is stored when it loses focus, so until
+// then a typed command is input that Escape would lose.
+let editorSaved = "";
 document.getElementById("editor-cmd").addEventListener("change", (ev) => {
+  editorSaved = ev.target.value;
   invoke("editor_command", { set: ev.target.value }).catch((e) => say(errorText(e)));
 });
 
@@ -7285,6 +7294,18 @@ document.getElementById("brand").addEventListener("click", () => openWorkspaces(
 // A click beside a dialog closes it, the way Escape does, as in the other
 // desktop apps (appkit-ui's closeOnBackdrop, see lib/backdrop.js).
 document.querySelectorAll("dialog").forEach((box) => closeOnBackdrop(box));
+
+// A dialog that holds typed input asks before Escape or a click beside it
+// throws the input away (lib/dirty-close.js). The others close as before.
+const discard = () => confirm(t("dialog.discard"));
+guardDirty(fb.box, { ask: discard, hasInput: () => fb.subject.value.trim() !== "" || fb.body.value.trim() !== "" });
+guardDirty(ws.box, { ask: discard, hasInput: () => ws.name.value.trim() !== "" });
+guardDirty(runUi.box, { ask: discard });
+scopeGuard = guardDirty(document.getElementById("scopebox"), { ask: discard });
+guardDirty(document.getElementById("prefsbox"), {
+  ask: discard,
+  hasInput: () => document.getElementById("editor-cmd").value !== editorSaved,
+});
 
 /**
  * Hand Rust the labels and the enable state, and let it rebuild the menu.

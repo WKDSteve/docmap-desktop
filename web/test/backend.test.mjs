@@ -22,7 +22,7 @@ const GIT = { '.git/HEAD': 'ref: refs/heads/main\n' };
 const sample = (name = 'sample', extra = {}) => fakeFolder(name, { ...fixtureFiles(), ...GIT, ...extra });
 
 /** A page: a backend over `store` (what IndexedDB kept) that picks from `folders` in turn. */
-function page({ store = new Map(), folders = [], clock = { now: 1_800_000_000_000 }, beforeGet = async () => {} } = {}) {
+function page({ store = new Map(), folders = [], clock = { now: 1_800_000_000_000 }, beforeGet = async () => {}, start = '' } = {}) {
   const ui = { menus: [], titles: [], zooms: [], downloads: [], opened: [], blobs: new Map(), revoked: [], notices: [] };
   let nextBlob = 1;
   const queue = [...folders];
@@ -62,6 +62,11 @@ function page({ store = new Map(), folders = [], clock = { now: 1_800_000_000_00
         ui.blobs.delete(url);
       },
       notice: (state) => ui.notices.push(state),
+      takeStart: () => {
+        const hash = start;
+        start = '';
+        return hash;
+      },
     },
   });
   return { backend, ui, store, clock, queue };
@@ -476,4 +481,43 @@ test('events reach who listens, until they stop listening', async () => {
   stop();
   backend.emit('menu', 'menu.file.add');
   assert.deepEqual(got, ['menu.help.about']);
+});
+
+// "Open in DocMap" from outside: the address of the page names a project the page already knows and a file in it.
+test('the address of the page opens the map at a file and line, and refuses what leaves the repository', async () => {
+  const hashes = [
+    '#repo=sample&at=lua/missing.lua:3',
+    '#repo=sample&at=/etc/passwd:3',
+    '#repo=sample&at=..%2Fx.lua:3',
+    '#repo=sample&at=a.lua',
+    '#repo=nowhere&at=a.lua:3',
+    '#repo=E%3A%2Fsomewhere%2Felse&at=a.lua:3',
+  ];
+  const p = page({ folders: [sample()], start: hashes[0] });
+  const [project] = await addPicked(p);
+  const taken = await p.backend.invoke('take_open_request');
+  assert.deepEqual(taken, { project: project.id, file: 'lua/missing.lua', line: 3, end: null });
+  assert.equal(await p.backend.invoke('take_open_request'), null, 'taken once');
+
+  const keys = [];
+  for (const hash of hashes.slice(1)) {
+    const q = page({ folders: [sample()], start: hash });
+    await addPicked(q);
+    await q.backend.invoke('take_open_request').then(
+      () => keys.push('accepted'),
+      (e) => keys.push(e.key),
+    );
+  }
+  assert.deepEqual(keys, ['err.open.path', 'err.open.path', 'err.open.target', 'err.open.project', 'err.open.project']);
+
+  await assert.rejects(p.backend.invoke('map_artifact', { id: project.id }), (e) => e.key === 'err.open.nomap');
+  const run = await p.backend.invoke('generate', { root: project.root, full: false });
+  assert.equal(run.ok, true, run.stderr);
+  const map = await p.backend.invoke('map_artifact', { id: project.id });
+  assert.ok(Array.isArray(map.nodes) && map.nodes.length > 0);
+
+  const base = await p.backend.invoke('serve_project', { id: project.id });
+  const at = p.backend.mapUrl(base, 'system', null, { id: 'm', key: 'm#f' });
+  assert.match(at, /^blob:test\/\d+#tab=tree&id=m&fn=m%23f$/);
+  assert.match(p.backend.mapUrl(base, 'system', 'analysis', { id: 'm', key: null }), /#tab=analysis$/);
 });

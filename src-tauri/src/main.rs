@@ -24,6 +24,7 @@ mod import;
 mod languages;
 mod menu;
 mod nvim;
+mod open_at;
 mod paths;
 mod proc;
 mod rules;
@@ -139,11 +140,16 @@ fn main() {
         // the generated page's catalog, not to this window's.
         // The runs of the rules agent live here, not in a window: closing the
         // window does not stop one, quitting the app pauses it (see below).
+        .manage(open_at::Pending::from_args(
+            &std::env::args().skip(1).collect::<Vec<_>>(),
+        ))
         .manage(agent::runner::Runner::default())
         .manage(agent::chat::Chats::default())
         .invoke_handler(tauri::generate_handler![
             workspace::map_dir_refused,
             workspace::list_projects,
+            open_at::take_open_request,
+            open_at::map_artifact,
             workspace::add_project,
             import::inspect_folder,
             import::import_many,

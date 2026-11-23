@@ -164,6 +164,12 @@ async function start() {
       openUrl: (url) => {
         window.open(url, '_blank', 'noopener');
       },
+      // The address the page was opened with, once: its fragment is the request ("open at file:line").
+      takeStart: () => {
+        const hash = location.hash;
+        if (hash) history.replaceState(null, '', location.pathname + location.search);
+        return hash;
+      },
       blobUrl: (html) => URL.createObjectURL(new Blob([html], { type: 'text/html' })),
       revokeUrl: (url) => URL.revokeObjectURL(url),
       notice: (state) => {
@@ -228,6 +234,6 @@ const withBackend = (use) => ready.then(use, () => Promise.reject(notStarted()))
 
 /** What src/main.js asks only in the web variant. */
 /** @type {any} */ (window).__DOCMAP_WEB__ = {
-  /** @param {string} base @param {string} theme @param {string | null} tab */
-  mapUrl: (base, theme, tab) => backend?.mapUrl(base, theme, tab) ?? '',
+  /** @param {string} base @param {string} theme @param {string | null} tab @param {{ id: string, key: string | null } | null} [node] */
+  mapUrl: (base, theme, tab, node) => backend?.mapUrl(base, theme, tab, node) ?? '',
 };

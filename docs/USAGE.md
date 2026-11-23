@@ -18,6 +18,7 @@ the code, not recalled.
 - [Rules](#rules)
 - [Files on disk](#files-on-disk)
 - [Opening a file where an entity lives](#opening-a-file-where-an-entity-lives)
+- [Opening the map at a file and line](#opening-the-map-at-a-file-and-line)
 - [Generate, Generate all, Generate the out-of-date ones](#generate-generate-all-generate-the-out-of-date-ones)
 - [The staleness mark](#the-staleness-mark)
 - [GitHub traffic](#github-traffic)
@@ -620,6 +621,26 @@ open is to show them (`.md`, `.txt`, `.json`, `.toml`, `.yaml`, `.lua`, `.rs`,
 else — `.js`, `.py`, `.sh`, `.bat`, `.ps1`, `.html`, `.exe`, a file with no
 extension, anything marked executable — is **shown in the file manager**
 instead. Set an editor command to open every kind in the editor.
+
+## Opening the map at a file and line
+
+Another program (tasks-desktop's "open in DocMap", a script) can start the app at a place in a project:
+
+```
+docmap-desktop --open-at <project> <file>:<line>
+docmap-desktop --open-at <project> <file>:<first>-<last>
+```
+
+`<project>` is a project this app already has, named by its sidebar name, its id or its folder; `<file>` is a path
+**relative to the repository** (`lua/docmap/init.lua`). The window selects the project and opens its map on the tree at
+the function that holds the line (the innermost one; for a range, the one the range overlaps most), or at the file's
+module when the map has no function there. The node stays selected when the window reloads the map (a theme change, a
+new generation).
+
+What comes from outside is not trusted. An absolute path (`/x`, `C:\x`), `~`, `$HOME`, `..` and a project the app does
+not know are refused with a message in the status line, and nothing is searched for on the disk. A file that is not in
+the map opens the project and says so. The project must be in the workspace that is open; a map must exist (generate
+it first).
 
 ## Generate, Generate all, Generate the out-of-date ones
 

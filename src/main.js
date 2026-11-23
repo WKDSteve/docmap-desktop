@@ -42,6 +42,7 @@ import {
   languageRows as statsLanguageRows,
   formatBytes,
 } from "./lib/stats.js";
+import { mapHash, resolveAt } from "./lib/open-at.js";
 import { t, plural, setLocale, initialLocale, LOCALES, keys } from "./lib/i18n.js";
 import { summarizeEngineLog, generatedMessage, PER_CHECK } from "./lib/engine-log.js";
 import { createRunReport, createTaskLog } from "./lib/run-report.js";
@@ -279,6 +280,8 @@ function lastSelection() {
 //   selectedId     the selected project's id, or null
 //   mapBase        the map frame's URL without the theme, or null when no map is showing
 //   mapTab         the panel the page last reported through its one-way channel
+//   mapNode        the node (and function) the map was opened at from outside; kept across reloads
+//   openNode       the node an outside request resolved to, until `select` shows the map of its project
 //   mapWatch       the blank-pane watchdog's timer
 //   mapLoaded      whether the page has proved it ran
 const viewStore = createStore({
@@ -301,6 +304,8 @@ const viewStore = createStore({
   selectedId: null,
   mapBase: null,
   mapTab: null,
+  mapNode: null,
+  openNode: null,
   mapWatch: null,
   mapLoaded: false,
 });
@@ -349,6 +354,7 @@ function showPlaceholder(title, body) {
   // show.
   view.mapBase = null;
   view.mapTab = null;
+  view.mapNode = null;
   if (view.mapWatch) {
     clearTimeout(view.mapWatch);
     view.mapWatch = null;
@@ -1197,6 +1203,7 @@ function gotoMap(state) {
     .filter((k) => state[k])
     .map((k) => k + "=" + encodeURIComponent(state[k]));
   view.mapTab = null;
+  view.mapNode = null;
   const url = mapUrl(view.mapBase).split("#")[0] + "#" + parts.join("&");
   els.frame.src = url;
   // No watchdog here. This changes the fragment of the page that is already
@@ -1414,6 +1421,9 @@ async function select(id) {
   if (view.selectedId !== id) return;
   view.mapBase = served ?? convertFileSrc(status.index_path);
   view.mapTab = null;
+  // An outside request ("open at file:line") is shown once, and then belongs to this map until another is chosen.
+  view.mapNode = view.openNode;
+  view.openNode = null;
   const url = mapUrl(view.mapBase);
   els.frame.src = url;
   watchMapLoad(url);
@@ -1508,6 +1518,7 @@ function dropSelection() {
   view.selectedId = null;
   view.mapBase = null;
   view.mapTab = null;
+  view.mapNode = null;
   // The report is about the project that was just dropped.
   hideRunReport();
   closePanes();
@@ -2294,11 +2305,47 @@ window.addEventListener("message", (ev) => {
   els.contextNote.hidden = !note;
 });
 
+/**
+ * A request from outside (`docmap-desktop --open-at <repo> <file>:<line>`, or the address of the web page): select
+ * the project it names and show its map at the node that holds the line. True when there was one.
+ *
+ * Whatever is wrong with it (no such project, a path outside the repository, no map, the file not in the map) is
+ * said, and nothing is looked for on the disk: the project must be one this app already knows.
+ */
+async function openRequested() {
+  let req;
+  try {
+    req = await invoke("take_open_request");
+  } catch (e) {
+    say(errorText(e));
+    return true;
+  }
+  if (!req) return false;
+  const p = view.projects.find((x) => x.id === req.project);
+  if (!p) {
+    say(errorText({ key: "err.project.unknown", params: { id: req.project } }));
+    return true;
+  }
+  let hit = null;
+  try {
+    hit = resolveAt(await invoke("map_artifact", { id: p.id }), req.file, req.line, req.end);
+  } catch (e) {
+    say(errorText(e));
+  }
+  // The project opens either way; only a found node is shown at.
+  view.openNode = hit;
+  await select(p.id);
+  view.openNode = null;
+  if (!hit) say(fillParams(t("open.nonode"), { file: req.file, repo: p.name }));
+  return true;
+}
+
 (async function start() {
   try {
     await loadEngine();
     await loadNvim();
     await refresh();
+    if (await openRequested()) return;
     // The dashboard decides for itself whether it is worth showing: one
     // workspace is not a choice. When it does show, nothing is restored
     // here — the selection belongs to whichever workspace is picked, and
@@ -2837,16 +2884,15 @@ els.sbPin.addEventListener("click", () => {
 /** `base` with the theme, and the panel to land on, appended. */
 function mapUrl(base) {
   const theme = currentTheme();
-  if (web) return web.mapUrl(base, theme, view.mapTab);
+  if (web) return web.mapUrl(base, theme, view.mapTab, view.mapNode);
   let url = base;
   if (theme === "light" || theme === "dark") {
     url += (url.includes("?") ? "&" : "?") + "theme=" + theme;
   }
-  // `tab` only. The page deliberately posts a coarse context and not its
-  // whole state, so this restores the panel and nothing finer -- which is
-  // the part a reader would notice losing.
-  if (view.mapTab) url += "#tab=" + encodeURIComponent(view.mapTab);
-  return url;
+  // `tab` only, from the page: it deliberately posts a coarse context and not its whole state, so this restores
+  // the panel and nothing finer. The node is the one thing this window chose itself (a request from outside:
+  // `openRequested`), so it can carry it: `id=` and `fn=` next to the tab.
+  return url + mapHash(view.mapTab, view.mapNode);
 }
 
 /**

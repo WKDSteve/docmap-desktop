@@ -51,6 +51,12 @@ use std::fmt;
 pub const ENGLISH: &[(&str, &str)] = &[
     // Projects and the files this app keeps.
     ("err.project.unknown", "No such project: {id}"),
+    ("err.open.args", "--open-at needs a repository and a file:line"),
+    ("err.open.target", "{target} is not file:line or file:first-last"),
+    ("err.open.path", "{path} is not a path inside a repository: only paths relative to it are accepted"),
+    ("err.open.project", "{repo} is not a project of this app: add it first"),
+    ("err.open.ambiguous", "More than one project is called {repo}: name it by its folder"),
+    ("err.open.nomap", "{repo} has no readable map yet: generate it first"),
     ("err.config.noDir", "This system names no folder for the app's settings"),
     ("err.workspace.unreadable", "{path} is not readable as a workspace"),
     ("err.workspace.listUnreadable", "{path} is not readable as a project list"),
@@ -431,6 +437,7 @@ mod tests {
         ("main.rs", include_str!("main.rs")),
         ("menu.rs", include_str!("menu.rs")),
         ("nvim.rs", include_str!("nvim.rs")),
+        ("open_at.rs", include_str!("open_at.rs")),
         ("paths.rs", include_str!("paths.rs")),
         ("proc.rs", include_str!("proc.rs")),
         ("rules/mod.rs", include_str!("rules/mod.rs")),

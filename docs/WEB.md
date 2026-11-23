@@ -41,6 +41,12 @@ To build it yourself, see [Building and testing](#building-and-testing): the res
    asks for each folder again: the strip under the menu bar then shows **Allow access**, and one click reads the
    folders. Generating a map asks too, so that click is often all it takes.
 
+The page can be opened at a place in a project: add `#repo=<project>&at=<file>:<line>` (or `<first>-<last>`) to its
+address, with a project the page already knows and a path relative to the repository. It selects the project and opens
+its map at the function that holds the line, as the app does with `--open-at` (see USAGE.md, "Opening the map at a file
+and line"); the address is cleaned afterwards. Maps made in the page carry no facts per function, so there it opens at
+the file's module; a committed map from the folder has them.
+
 The menu bar at the top is the menu of the app, drawn in the page. A folder that changed on disk is read again when
 you come back to the tab and every half minute; a map older than its sources gets the mark it has in the app, and
 the map you are reading stays as it is until you generate it again.

@@ -783,6 +783,13 @@ const CATALOGS = {
     // period: the window may append the untranslated detail after ` — `.
     // `{path}`, `{program}` and the rest are the subject, never translated.
     "err.project.unknown": "No such project: {id}",
+    "open.nonode": "{file} is not in the map of {repo}: the project is open, the map may be out of date",
+    "err.open.args": "--open-at needs a repository and a file:line",
+    "err.open.target": "{target} is not file:line or file:first-last",
+    "err.open.path": "{path} is not a path inside a repository: only paths relative to it are accepted",
+    "err.open.project": "{repo} is not a project of this app: add it first",
+    "err.open.ambiguous": "More than one project is called {repo}: name it by its folder",
+    "err.open.nomap": "{repo} has no readable map yet: generate it first",
     "err.config.noDir": "This system names no folder for the app's settings",
     "err.workspace.unreadable": "{path} is not readable as a workspace",
     "err.workspace.listUnreadable": "{path} is not readable as a project list",
@@ -1644,6 +1651,13 @@ const CATALOGS = {
     "scope.outside": "{path} liegt nicht in diesem Projekt und kann daher nicht daraus ausgeschlossen werden.",
 
     "err.project.unknown": "Kein solches Projekt: {id}",
+    "open.nonode": "{file} steht nicht in der Karte von {repo}: das Projekt ist offen, die Karte ist vielleicht veraltet",
+    "err.open.args": "--open-at braucht ein Repository und file:zeile",
+    "err.open.target": "{target} ist weder Datei:Zeile noch Datei:von-bis",
+    "err.open.path": "{path} ist kein Pfad innerhalb eines Repositorys: nur Pfade relativ dazu sind erlaubt",
+    "err.open.project": "{repo} ist kein Projekt dieser App: leg es zuerst an",
+    "err.open.ambiguous": "Mehrere Projekte heißen {repo}: nenn es bei seinem Ordner",
+    "err.open.nomap": "{repo} hat noch keine lesbare Karte: erzeug sie zuerst",
     "err.config.noDir": "Dieses System nennt keinen Ordner für die Einstellungen der App",
     "err.workspace.unreadable": "{path} lässt sich nicht als Arbeitsbereich lesen",
     "err.workspace.listUnreadable": "{path} lässt sich nicht als Projektliste lesen",

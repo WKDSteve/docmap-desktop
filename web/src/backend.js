@@ -13,6 +13,7 @@
 import { computeDeps } from './deps.js';
 import { FolderTooLarge, folderSignature, inspectFolder, readFolder, safeName } from './folder-read.js';
 import { searchView } from './view-search.js';
+import { mapHash, parseTarget, pickProject } from '../../src/lib/open-at.js';
 import { PROJECTS } from './worker.js';
 
 /** What the page calls and this variant has no answer for: each is refused by name. */
@@ -159,7 +160,8 @@ export function storedProject(p) {
  *     contract: { commit: string, schema: number, routes: string[] }, platform: string },
  *   ui: { setMenu(args: object): void, setTitle(title: string): void, setZoom(factor: number): void,
  *     download(name: string, contents: string): void, openUrl(url: string): void,
- *     blobUrl(html: string): string, revokeUrl(url: string): void, notice(state: object): void },
+ *     blobUrl(html: string): string, revokeUrl(url: string): void, notice(state: object): void,
+ *     takeStart?(): string },
  * }} deps
  */
 export function createBackend(deps) {
@@ -470,6 +472,31 @@ export function createBackend(deps) {
   /** @type {Record<string, (args: any) => any>} */
   const commands = {
     list_projects: async () => listed(await load()),
+
+    // The address of the page is the start argument of the web variant: `#repo=<project>&at=<file>:<line>[-<last>]`
+    // (what tasks-desktop's "open in DocMap" opens). Taken once; the same checks as `src-tauri/src/open_at.rs`.
+    take_open_request: async () => {
+      const q = new URLSearchParams(String(deps.ui.takeStart?.() ?? '').replace(/^#/, ''));
+      if (!q.has('repo') && !q.has('at')) return null;
+      const at = q.get('at') ?? '';
+      const target = parseTarget(at);
+      if (!target) {
+        throw appError(/^(.+):\d+(-\d+)?$/.test(at) ? 'err.open.path' : 'err.open.target', { path: at, target: at });
+      }
+      const repo = q.get('repo') ?? '';
+      const picked = pickProject(listed(await load()), repo);
+      if (picked === 'ambiguous') throw appError('err.open.ambiguous', { repo });
+      if (!picked) throw appError('err.open.project', { repo });
+      return { project: picked.id, file: target.file, line: target.line, end: target.end };
+    },
+
+    /** The parsed module_map.json of a project, for the window to resolve a position against. */
+    map_artifact: async ({ id }) => {
+      const p = await projectById(id);
+      const map = await artifact(p);
+      if (!map) throw appError('err.open.nomap', { repo: p.name });
+      return map;
+    },
 
     list_workspaces: async () => {
       const s = await load();
@@ -856,8 +883,9 @@ export function createBackend(deps) {
      * @param {string} base what `serve_project` answered
      * @param {string} theme `light`, `dark` or anything else for the system's
      * @param {string | null} tab
+     * @param {{ id: string, key: string | null } | null} [node] the node it was opened at from outside
      */
-    mapUrl: (base, theme, tab) => {
+    mapUrl: (base, theme, tab, node = null) => {
       const id = String(base).replace(/^webmap:/, '');
       const s = sessions.get(id);
       if (!s || s.mapHtml === null) return '';
@@ -867,7 +895,7 @@ export function createBackend(deps) {
         url = deps.ui.blobUrl(themed(s.mapHtml, key));
         s.urls.set(key, url);
       }
-      return tab ? `${url}#tab=${encodeURIComponent(tab)}` : url;
+      return url + mapHash(tab, node);
     },
 
     /**

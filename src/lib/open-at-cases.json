@@ -1,0 +1,40 @@
+{
+  "_": "Shared by src-tauri/src/open_at.rs and src/lib/open-at.test.js: the same answers in both languages.",
+  "paths": [
+    { "in": "lua/docmap/init.lua", "out": "lua/docmap/init.lua" },
+    { "in": "./lua/a.lua", "out": "lua/a.lua" },
+    { "in": "lua\\docmap\\a.lua", "out": "lua/docmap/a.lua" },
+    { "in": "a//b.lua", "out": "a/b.lua" },
+    { "in": "src/a..b.lua", "out": "src/a..b.lua" },
+    { "in": "", "out": null },
+    { "in": ".", "out": null },
+    { "in": "/etc/passwd", "out": null },
+    { "in": "\\\\server\\share\\x", "out": null },
+    { "in": "C:\\x", "out": null },
+    { "in": "C:/x", "out": null },
+    { "in": "C:x", "out": null },
+    { "in": "~/x", "out": null },
+    { "in": "~", "out": null },
+    { "in": "$HOME/x", "out": null },
+    { "in": "%USERPROFILE%\\x", "out": null },
+    { "in": "..", "out": null },
+    { "in": "../x", "out": null },
+    { "in": "a/../../x", "out": null },
+    { "in": "a/..\\x", "out": null },
+    { "in": "a/b.lua:stream", "out": null },
+    { "in": "a/b\u0000.lua", "out": null }
+  ],
+  "targets": [
+    { "in": "a/b.lua:12", "file": "a/b.lua", "line": 12, "end": null },
+    { "in": "a/b.lua:3-9", "file": "a/b.lua", "line": 3, "end": 9 },
+    { "in": "a\\b.lua:7", "file": "a/b.lua", "line": 7, "end": null },
+    { "in": "a/b.lua", "file": null },
+    { "in": "a/b.lua:", "file": null },
+    { "in": "a/b.lua:0", "file": null },
+    { "in": "a/b.lua:x", "file": null },
+    { "in": ":12", "file": null },
+    { "in": "/x/b.lua:12", "file": null },
+    { "in": "C:\\x\\b.lua:12", "file": null },
+    { "in": "../b.lua:12", "file": null }
+  ]
+}

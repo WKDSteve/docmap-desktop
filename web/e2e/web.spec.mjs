@@ -243,3 +243,43 @@ test('a map that lies in the folder is shown as it is, without generating', asyn
   await expect(page.locator('#proj-counts')).toBeHidden();
   await expect(page.locator('#run-report')).toBeHidden();
 });
+
+// "Open in DocMap" from another program: the address of the page is the request. It names a project the page already
+// knows and a file in it; the map opens at the node, and the node is kept when the window reloads the frame.
+test('the address opens the map at the function that holds the line, and keeps it when the theme reloads the frame', async ({ page }) => {
+  const seen = await watchPage(page);
+  const committed = '<!DOCTYPE html><html><head><title>committed</title></head><body><h1>the committed map</h1></body></html>';
+  const map = JSON.stringify({
+    meta: { schema: 6, title: 'sample', counts: { module: 1, file: 1, namespace: 0 } },
+    nodes: [{ id: 'lua/sample', source: 'lua/sample/init.lua', functions: [{ name: 'greet', line: 14, line_end: 17 }, { name: 'count', line: 22, line_end: 24 }] }],
+  });
+  await fakeFolders(page, { sample: { ...SAMPLE, 'docs/map/index.html': committed, 'docs/map/module_map.json': map } });
+  await page.goto(pageUrl());
+  await addProject(page, 'sample');
+  await page.locator('#pick-folder').click();
+  await expect(mapFrame(page).locator('h1')).toHaveText('the committed map', { timeout: 30_000 });
+
+  await page.goto(`${pageUrl()}#repo=sample&at=lua/sample/init.lua:15`);
+  await page.reload();
+  await expect(page.locator('#map')).toHaveAttribute('src', /^blob:.*#tab=tree&id=lua%2Fsample&fn=lua%2Fsample%23greet$/, { timeout: 30_000 });
+  // The request was taken: the address is clean again, and a reload does not open it a second time.
+  expect(new URL(page.url()).hash).toBe('');
+
+  await choose(page, 'View', 'Dark');
+  await expect(page.locator('#map')).toHaveAttribute('src', /^blob:.*#tab=tree&id=lua%2Fsample&fn=lua%2Fsample%23greet$/);
+  expect(seen.requests).toEqual([]);
+  expect(seen.errors).toEqual([]);
+});
+
+test('a request that leaves the repository or names no known project says so and opens nothing', async ({ page }) => {
+  await fakeFolders(page, { sample: SAMPLE });
+  await page.goto(pageUrl());
+  await addAndWait(page, 'sample', 'sample');
+  await page.goto(`${pageUrl()}#repo=sample&at=..%2F..%2Fetc%2Fpasswd:3`);
+  await page.reload();
+  await expect(page.locator('#status')).toContainText('not a path inside a repository', { timeout: 30_000 });
+  await expect(page.locator('#map')).not.toHaveAttribute('src', /id=/);
+  await page.goto(`${pageUrl()}#repo=elsewhere&at=a.lua:3`);
+  await page.reload();
+  await expect(page.locator('#status')).toContainText('is not a project of this app', { timeout: 30_000 });
+});

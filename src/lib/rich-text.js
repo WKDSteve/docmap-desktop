@@ -54,6 +54,9 @@ function build(doc, nodes) {
     if (n.br) return doc.createElement("br");
     const el = doc.createElement(n.tag);
     if (n.cls) el.className = n.cls;
+    // A command, a path or a file name is not prose: a page translator
+    // would turn `docs/map` or `nvim` into words of the other language.
+    if (n.tag === "code") el.setAttribute("translate", "no");
     el.append(...build(doc, n.kids));
     return el;
   });

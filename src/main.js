@@ -5919,6 +5919,8 @@ const statsUi = {
 function node(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
+  // Code is not prose: a page translator must leave it alone.
+  if (tag === "code") e.setAttribute("translate", "no");
   if (text !== undefined && text !== null) e.textContent = text;
   return e;
 }
@@ -6955,6 +6957,7 @@ function renderScopeLanguages(chosen) {
     box.value = lang.name;
     box.checked = picked.has(lang.name);
     const name = document.createElement("code");
+    name.setAttribute("translate", "no");
     name.textContent = lang.name;
     label.appendChild(box);
     label.appendChild(name);

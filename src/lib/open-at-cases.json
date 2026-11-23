@@ -1,5 +1,5 @@
 {
-  "_": "Shared by src-tauri/src/open_at.rs and src/lib/open-at.test.js: the same answers in both languages.",
+  "_": "Shared by src-tauri/src/open_at.rs and src/lib/open-at.test.js: the same answers in both languages; `at` is also run by web/test/find-at.test.mjs against the engine of engine.lock.",
   "paths": [
     { "in": "lua/docmap/init.lua", "out": "lua/docmap/init.lua" },
     { "in": "./lua/a.lua", "out": "lua/a.lua" },
@@ -36,5 +36,46 @@
     { "in": "/x/b.lua:12", "file": null },
     { "in": "C:\\x\\b.lua:12", "file": null },
     { "in": "../b.lua:12", "file": null }
-  ]
+  ],
+  "at": {
+    "_": "The map and the places of find.at (docmap.nvim TESTS/find_at_spec.lua, plus the edges). `want` is {id, key} (key null for the module), or null when the map has no node for the file. web/test/find-at.test.mjs runs the engine's own find.at (the commit of engine.lock) over this map and holds it and resolveAt to `want`.",
+    "map": {
+      "nodes": [
+        {
+          "id": "lua/pkg/a",
+          "source": "lua/pkg/a/init.lua",
+          "functions": [
+            { "name": "M.outer", "line": 10, "line_end": 30 },
+            { "name": "inner", "line": 15, "line_end": 20 },
+            { "name": "M.later", "line": 40, "line_end": 45 },
+            { "name": "one_liner", "line": 50 }
+          ]
+        },
+        { "id": "lua/pkg/b.lua", "source": "lua/pkg/b.lua", "functions": [] },
+        { "id": "lua/pkg/c.lua", "source": "lua/pkg/c.lua" }
+      ]
+    },
+    "cases": [
+      { "file": "lua/pkg/a/init.lua", "line": 12, "end": null, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.outer" } },
+      { "file": "lua/pkg/a/init.lua", "line": 17, "end": null, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#inner" } },
+      { "file": "lua/pkg/a/init.lua", "line": 22, "end": null, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.outer" } },
+      { "file": "lua/pkg/a/init.lua", "line": 10, "end": null, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.outer" } },
+      { "file": "lua/pkg/a/init.lua", "line": 30, "end": null, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.outer" } },
+      { "file": "lua/pkg/a/init.lua", "line": 35, "end": null, "want": { "id": "lua/pkg/a", "key": null } },
+      { "file": "lua/pkg/a/init.lua", "line": 50, "end": null, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#one_liner" } },
+      { "file": "lua/pkg/a/init.lua", "line": 51, "end": null, "want": { "id": "lua/pkg/a", "key": null } },
+      { "file": "lua/pkg/b.lua", "line": 3, "end": null, "want": { "id": "lua/pkg/b.lua", "key": null } },
+      { "file": "lua/pkg/c.lua", "line": 3, "end": null, "want": { "id": "lua/pkg/c.lua", "key": null } },
+      { "file": "lua/other.lua", "line": 3, "end": null, "want": null },
+      { "file": "lua\\pkg\\a\\init.lua", "line": 41, "end": null, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.later" } },
+      { "file": "./lua/pkg/a/init.lua", "line": 41, "end": null, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.later" } },
+      { "file": "lua/pkg/a/init.lua", "line": 33, "end": 42, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.later" } },
+      { "file": "lua/pkg/a/init.lua", "line": 42, "end": 33, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.later" } },
+      { "file": "lua/pkg/a/init.lua", "line": 48, "end": 17, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#inner" } },
+      { "file": "lua/pkg/a/init.lua", "line": 17, "end": 42,"want": { "id": "lua/pkg/a", "key": "lua/pkg/a#inner" } },
+      { "file": "lua/pkg/a/init.lua", "line": 31, "end": 33, "want": { "id": "lua/pkg/a", "key": null } },
+      { "file": "lua/pkg/a/init.lua", "line": 28, "end": 48, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.outer" } },
+      { "file": "lua/pkg/a/init.lua", "line": 31, "end": 44, "want": { "id": "lua/pkg/a", "key": "lua/pkg/a#M.later" } }
+    ]
+  }
 }

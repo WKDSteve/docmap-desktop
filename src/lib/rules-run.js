@@ -40,6 +40,17 @@ export function defaultTitle(ids, day) {
 }
 
 /**
+ * The reader's own calendar day as `YYYY-MM-DD`. `toISOString()` is the UTC
+ * day, which is yesterday or tomorrow for a few hours around midnight.
+ *
+ * @param {Date} [date]
+ */
+export function localDay(date = new Date()) {
+  const two = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${two(date.getMonth() + 1)}-${two(date.getDate())}`;
+}
+
+/**
  * What a run would send and where, from `agent_preview`: the numbers of the
  * egress line. `null` while there is no destination (no model named, or the
  * project does not allow the model's backend).

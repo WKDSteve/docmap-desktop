@@ -73,3 +73,11 @@ test("the <code> elements main.js builds are marked translate=\"no\"", () => {
   const marked = [...MAIN.matchAll(/document\.createElement\("code"\);\s*\n\s*\w+\.setAttribute\("translate", "no"\)/g)].length;
   assert.equal(marked, direct);
 });
+
+test("main.js formats numbers, sizes and dates with the UI language", () => {
+  const code = MAIN.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /\.toFixed\(/, "toFixed writes a decimal point whatever the language");
+  assert.doesNotMatch(code, /toISOString\(\)\.slice/, "that is the UTC day");
+  assert.doesNotMatch(code, /\.toLocale(?:Date|Time)?String\(\)/, "toLocale*String() without the locale");
+  assert.doesNotMatch(code, /formatBytes\([^,()]*(?:\([^()]*\))?[^,()]*\)/, "formatBytes without the locale");
+});

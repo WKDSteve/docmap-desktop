@@ -85,11 +85,19 @@ export function languageRows(s) {
   }));
 }
 
-/** Bytes as a short human size. */
-export function formatBytes(n) {
+/**
+ * Bytes as a short human size, the number in the reader's locale (a German
+ * reader gets `3,0 MB`, not `3.0 MB`).
+ *
+ * @param {number} n
+ * @param {string} [locale]  BCP 47 tag; the UI language
+ */
+export function formatBytes(n, locale = "en") {
   if (!Number.isFinite(n) || n < 0) return "";
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+  const whole = new Intl.NumberFormat(locale, { maximumFractionDigits: 0 });
+  const one = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (n < 1024) return `${whole.format(n)} B`;
+  if (n < 1024 * 1024) return `${whole.format(Math.round(n / 1024))} KB`;
+  if (n < 1024 * 1024 * 1024) return `${one.format(n / (1024 * 1024))} MB`;
+  return `${one.format(n / (1024 * 1024 * 1024))} GB`;
 }

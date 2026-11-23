@@ -96,7 +96,9 @@ test("a base rule sets every text field to 1rem, and .fb-field does not inherit 
   const base = declarations(CSS, "font-size").find((d) => /^input:not\(/.test(d.selector) && /textarea/.test(d.selector));
   assert.equal(base?.value, "1rem");
   const fb = declarations(CSS, "font-size").filter((d) => d.selector === ".fb-field");
-  assert.equal(fb[0]?.value, "1rem");
+  assert.equal(fb.at(-1)?.value, "1rem");
+  const block = CSS.match(/\.fb-field \{[^}]*\}/)[0];
+  assert.ok(block.indexOf("font-size") > block.indexOf("font: inherit"), "font: inherit after font-size resets it to 14px");
 });
 
 test("fields that take a URL, a path, a command or a name switch spellcheck off", () => {

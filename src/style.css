@@ -1418,7 +1418,6 @@ button:focus-visible {
 }
 
 .fb-field {
-  font-size: 1rem;
   width: 100%;
   box-sizing: border-box;
   padding: 7px 9px;
@@ -1427,6 +1426,8 @@ button:focus-visible {
   background: var(--bg);
   color: var(--ink);
   font: inherit;
+  /* after the shorthand: `font` resets the size to the inherited 14px */
+  font-size: 1rem;
 }
 
 .fb-body {
@@ -1794,7 +1795,7 @@ button:focus-visible {
 
 .scope-exclude {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 1rem;
   width: 100%;
   resize: vertical;
 }

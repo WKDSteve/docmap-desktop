@@ -28,7 +28,7 @@ function declarations(css, property) {
       if (decl.startsWith(property + ":")) {
         out.push({
           selector: stack[stack.length - 1],
-          media: stack.filter((s) => s.startsWith("@media")),
+          media: stack.filter((s) => s.startsWith("@media") || s.startsWith("@supports")),
           value: decl.slice(property.length + 1).trim(),
         });
       }
@@ -105,5 +105,22 @@ test("fields that take a URL, a path, a command or a name switch spellcheck off"
     const tag = markup.match(new RegExp(`<input id="${id}"[^>]*>`))?.[0];
     assert.ok(tag, id);
     assert.match(tag, /spellcheck="false"/, id);
+  }
+});
+
+test("changing numbers use tabular figures", () => {
+  const withNums = declarations(CSS, "font-variant-numeric").filter((d) => d.value === "tabular-nums");
+  const selectors = withNums.map((d) => d.selector).join(",\n");
+  for (const sel of [".stat-tile .v", ".stats-table .n", ".ov-traffic", ".ov-deps-who", ".rules-count", ".rules-note", ".rules-run-state", ".finder-state", ".run-egress", ".run-go", ".matrix-hit"]) {
+    assert.ok(selectors.includes(sel), `${sel} shows changing numbers without tabular-nums`);
+  }
+});
+
+test("headings balance their lines only where text-wrap is known", () => {
+  const found = declarations(CSS, "text-wrap").filter((d) => d.value === "balance");
+  assert.ok(found.length, "no text-wrap: balance for the headings");
+  for (const d of found) {
+    assert.ok(d.media.some((m) => /^@supports\s*\(text-wrap:\s*balance\)/.test(m)), `${d.selector} is not behind @supports`);
+    assert.match(d.selector, /h[1-4]/);
   }
 });

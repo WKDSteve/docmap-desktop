@@ -301,6 +301,36 @@ select {
   font-size: 1rem;
 }
 
+
+/* Numbers that change while they are on screen (counts, token totals, sizes,
+   progress) keep one width per digit, so the line around them does not
+   jitter and a column lines up. */
+.stat-tile .v,
+.stats-table .n,
+.ov-traffic,
+.ov-deps-who,
+.rules-count,
+.rules-note,
+.rules-run-state,
+.finder-state,
+.run-egress,
+.run-go,
+.matrix-hit {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A heading that wraps breaks into lines of even length instead of leaving
+   one word on the last line. Where the property is not known the heading
+   wraps as before. */
+@supports (text-wrap: balance) {
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+}
+
 button {
   font: inherit;
   padding: 7px 11px;

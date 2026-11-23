@@ -47,7 +47,7 @@ mod imp {
 
     /// A path as the system writes it, compared the way Windows compares: without the verbatim prefix, without case,
     /// with one kind of separator.
-    fn plain(path: &Path) -> String {
+    pub(super) fn plain(path: &Path) -> String {
         path.to_string_lossy()
             .trim_start_matches(r"\\?\")
             .replace('/', "\\")
@@ -146,50 +146,52 @@ mod imp {
         }
         closing.posted
     }
+}
 
-    #[cfg(test)]
-    mod tests {
-        use super::*;
+#[cfg(windows)]
+#[cfg(test)]
+mod tests {
+    use super::imp::{close_windows, others, plain};
+    use std::path::Path;
 
-        #[test]
-        fn a_path_is_compared_as_windows_does() {
-            assert_eq!(
-                plain(Path::new(r"\\?\C:\Apps\Docmap-Desktop.exe")),
-                plain(Path::new("c:/apps/docmap-desktop.exe"))
-            );
-            assert_ne!(
-                plain(Path::new(r"C:\Apps\docmap-desktop.exe")),
-                plain(Path::new(r"C:\Other\docmap-desktop.exe"))
-            );
-        }
+    #[test]
+    fn a_path_is_compared_as_windows_does() {
+        assert_eq!(
+            plain(Path::new(r"\\?\C:\Apps\Docmap-Desktop.exe")),
+            plain(Path::new("c:/apps/docmap-desktop.exe"))
+        );
+        assert_ne!(
+            plain(Path::new(r"C:\Apps\docmap-desktop.exe")),
+            plain(Path::new(r"C:\Other\docmap-desktop.exe"))
+        );
+    }
 
-        /// Another process that runs a program file is found by that file, and this process never finds itself.
-        #[test]
-        fn another_process_of_the_same_program_is_found_and_this_one_is_not() {
-            let system = std::env::var_os("SystemRoot").expect("SystemRoot");
-            let cmd = Path::new(&system).join("System32").join("cmd.exe");
-            let mut child = std::process::Command::new(&cmd)
-                .args(["/d", "/c", "ping -n 30 127.0.0.1 >nul"])
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .spawn()
-                .expect("cmd starts");
-            let found = others(&cmd).unwrap();
-            let mine = std::process::id();
-            let seen = found.contains(&child.id());
-            let myself = found.contains(&mine);
-            let nothing_to_close = close_windows(&[child.id()]);
-            let _ = child.kill();
-            let _ = child.wait();
-            assert!(seen, "{found:?} does not hold the child {}", child.id());
-            assert!(!myself);
-            // A console process has no visible window of its own to close.
-            assert_eq!(nothing_to_close, 0);
-            // A program that no process runs has no other instance.
-            let none = Path::new(&system)
-                .join("System32")
-                .join("no-such-program-6f1c.exe");
-            assert_eq!(others(&none).unwrap(), Vec::<u32>::new());
-        }
+    /// Another process that runs a program file is found by that file, and this process never finds itself.
+    #[test]
+    fn another_process_of_the_same_program_is_found_and_this_one_is_not() {
+        let system = std::env::var_os("SystemRoot").expect("SystemRoot");
+        let cmd = Path::new(&system).join("System32").join("cmd.exe");
+        let mut child = std::process::Command::new(&cmd)
+            .args(["/d", "/c", "ping -n 30 127.0.0.1 >nul"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .expect("cmd starts");
+        let found = others(&cmd).unwrap();
+        let mine = std::process::id();
+        let seen = found.contains(&child.id());
+        let myself = found.contains(&mine);
+        let nothing_to_close = close_windows(&[child.id()]);
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(seen, "{found:?} does not hold the child {}", child.id());
+        assert!(!myself);
+        // A console process has no visible window of its own to close.
+        assert_eq!(nothing_to_close, 0);
+        // A program that no process runs has no other instance.
+        let none = Path::new(&system)
+            .join("System32")
+            .join("no-such-program-6f1c.exe");
+        assert_eq!(others(&none).unwrap(), Vec::<u32>::new());
     }
 }

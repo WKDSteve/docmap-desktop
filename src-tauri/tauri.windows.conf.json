@@ -5,6 +5,11 @@
     ],
     "resources": {
       "resources/grammars/*": "grammars/"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
     }
   }
 }

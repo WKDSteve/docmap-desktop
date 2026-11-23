@@ -52,14 +52,20 @@ tokio = { version = "1", default-features = false, features = ["rt-multi-thread"
 
 # Opening a folder, a document or an address, and showing a file in its
 # folder, by asking the shell (src/shellopen.rs) instead of starting
-# `explorer.exe`. The version tauri already has in the tree: no new package.
+# `explorer.exe`; the command in the terminal (src/command_entry/: the `PATH` of the user in the registry) and
+# `status` / `stop` (src/instances.rs: which window of this program is open, and the same message its close button
+# sends), all by the API of the system and none by a program. The version tauri already has in the tree: no new
+# package.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_System_Com",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Registry",
+    "Win32_System_Threading",
     "Win32_UI_Shell",
     "Win32_UI_Shell_Common",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]

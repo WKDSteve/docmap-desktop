@@ -72,6 +72,23 @@ setup silently. The script is the one of appkit's
 for this app and the channel when it is attached. This route is written from the script's documented
 behaviour and the workflow's own check; the anonymous download has not been tried by hand yet.
 
+### The command in the terminal
+
+The setup (any of the routes above) also makes the command `docmap-desktop` for the terminal: a small starter in
+`%LOCALAPPDATA%ppkit-familyin`, the one folder all apps of the family share, which is added to the `PATH` of the
+user once (open a new terminal afterwards). The uninstall takes the starter away, and the folder with the last one.
+
+```
+docmap-desktop --version      the version, one line
+docmap-desktop --help         every command and the exit codes; `docmap-desktop help <command>` for one
+docmap-desktop status         is a window open? (exit 0 yes, 1 no)
+docmap-desktop stop           close the window like its close button (it may still ask something)
+docmap-desktop --open-at ...  open a path in the window (the request of the other family apps)
+```
+
+Exit codes: 0 done, 1 failed or nothing to report, 2 wrong words. `status` and `stop` look for other processes of this
+very program file; they never end a process. The engine program `docmap.exe` beside the app gets no command of its own.
+
 **Or build this checkout and install it** (Windows; Rust and the Tauri CLI, see [Build](#build)):
 the engine is staged the way the rolling build does it (`standalone-latest` of docmap.nvim, once,
 `-RefreshEngine` fetches it again), `cargo tauri build --bundles nsis` makes the setup, and that setup

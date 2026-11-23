@@ -11,6 +11,8 @@
 
 mod agent;
 mod apperr;
+mod cli;
+mod command_entry;
 mod contract;
 mod deps;
 mod engine;
@@ -21,6 +23,7 @@ mod gitcfg;
 mod github;
 mod icon;
 mod import;
+mod instances;
 mod languages;
 mod menu;
 mod nvim;
@@ -114,6 +117,12 @@ pub(crate) fn portable(path: &std::path::Path) -> String {
 }
 
 fn main() {
+    // The command line first: `--version`, `--help`, `status`, `stop` and the words of the setup end here, before a
+    // window exists (`cli`). Everything else, `--open-at` and a path among it, starts the window as it always did.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(code) = cli::early(&args) {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .setup(|app| {
             // Registered once. `set_menu` replaces the menu on every

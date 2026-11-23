@@ -53,3 +53,9 @@ test("nothing hardcodes a monospace stack around the token", () => {
     "use var(--mono) rather than repeating the stack"
   );
 });
+
+test("every @font-face swaps instead of hiding the text while the file loads", () => {
+  const faces = CSS.match(/@font-face\s*\{[^}]*\}/g) ?? [];
+  assert.ok(faces.length >= 2, "expected the bundled faces");
+  for (const face of faces) assert.match(face, /font-display:\s*swap\s*;/, face);
+});

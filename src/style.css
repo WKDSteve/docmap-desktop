@@ -17,22 +17,23 @@
    browser asked for bold with no bold face smears the regular one, and
    the result is worse than the system font would have been.
 
-   `font-display: block` because there is nothing to wait for -- the file
-   is local, and a flash of a fallback face would be a flicker with no
-   loading behind it. */
+   `font-display: swap`: the text is readable at once in the fallback
+   mono face and switches when the file is there. With `block` the text
+   stays invisible until the file has loaded -- for a local file a few
+   milliseconds, for the web page opened from disk or a slow disk more. */
 @font-face {
   font-family: "JetBrains Mono";
   src: url("fonts/JetBrainsMono-Regular.ttf") format("truetype");
   font-weight: 400;
   font-style: normal;
-  font-display: block;
+  font-display: swap;
 }
 @font-face {
   font-family: "JetBrains Mono";
   src: url("fonts/JetBrainsMono-Bold.ttf") format("truetype");
   font-weight: 700;
   font-style: normal;
-  font-display: block;
+  font-display: swap;
 }
 
 /* The palette, the type and the shapes are the kit's: appkit-ui's tokens

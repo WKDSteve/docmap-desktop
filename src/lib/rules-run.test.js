@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   backendName,
   defaultTitle,
+  localDay,
   egress,
   startBlocker,
   queueRows,
@@ -233,4 +234,10 @@ test("the paths of a waiver are one per line or comma separated", () => {
   assert.deepEqual(waiverPaths(" lua/gen \n\n docs/*.md, a.lua "), ["lua/gen", "docs/*.md", "a.lua"]);
   assert.deepEqual(waiverPaths(""), []);
   assert.deepEqual(waiverPaths(undefined), []);
+});
+
+test("localDay is the reader's day, not the UTC day", () => {
+  // 23:30 local on 31 December: the UTC day may already be the next year.
+  assert.equal(localDay(new Date(2026, 11, 31, 23, 30)), "2026-12-31");
+  assert.equal(localDay(new Date(2026, 0, 5, 0, 10)), "2026-01-05");
 });

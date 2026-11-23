@@ -96,6 +96,7 @@ import {
 import {
   backendName,
   defaultTitle as defaultRunTitle,
+  localDay,
   egress,
   startBlocker,
   queueRows,
@@ -3157,7 +3158,7 @@ async function renderTelemetry() {
     // dialog. `toLocaleString` already follows the reader's locale.
     li.textContent = fill(t("tel.snapItem"), {
       name: s.name,
-      when: when.toLocaleString(),
+      when: when.toLocaleString(locale),
       sessions: s.sessions,
     });
     tel.snaps.append(li);
@@ -3700,9 +3701,7 @@ let filesPath = "";
 
 function formatSize(n) {
   if (n === null || n === undefined) return "";
-  if (n < 1024) return n + " B";
-  if (n < 1024 * 1024) return Math.round(n / 1024) + " KB";
-  return (n / (1024 * 1024)).toFixed(1) + " MB";
+  return formatBytes(n, locale);
 }
 
 /// Which `renderFiles` call is the latest. The listing runs off the main thread
@@ -4656,7 +4655,7 @@ async function openTrust(id, ruleset) {
   trustUi.path.textContent = shown.path;
   trustUi.facts.textContent = fill(t("rules.trust.facts"), {
     files: shown.files,
-    size: formatBytes(shown.bytes),
+    size: formatBytes(shown.bytes, locale),
     n: shown.predicates.length,
     hash: shown.sha256.slice(0, 12),
   });
@@ -5743,7 +5742,7 @@ function drawRunDialog() {
       node("td", null, b.id),
       node("td", "run-batch-rules", rulesList(b.rules).map((r) => r.id).join(", ")),
       node("td", "n", nf.format(rulesList(b.files).length)),
-      node("td", "n", formatBytes(b.bytes ?? 0)),
+      node("td", "n", formatBytes(b.bytes ?? 0, locale)),
       node("td", "n", nf.format(b.tokens ?? 0))
     );
     tr.title = rulesList(b.files).join("\n");
@@ -5781,7 +5780,7 @@ function drawRunDialog() {
 
   const out = f.loading ? null : egress(p);
   if (out && out.requests) {
-    const facts = { files: nf.format(out.files), size: formatBytes(out.bytes), model: out.model, backend: backendName(out.backend) };
+    const facts = { files: nf.format(out.files), size: formatBytes(out.bytes, locale), model: out.model, backend: backendName(out.backend) };
     runUi.egress.textContent = out.local ? fill(t("rules.run.egress.local"), facts) : fill(t("rules.run.egress.cloud"), facts);
     runUi.egress.classList.toggle("leaves", !out.local);
     runUi.go.textContent = out.local ? t("rules.run.go.local") : fill(t("rules.run.go.cloud"), facts);
@@ -5822,7 +5821,7 @@ function openRunDialog(id) {
   if (!manual.length) return;
   runForm = { id, ids: manual, preview: null, previewError: null, health: null, healthError: null, loading: true, seq: 0 };
   const form = runForm;
-  runUi.fTitle.value = defaultRunTitle(manual, new Date().toISOString().slice(0, 10));
+  runUi.fTitle.value = defaultRunTitle(manual, localDay());
   runUi.fNotes.value = "";
   let model = "";
   try {
@@ -5975,7 +5974,7 @@ async function renderStats(force = false) {
     return el;
   };
   statsUi.tiles.replaceChildren(
-    tile(h.files, t("stats.tile.files"), formatBytes(s.bytes)),
+    tile(h.files, t("stats.tile.files"), formatBytes(s.bytes, locale)),
     tile(h.lines, t("stats.tile.lines")),
     tile(h.code, t("stats.tile.code"), fill(t("stats.sub.files"), { n: nf.format(h.codeFiles) })),
     tile(

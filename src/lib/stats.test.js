@@ -89,3 +89,9 @@ test("sizes read as a number and a unit", () => {
   assert.equal(formatBytes(3 * 1024 * 1024), "3.0 MB");
   assert.equal(formatBytes(-1), "");
 });
+
+test("sizes follow the reader's locale", () => {
+  assert.equal(formatBytes(3 * 1024 * 1024, "de"), "3,0 MB");
+  assert.equal(formatBytes(1536 * 1024 * 1024, "de"), "1,5 GB");
+  assert.equal(formatBytes(1500 * 1024, "de"), "1,5 MB");
+});

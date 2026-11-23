@@ -81,3 +81,29 @@ test("main.js formats numbers, sizes and dates with the UI language", () => {
   assert.doesNotMatch(code, /\.toLocale(?:Date|Time)?String\(\)/, "toLocale*String() without the locale");
   assert.doesNotMatch(code, /formatBytes\([^,()]*(?:\([^()]*\))?[^,()]*\)/, "formatBytes without the locale");
 });
+
+// px of a font-size value: rem and em count 16 px, as the root does.
+const px = (v) => (/rem$|em$/.test(v) ? parseFloat(v) * 16 : /px$/.test(v) ? parseFloat(v) : NaN);
+const FIELD = /(^|[\s>,+~])(input|textarea|select)\b|\.fb-field|\.rules-query|\.finder-select/;
+
+test("fields are set at 16px or more", () => {
+  const sizes = declarations(CSS, "font-size").filter((d) => FIELD.test(d.selector));
+  assert.ok(sizes.length >= 8, "expected the field rules of the stylesheet");
+  for (const d of sizes) assert.ok(px(d.value) >= 16, `${d.selector} sets ${d.value}`);
+});
+
+test("a base rule sets every text field to 1rem, and .fb-field does not inherit 14px", () => {
+  const base = declarations(CSS, "font-size").find((d) => /^input:not\(/.test(d.selector) && /textarea/.test(d.selector));
+  assert.equal(base?.value, "1rem");
+  const fb = declarations(CSS, "font-size").filter((d) => d.selector === ".fb-field");
+  assert.equal(fb[0]?.value, "1rem");
+});
+
+test("fields that take a URL, a path, a command or a name switch spellcheck off", () => {
+  const markup = HTML.replace(/<!--[\s\S]*?-->/g, "");
+  for (const id of ["url-input", "ws-new", "editor-cmd", "repo-filter"]) {
+    const tag = markup.match(new RegExp(`<input id="${id}"[^>]*>`))?.[0];
+    assert.ok(tag, id);
+    assert.match(tag, /spellcheck="false"/, id);
+  }
+});

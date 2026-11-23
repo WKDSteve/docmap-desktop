@@ -527,7 +527,7 @@
           no credentials of its own.
         </p>
         <div class="addbox-row">
-          <input id="url-input" type="url" data-i18n-placeholder="add.url.placeholder" placeholder="https://github.com/owner/repo" autocomplete="off" />
+          <input id="url-input" type="url" spellcheck="false" data-i18n-placeholder="add.url.placeholder" placeholder="https://github.com/owner/repo" autocomplete="off" />
           <button id="run-url-import" class="addbox-go" type="button" data-i18n="add.url.go">Clone</button>
           <!-- Only while a clone runs: ends git with everything it started.
                Closing the dialog does the same. -->
@@ -540,7 +540,7 @@
         <div class="addbox-repos">
           <div class="addbox-row">
             <button id="load-repos" class="addbox-secondary" type="button" data-i18n="add.repos.load">List my GitHub repositories</button>
-            <input id="repo-filter" type="search" data-i18n-placeholder="add.repos.filter" placeholder="Filter…" autocomplete="off" hidden />
+            <input id="repo-filter" type="search" spellcheck="false" data-i18n-placeholder="add.repos.filter" placeholder="Filter…" autocomplete="off" hidden />
           </div>
           <p id="repo-state" class="addbox-note"></p>
           <ul id="repo-list" class="addbox-list" hidden></ul>
@@ -646,7 +646,7 @@
       <ul id="ws-list" class="ws-list"></ul>
 
       <div class="addbox-row">
-        <input id="ws-new" type="text" autocomplete="off"
+        <input id="ws-new" type="text" spellcheck="false" autocomplete="off"
                data-i18n-placeholder="ws.new.placeholder" placeholder="New workspace…" />
         <button id="ws-create" class="addbox-go" type="button" data-i18n="ws.create">Create</button>
       </div>
@@ -964,7 +964,7 @@
           substituted. Leave it empty to hand the file to whatever your
           desktop opens it with.
         </p>
-        <input id="editor-cmd" class="fb-field" type="text" autocomplete="off"
+        <input id="editor-cmd" class="fb-field" type="text" spellcheck="false" autocomplete="off"
                data-i18n-placeholder="prefs.editor.placeholder"
                placeholder="code -g {file}:{line}" />
       </section>

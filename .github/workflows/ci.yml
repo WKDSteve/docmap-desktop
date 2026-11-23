@@ -211,6 +211,12 @@ jobs:
       - name: no colour outside the tokens
         run: python tools/check-colors.py
 
+      # What the window ships is the folder src/ (tauri.conf.json: frontendDist), parsed and read at every start. 1463 kB
+      # measured (two TTF faces of 275 kB each, 941 kB without the fonts) plus about a tenth. When it is used up, find what
+      # grew (the output names the five largest files) before raising it, and write the reason here.
+      - name: the window stays within its size budget
+        run: python tools/check-dist-size.py src --budget 1610
+
       # Every process the app starts goes through src-tauri/src/proc.rs (appkit_core::child) or
       # appkit_core::launch; tools/process-starts.allow names the rest, with a reason and a count.
       - name: no process started by hand

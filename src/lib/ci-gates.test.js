@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -161,4 +161,24 @@ test("no workflow uses Swatinem/rust-cache: on the self-hosted runner it deletes
   for (const name of ["ci.yml", "rolling.yml", "release.yml"]) {
     assert.doesNotMatch(code(read(`.github/workflows/${name}`)), /rust-cache/, `${name} uses rust-cache`);
   }
+});
+
+test("ci.yml holds the window (src/) to a size budget with the shared tool", () => {
+  const all = steps(read(".github/workflows/ci.yml"));
+  const step = all.find((s) => /check-dist-size\.py src --budget \d+/.test(s.body));
+  assert.ok(step, "no step measures src/ with tools/check-dist-size.py");
+  assert.doesNotMatch(step.body, /^\s*if:/m, "an `if:` would exempt a run from the budget");
+  // The budget is the measure plus about a tenth: not so loose that growth
+  // passes unseen, not so tight that the next small change fails.
+  const budget = Number(/--budget (\d+)/.exec(step.body)[1]);
+  const kb = (function size(dir) {
+    let n = 0;
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      n += e.isDirectory() ? size(p) : e.name.endsWith(".map") ? 0 : statSync(p).size;
+    }
+    return n;
+  })(path.join(ROOT, "src")) / 1024;
+  assert.ok(kb <= budget, `src/ is ${kb.toFixed(0)} kB, over its budget of ${budget} kB`);
+  assert.ok(budget <= kb * 1.25, `the budget ${budget} kB is more than a quarter above the ${kb.toFixed(0)} kB measured`);
 });

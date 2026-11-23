@@ -165,7 +165,14 @@ body.sb-auto #sidebar {
   position: relative;
   z-index: 40;
   transform: translateX(calc(14px - 260px));
-  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+/* The slide is a transition only for users who did not ask for less motion;
+   with the preference the sidebar still moves, just without the animation. */
+@media (prefers-reduced-motion: no-preference) {
+  body.sb-auto #sidebar {
+    transition: transform 160ms ease, box-shadow 160ms ease;
+  }
 }
 
 body.sb-auto #sidebar.peek {
@@ -785,7 +792,13 @@ button:focus-visible {
   margin-left: auto;
   color: var(--muted);
   transform: rotate(90deg);
-  transition: transform 120ms ease;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  #engine > summary::after,
+  #nvim > summary::after {
+    transition: transform 120ms ease;
+  }
 }
 
 #engine[open] > summary::after,

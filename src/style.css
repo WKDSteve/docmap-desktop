@@ -1362,6 +1362,9 @@ button:focus-visible {
   align-items: center;
   gap: 8px;
   min-width: 0;
+  /* The label is the target, box and name in one: 24 px tall at least, the
+     box inside stays as it is. */
+  min-height: 24px;
   cursor: pointer;
 }
 .addbox-check input {
@@ -1685,6 +1688,8 @@ button:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* The label is the target, box and text in one: 24 px tall at least. */
+  min-height: 24px;
   font-size: 12.5px;
   color: var(--ink);
   cursor: pointer;
@@ -2792,7 +2797,9 @@ body.has-bar {
 
 .rules-fold {
   flex: none;
-  width: 22px;
+  /* At least 24 x 24 CSS px to hit: the glyph stays 15px, the button grows. */
+  min-width: 24px;
+  min-height: 24px;
   border: none;
   background: transparent;
   color: var(--muted);

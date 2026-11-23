@@ -523,6 +523,8 @@ const CATALOGS = {
     "fb.attach.note":
       "Below is exactly what will be sent along. It helps with almost every report, and it is easy to forget.",
     "fb.go": "Open on GitHub…",
+    "fb.opening": "Opening the report in your browser…",
+    "ws.needsName": "A name for the new workspace, please.",
     "fb.needsSubject": "A short title, please — a report without one is the one nobody opens.",
     "menu.file": "File",
     "menu.project": "Project",
@@ -1427,6 +1429,8 @@ const CATALOGS = {
     "fb.attach.note":
       "Unten siehst du genau, was mitgeschickt wird. Das hilft bei fast jedem Bericht — und geht leicht vergessen.",
     "fb.go": "Auf GitHub öffnen…",
+    "fb.opening": "Der Bericht wird im Browser geöffnet …",
+    "ws.needsName": "Bitte einen Namen für den neuen Arbeitsbereich.",
     "fb.needsSubject": "Bitte noch einen kurzen Titel — ohne den geht ein Bericht leicht unter.",
     "menu.file": "Datei",
     "menu.project": "Projekt",

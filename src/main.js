@@ -1422,7 +1422,8 @@ async function select(id) {
   view.mapBase = served ?? convertFileSrc(status.index_path);
   view.mapTab = null;
   // An outside request ("open at file:line") is shown once, and then belongs to this map until another is chosen.
-  view.mapNode = view.openNode;
+  // Selecting the same project again (after a generation) keeps the node it was showing.
+  view.mapNode = view.openNode ?? (switched ? null : view.mapNode);
   view.openNode = null;
   const url = mapUrl(view.mapBase);
   els.frame.src = url;
@@ -2327,16 +2328,19 @@ async function openRequested() {
     return true;
   }
   let hit = null;
+  let note = "";
   try {
     hit = resolveAt(await invoke("map_artifact", { id: p.id }), req.file, req.line, req.end);
+    if (!hit) note = fillParams(t("open.nonode"), { file: req.file, repo: p.name });
   } catch (e) {
-    say(errorText(e));
+    note = errorText(e);
   }
-  // The project opens either way; only a found node is shown at.
+  // The project opens either way; only a found node is shown at. What went wrong is said after `select`, which
+  // writes the project's path to the status line itself.
   view.openNode = hit;
   await select(p.id);
   view.openNode = null;
-  if (!hit) say(fillParams(t("open.nonode"), { file: req.file, repo: p.name }));
+  if (note) say(note);
   return true;
 }
 

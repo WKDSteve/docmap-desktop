@@ -282,4 +282,8 @@ test('a request that leaves the repository or names no known project says so and
   await page.goto(`${pageUrl()}#repo=elsewhere&at=a.lua:3`);
   await page.reload();
   await expect(page.locator('#status')).toContainText('is not a project of this app', { timeout: 30_000 });
+  // A project without a map opens, and the status line says what is missing instead of that the file is unknown.
+  await page.goto(`${pageUrl()}#repo=sample&at=lua/sample/init.lua:15`);
+  await page.reload();
+  await expect(page.locator('#status')).toContainText('has no readable map yet', { timeout: 30_000 });
 });

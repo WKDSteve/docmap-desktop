@@ -631,6 +631,10 @@ docmap-desktop --open-at <project> <file>:<line>
 docmap-desktop --open-at <project> <file>:<first>-<last>
 ```
 
+The same in one word, for a caller that cannot pass two (a WebDriver turns every entry of a command line into a switch
+of its own): `docmap-desktop --open-at=<project>|<file>:<line>`. The first `|` splits the project from the file (a `|` is
+not allowed in a Windows path); everything else below applies unchanged.
+
 `<project>` is a project this app already has, named by its sidebar name, its id or its folder; `<file>` is a path
 **relative to the repository** (`lua/docmap/init.lua`). The window selects the project and opens its map on the tree at
 the function that holds the line (the innermost one; for a range, the one the range overlaps most), or at the file's

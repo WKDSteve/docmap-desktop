@@ -36,6 +36,18 @@ impl Pending {
     /// `--open-at <repo> <target>` among `args` (the program name already dropped), if there is one.
     /// A flag without its two values is a request too: the window says what was wrong with it.
     pub(crate) fn from_args(args: &[String]) -> Pending {
+        // The one-word spelling first: `--open-at=<repo>|<target>`. A WebDriver turns every entry of a command line
+        // into a switch of its own (`--project`), so the two-word form cannot reach a window it starts; `|` cannot be
+        // in a Windows path, so the first one splits the repository from the target.
+        if let Some(value) = args.iter().find_map(|a| a.strip_prefix("--open-at=")) {
+            let request = match value.split_once('|') {
+                Some((repo, target)) if !repo.is_empty() && !target.is_empty() => {
+                    Ok((repo.to_owned(), target.to_owned()))
+                }
+                _ => Err(AppError::new("err.open.args")),
+            };
+            return Pending(Mutex::new(Some(request)));
+        }
         let Some(at) = args.iter().position(|a| a == FLAG) else {
             return Pending::default();
         };
@@ -256,6 +268,18 @@ mod tests {
         let p = Pending::from_args(&args(&["--open-at", "repo", "a.lua:3"]));
         assert_eq!(p.take(), Some(Ok(("repo".into(), "a.lua:3".into()))));
         assert!(p.take().is_none(), "taken once");
+        // the one-word spelling, which survives a WebDriver
+        let p = Pending::from_args(&args(&["--x", "--open-at=repo|a.lua:3", "--y"]));
+        assert_eq!(p.take(), Some(Ok(("repo".into(), "a.lua:3".into()))));
+        for bad in [
+            "--open-at=",
+            "--open-at=repo",
+            "--open-at=repo|",
+            "--open-at=|a.lua:3",
+        ] {
+            let got = Pending::from_args(&args(&[bad])).take().unwrap();
+            assert_eq!(got.unwrap_err().key(), "err.open.args", "{bad}");
+        }
         for bad in [
             &["--open-at"][..],
             &["--open-at", "repo"],

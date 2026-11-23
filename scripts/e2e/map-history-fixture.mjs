@@ -52,7 +52,7 @@ writeFileSync(gitconfig, '[user]\n\tname = Sheet Fixture\n\temail = sheet@exampl
 const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: '1' };
 
 function run(program, args, env) {
-  const r = spawnSync(program, args, { cwd: project, encoding: 'utf8', env, timeout: 240_000 });
+  const r = spawnSync(program, args, { cwd: project, encoding: 'utf8', env, timeout: 600_000 });
   if (r.error || r.status !== 0) {
     fail(`${program} ${args.join(' ')}: ${r.error ?? ''}${r.stdout ?? ''}${r.stderr ?? ''}`);
   }

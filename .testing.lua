@@ -77,6 +77,93 @@ return {
 					RULES_TRUST = "",
 				},
 			},
+			-- The same window over a Lua project with functions and a telemetry store of known content, both in the run's
+			-- own folder: what the page of the map shows of the runtime data in the detail of a function, reached
+			-- through the window's server (`/api/telemetry`, the engine as a sidecar). The project has a map with
+			-- functions (telemetry-fixture.mjs, grammars of this checkout); `prepare` writes the workspace that lists
+			-- it and the store, with the real runtime-analysis.nvim under Neovim (telemetry-prepare.mjs; needs
+			-- Neovim and the checkouts of lib.nvim and runtime-analysis.nvim). The engine reads the store below
+			-- the nvim-data folder below the run's LOCALAPPDATA (`%LOCALAPPDATA%/nvim-data`), which is in the run's folder.
+			["window-telemetry"] = {
+				build = {
+					{ "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
+					{ "node", "scripts/e2e/telemetry-fixture.mjs" },
+				},
+				build_timeout_ms = 1800000,
+				prepare = { "node", "scripts/e2e/telemetry-prepare.mjs", "${temp}" },
+				run = { "src-tauri/target/release/docmap-desktop.exe" },
+				env = {
+					DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
+					WEBVIEW2_USER_DATA_FOLDER = "${temp}/webview",
+					LOCALAPPDATA = "${temp}/local",
+					RULES_VAULT = "",
+					RULES_TRUST = "",
+				},
+			},
+			-- The window started from outside: `--open-at <project> <file>:<line>` (what tasks-desktop's "open in DocMap"
+			-- runs). The window reads it once at its start, so the project is known before it starts: the fixture
+			-- of the map views (map-history-fixture.mjs) is built, and `prepare` writes a workspace that lists it
+			-- into the run's config folder (open-at-config.mjs). Three apps, one start each: what is asked is the
+			-- command line, and the window takes it only once.
+			["window-open-at"] = {
+				build = {
+					{ "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
+					{ "node", "scripts/e2e/map-history-fixture.mjs" },
+				},
+				build_timeout_ms = 1800000,
+				prepare = { "node", "scripts/e2e/open-at-config.mjs", "${temp}/config" },
+				run = {
+					"src-tauri/target/release/docmap-desktop.exe",
+					"--open-at=project|lua/app/core/init.lua:3",
+				},
+				env = {
+					DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
+					WEBVIEW2_USER_DATA_FOLDER = "${temp}/webview",
+					LOCALAPPDATA = "${temp}/local",
+					RULES_VAULT = "",
+					RULES_TRUST = "",
+				},
+			},
+			-- The same, for a project the app does not know: said in the status line, nothing opens.
+			["window-open-at-unknown"] = {
+				build = {
+					{ "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
+					{ "node", "scripts/e2e/map-history-fixture.mjs" },
+				},
+				build_timeout_ms = 1800000,
+				prepare = { "node", "scripts/e2e/open-at-config.mjs", "${temp}/config" },
+				run = {
+					"src-tauri/target/release/docmap-desktop.exe",
+					"--open-at=no-such-project|lua/app/core/init.lua:3",
+				},
+				env = {
+					DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
+					WEBVIEW2_USER_DATA_FOLDER = "${temp}/webview",
+					LOCALAPPDATA = "${temp}/local",
+					RULES_VAULT = "",
+					RULES_TRUST = "",
+				},
+			},
+			-- And for a path that leaves the repository (a `..` segment): refused, said, nothing opens.
+			["window-open-at-escape"] = {
+				build = {
+					{ "cargo", "tauri", "build", "--no-bundle", "--", "--locked" },
+					{ "node", "scripts/e2e/map-history-fixture.mjs" },
+				},
+				build_timeout_ms = 1800000,
+				prepare = { "node", "scripts/e2e/open-at-config.mjs", "${temp}/config" },
+				run = {
+					"src-tauri/target/release/docmap-desktop.exe",
+					"--open-at=project|../outside/secret.lua:1",
+				},
+				env = {
+					DOCMAP_DESKTOP_CONFIG_DIR = "${temp}/config",
+					WEBVIEW2_USER_DATA_FOLDER = "${temp}/webview",
+					LOCALAPPDATA = "${temp}/local",
+					RULES_VAULT = "",
+					RULES_TRUST = "",
+				},
+			},
 		},
 	},
 }

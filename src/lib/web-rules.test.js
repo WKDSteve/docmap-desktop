@@ -124,3 +124,25 @@ test("headings balance their lines only where text-wrap is known", () => {
     assert.match(d.selector, /h[1-4]/);
   }
 });
+
+test("small controls reach a 24px target", () => {
+  const sized = (sel, prop) => declarations(CSS, prop).find((d) => d.selector === sel);
+  const fold = sized(".rules-fold", "min-width");
+  assert.ok(px(fold?.value) >= 24, ".rules-fold is narrower than 24px");
+  assert.ok(px(sized(".rules-fold", "min-height")?.value) >= 24);
+  assert.equal(sized(".rules-fold", "width"), undefined, "a fixed width would undo the minimum");
+  for (const sel of [".addbox-check", ".prefs-check"]) {
+    assert.ok(px(sized(sel, "min-height")?.value) >= 24, `${sel} is a label under 24px tall`);
+  }
+});
+
+test("a checkbox and its text are one label, so there is no dead zone", () => {
+  // The checkbox of the folder scan and of the language list is built inside
+  // its <label>; the settings checkboxes sit inside theirs in the markup.
+  assert.match(MAIN, /label\.className = "addbox-check";[\s\S]{0,400}label\.append\(box, name\)/);
+  const markup = HTML.replace(/<!--[\s\S]*?-->/g, "");
+  for (const m of markup.matchAll(/<label class="prefs-check"[^>]*>([\s\S]*?)<\/label>/g)) {
+    assert.match(m[1], /<input[^>]*type="checkbox"/);
+    assert.match(m[1], /<span/);
+  }
+});

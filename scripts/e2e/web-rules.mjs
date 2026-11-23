@@ -95,7 +95,7 @@ try {
   await page.goto(url);
   await page.waitForFunction(() => document.querySelector('#placeholder h2')?.textContent, null, { timeout: 15000 });
 
-  // ACC-03: with the preference there is no transition, without it there is one.
+  // reduced motion: with the preference there is no transition, without it there is one.
   const motion = async (mode) => {
     await page.emulateMedia({ reducedMotion: mode });
     return page.evaluate(() => {
@@ -107,12 +107,12 @@ try {
   check((await motion('no-preference')).split(',').some((d) => parseFloat(d) > 0), 'the sidebar does not animate without the preference');
   await page.evaluate(() => document.body.classList.remove('sb-auto'));
 
-  // HTML-05: nothing that is code is translated.
+  // translation: nothing that is code is translated.
   const codes = await page.evaluate(() => [...document.querySelectorAll('code')].filter((c) => c.getAttribute('translate') !== 'no').length);
   check(codes === 0, `${codes} <code> element(s) without translate="no"`);
   check(await page.evaluate(() => document.getElementById('brand').translate === false), 'the brand name is translatable');
 
-  // FORM-05: 16px at least, no spellcheck where it is noise.
+  // field size: 16px at least, no spellcheck where it is noise.
   const fields = await page.evaluate(() =>
     [...document.querySelectorAll('input:not([type=checkbox]):not([type=radio]), textarea, select')]
       .filter((e) => e.type !== 'hidden')
@@ -124,7 +124,7 @@ try {
     check(await page.evaluate((i) => document.getElementById(i).spellcheck === false, id), `#${id} is spell-checked`);
   }
 
-  // CSS-09 and ACC-04.
+  // numbers and targets.
   const style = await page.evaluate(() => {
     const note = getComputedStyle(document.getElementById('rules-chat-egress'));
     const fold = document.createElement('button');
@@ -139,7 +139,7 @@ try {
   check(/balance/.test(style.balance), `headings wrap as ${style.balance}`);
   check(style.w >= 24 && style.h >= 24, `.rules-fold is ${style.w} x ${style.h}`);
 
-  // FORM-06: an empty summary and an empty workspace name mark their field.
+  // form errors: an empty summary and an empty workspace name mark their field.
   const marked = async (open, click, field, problem) => {
     await page.evaluate((id) => document.getElementById(id).showModal(), open);
     await page.click(click);
@@ -158,7 +158,7 @@ try {
   await marked('fbbox', '#fb-go', 'fb-subject', 'fb-problem');
   await marked('wsbox', '#ws-create', 'ws-new', 'ws-problem');
 
-  // FORM-06: the feedback button while the report opens.
+  // form errors: the feedback button while the report opens.
   await page.evaluate(() => document.getElementById('fbbox').showModal());
   await page.fill('#fb-subject', 'a report');
   const label = await page.textContent('#fb-go');
@@ -168,7 +168,7 @@ try {
   await page.waitForFunction(() => !document.getElementById('fbbox').open, null, { timeout: 5000 });
   check((await page.evaluate(() => window.__calls.filter((c) => c === 'open_feedback').length)) === 1, 'open_feedback was not called exactly once');
 
-  // FORM-07: Escape on a clean dialog closes it; with typed input it asks, no keeps it, yes closes it.
+  // unsaved input: Escape on a clean dialog closes it; with typed input it asks, no keeps it, yes closes it.
   const dialogs = [['fbbox', '#fb-subject'], ['wsbox', '#ws-new'], ['runbox', '#run-title'], ['scopebox', '#scope-source']];
   for (const [id, field] of dialogs) {
     asked.length = 0;

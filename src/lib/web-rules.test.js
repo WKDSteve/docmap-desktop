@@ -53,3 +53,23 @@ test("no transition runs outside prefers-reduced-motion: no-preference", () => {
     );
   }
 });
+
+const HTML = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+const MAIN = readFileSync(new URL("../main.js", import.meta.url), "utf8");
+
+test("every <code> in index.html and the brand name carry translate=\"no\"", () => {
+  const markup = HTML.replace(/<!--[\s\S]*?-->/g, "");
+  const tags = [...markup.matchAll(/<code\b[^>]*>/g)].map((m) => m[0]);
+  assert.ok(tags.length >= 6, "expected the <code> elements of the page");
+  for (const tag of tags) assert.match(tag, /translate="no"/, tag);
+  assert.match(markup, /<button id="brand"[^>]*translate="no"/);
+});
+
+test("the <code> elements main.js builds are marked translate=\"no\"", () => {
+  // `node("code", …)` marks it in the helper; the one direct createElement
+  // sets the attribute on the next line.
+  assert.match(MAIN, /if \(tag === "code"\) e\.setAttribute\("translate", "no"\)/);
+  const direct = [...MAIN.matchAll(/document\.createElement\("code"\)/g)].length;
+  const marked = [...MAIN.matchAll(/document\.createElement\("code"\);\s*\n\s*\w+\.setAttribute\("translate", "no"\)/g)].length;
+  assert.equal(marked, direct);
+});

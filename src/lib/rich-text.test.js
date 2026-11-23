@@ -20,6 +20,10 @@ function fakeDoc() {
     replaceChildren(...c) {
       this.children = c;
     },
+    attrs: {},
+    setAttribute(k, v) {
+      this.attrs = { ...this.attrs, [k]: v };
+    },
   });
   return { createElement: mk, createTextNode: (text) => ({ text }) };
 }
@@ -101,4 +105,14 @@ test("main.js assigns no HTML: no innerHTML, outerHTML, insertAdjacentHTML, docu
     .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l));
   const hits = src.filter((l) => /\.(innerHTML|outerHTML)\s*[+\-]?=(?!=)|insertAdjacentHTML\(|document\.write\(|\.srcdoc\s*=/.test(l));
   assert.deepEqual(hits, [], "a Trusted Types sink in main.js");
+});
+
+test("renderRich marks <code> as not translatable, and nothing else", () => {
+  const doc = fakeDoc();
+  const el = doc.createElement("p");
+  renderRich(el, "Run <code>nvim</code> in <strong>docs</strong>", doc);
+  const [, code, , strong] = el.children;
+  assert.equal(code.tag, "code");
+  assert.equal(code.attrs.translate, "no");
+  assert.equal(strong.attrs.translate, undefined);
 });

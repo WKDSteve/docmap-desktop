@@ -91,6 +91,8 @@ pub(crate) fn help_text() -> String {
   {COMMAND}                              open the window (the projects you added)
   {COMMAND} --open-at <repo> <file>:<line>[-<last>]
                                           open the window at a place of the map of a project it knows
+  {COMMAND} --open-at=<repo>|<file>:<line>[-<last>]
+                                          the same in one word (for a caller that cannot pass two)
   {COMMAND} status                       is a window of this program open? exit code 0 yes, 1 no
   {COMMAND} stop                         close it as its close button does (a window that asks something stays;
                                           nothing is ended by force)
@@ -116,7 +118,8 @@ fn help_of(word: &str) -> Option<String> {
             "{COMMAND} help [<command>]\n  All commands, or what one does (also `{COMMAND} <command> --help`)."
         ),
         "open-at" | "--open-at" => format!(
-            "{COMMAND} --open-at <repo> <file>:<line>[-<last>]\n  Open the window at a place of the map of a project it knows. Asked from outside (tasks-desktop's\n  \"open in DocMap\"); the repository is only matched against the projects of the workspace."
+            "{COMMAND} --open-at <repo> <file>:<line>[-<last>]\n  Open the window at a place of the map of a project it knows. Asked from outside (tasks-desktop's\n  \"open in DocMap\"); the repository is only matched against the projects of the workspace.
+  The same in one word: {COMMAND} --open-at=<repo>|<file>:<line>[-<last>] (the first | splits the two)."
         ),
         _ => return None,
     };

@@ -156,3 +156,12 @@ test("the dialogs that hold typed input are guarded against a slip", () => {
   const lib = readFileSync(new URL("./dirty-close.js", import.meta.url), "utf8");
   assert.match(lib, /"closedBy" in /);
 });
+
+test("the feedback and workspace dialogs mark the field that is wrong", () => {
+  assert.match(MAIN, /showFieldError\(fb\.subject, fb\.problem/);
+  assert.match(MAIN, /showFieldError\(ws\.name, ws\.problem, t\("ws\.needsName"\)\)/);
+  assert.match(MAIN, /withBusyHint\(fb\.go, fb\.status/);
+  const markup = HTML.replace(/<!--[\s\S]*?-->/g, "");
+  for (const id of ["fb-problem", "ws-problem"]) assert.match(markup, new RegExp(`id="${id}"[^>]*role="alert"`));
+  assert.match(markup, /id="fb-status"[^>]*role="status"/);
+});

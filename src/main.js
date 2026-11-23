@@ -18,7 +18,8 @@
 
 // Both side-effect-free, so hoisting them above the `window.__TAURI__`
 // guard below changes nothing about what that guard catches.
-import { withBusyButton } from "./lib/busy-button.js";
+import { withBusyButton, withBusyHint } from "./lib/busy-button.js";
+import { showFieldError, clearFieldError } from "./lib/field-error.js";
 import { imeComposing, onEnterSubmit } from "./lib/enter-submit.js";
 import { escapeHtml, renderRich } from "./lib/rich-text.js";
 import { closeOnBackdrop } from "./lib/backdrop.js";
@@ -2993,6 +2994,7 @@ const fb = {
   attach: document.getElementById("fb-attach"),
   env: document.getElementById("fb-env"),
   problem: document.getElementById("fb-problem"),
+  status: document.getElementById("fb-status"),
   go: document.getElementById("fb-go"),
 };
 
@@ -3025,6 +3027,7 @@ function renderEnv() {
 
 async function openFeedback() {
   fb.problem.hidden = true;
+  clearFieldError(fb.subject, fb.problem);
   if (!aboutInfo) {
     try {
       aboutInfo = await invoke("about_info");
@@ -3039,26 +3042,30 @@ async function openFeedback() {
 }
 
 fb.attach.addEventListener("change", renderEnv);
+fb.subject.addEventListener("input", () => clearFieldError(fb.subject, fb.problem));
 
 fb.go.addEventListener("click", async () => {
   const subject = fb.subject.value.trim();
   if (!subject) {
-    fb.problem.textContent = t("fb.needsSubject");
-    fb.problem.hidden = false;
-    fb.subject.focus();
+    showFieldError(fb.subject, fb.problem, t("fb.needsSubject"));
     return;
   }
+  clearFieldError(fb.subject, fb.problem);
   const parts = [fb.body.value.trim()];
   if (fb.attach.checked && aboutInfo) {
     parts.push("---", envBlock());
   }
   try {
-    await invoke("open_feedback", {
-      repo: fb.repo.value,
-      topic: fb.topic.value,
-      title: subject,
-      body: parts.filter(Boolean).join("\n\n"),
-    });
+    // The button keeps its text and is locked while the report opens, so a
+    // second click cannot open a second report.
+    await withBusyHint(fb.go, fb.status, t("fb.opening"), () =>
+      invoke("open_feedback", {
+        repo: fb.repo.value,
+        topic: fb.topic.value,
+        title: subject,
+        body: parts.filter(Boolean).join("\n\n"),
+      })
+    );
     fb.box.close();
   } catch (e) {
     fb.problem.textContent = errorText(e);
@@ -6630,8 +6637,9 @@ async function renderWorkspaces() {
 }
 
 /** Switch to a workspace and close the dashboard. */
-async function useWorkspace(name) {
+async function useWorkspace(name, field = null) {
   ws.problem.hidden = true;
+  clearFieldError(ws.name, null);
   try {
     const list = await invoke("switch_workspace", { name });
     activeWorkspace = name;
@@ -6647,23 +6655,33 @@ async function useWorkspace(name) {
     // would otherwise be one behind the workspace you are now in.
     await renderWorkspaces();
     titleFor(null);
+    // The typed name is kept until the switch worked: a refused name is
+    // corrected, not typed again.
+    if (field) field.value = "";
     ws.box.close();
     // Land where this workspace was left, now that its own selection is
     // stored under its own key. After `close()`, so the restore paints
     // behind a dialog that is already gone rather than under one.
     await restoreLast();
   } catch (e) {
-    ws.problem.textContent = errorText(e);
-    ws.problem.hidden = false;
+    // From the name field the error is about that field: marked and focused.
+    if (field) showFieldError(field, ws.problem, errorText(e));
+    else {
+      ws.problem.textContent = errorText(e);
+      ws.problem.hidden = false;
+    }
   }
 }
 
 ws.create.addEventListener("click", () => {
   const name = ws.name.value.trim();
-  if (!name) return;
-  ws.name.value = "";
-  useWorkspace(name);
+  if (!name) {
+    showFieldError(ws.name, ws.problem, t("ws.needsName"));
+    return;
+  }
+  useWorkspace(name, ws.name);
 });
+ws.name.addEventListener("input", () => clearFieldError(ws.name, ws.problem));
 
 /**
  * Store "start with the workspace overview", from either control.
@@ -6692,6 +6710,7 @@ ws.skip.addEventListener("change", () => setStartDashboard(!ws.skip.checked));
 
 async function openWorkspaces() {
   ws.problem.hidden = true;
+  clearFieldError(ws.name, null);
   ws.skip.checked = wsSkipped();
   await renderWorkspaces();
   ws.box.showModal();

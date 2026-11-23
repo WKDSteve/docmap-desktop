@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { withBusyButton } from "./busy-button.js";
+import { withBusyButton, withBusyHint } from "./busy-button.js";
 
 test("disables the button and swaps the label while fn runs, then restores both", async () => {
   const btn = { textContent: "Do it", disabled: false };
@@ -42,4 +42,31 @@ test("restores the label and rethrows when fn throws", async () => {
 
   assert.equal(btn.textContent, "Import");
   assert.equal(btn.disabled, false);
+});
+
+test("withBusyHint keeps the label, locks the button, shows the hint, and undoes all of it", async () => {
+  const attrs = new Map();
+  const btn = {
+    textContent: "Open on GitHub",
+    disabled: false,
+    setAttribute: (k, v) => attrs.set(k, v),
+    removeAttribute: (k) => attrs.delete(k),
+  };
+  const hint = { textContent: "", hidden: true };
+  let seen;
+  await withBusyHint(btn, hint, "Opening…", async () => {
+    seen = { label: btn.textContent, disabled: btn.disabled, busy: attrs.get("aria-busy"), hint: hint.textContent, hidden: hint.hidden };
+  });
+  assert.deepEqual(seen, { label: "Open on GitHub", disabled: true, busy: "true", hint: "Opening…", hidden: false });
+  assert.equal(btn.disabled, false);
+  assert.equal(attrs.has("aria-busy"), false);
+  assert.equal(hint.hidden, true);
+});
+
+test("withBusyHint restores the button when fn throws", async () => {
+  const btn = { textContent: "Go", disabled: false, setAttribute() {}, removeAttribute() {} };
+  const hint = { textContent: "", hidden: true };
+  await assert.rejects(withBusyHint(btn, hint, "…", async () => { throw new Error("no"); }), /no/);
+  assert.equal(btn.disabled, false);
+  assert.equal(hint.hidden, true);
 });

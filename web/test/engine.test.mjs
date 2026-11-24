@@ -151,3 +151,17 @@ test('everything the engine prints reaches the page, not only its first line', a
   assert.deepEqual(engine.capabilities().log, []);
   engine.close();
 });
+
+test("the VM has LuaJIT's bit, which wasmoon's Lua 5.4 lacks, from the engine's own shim", async () => {
+  const made = engineBundle();
+  assert.ok('standalone.bit' in made.modules, 'standalone/bit.lua of the pinned engine commit is in the bundle');
+  const engine = await newEngine();
+  // The same operations runtime-analysis.telemetry.fingerprint uses, with LuaJIT's signed 32-bit results.
+  const answer = engine.lua.doString(`
+    local bit = require("bit")
+    return table.concat({ bit.band(0xF0F0, 0x00FF), bit.bxor(5, 3), bit.bor(1, 4), bit.lshift(1, 31),
+      bit.rshift(-1, 28), bit.tobit(0xFFFFFFFF), bit.ror(1, 1) }, " ")
+  `);
+  assert.equal(await answer, '240 6 5 -2147483648 15 -1 -2147483648');
+  engine.close();
+});

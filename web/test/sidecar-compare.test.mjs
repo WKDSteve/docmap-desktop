@@ -76,6 +76,14 @@ test('the engine in the VM writes what the sidecar writes, byte for byte', { ski
         if (rules.status === 'ok') assert.notEqual(JSON.parse(rules.payload).available, true, `${route} has no engine in the page`);
         continue;
       }
+      // The routes of runtime-analysis.nvim (telemetry, loaded): the binary carries that plugin and answers
+      // `available: true` with an empty list; the page does not carry it (about 300 KB of a store a browser never has),
+      // so it must say "not available", never invent a store.
+      if (/^(telemetry|loaded)(\/|$)/.test(route)) {
+        const store = engine.api({ root: ROOT, route });
+        if (store.status === 'ok') assert.equal(JSON.parse(store.payload).available, false, `${route} has no store in the page`);
+        continue;
+      }
       let native;
       try {
         native = JSON.parse(sidecar([dir.replaceAll('\\', '/'), `--api=${route}`], work));

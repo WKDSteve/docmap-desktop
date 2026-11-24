@@ -53,7 +53,7 @@ test('the styles carry their fonts as data', () => {
   const css = styles(['appkit-tokens.css', 'style.css'].map((f) => join(web, '..', 'src', f)));
   const urls = [...css.matchAll(/url\(\s*["']?([^"')]{0,30})/g)].map((m) => m[1]);
   assert.ok(urls.length >= 2, 'the two fonts of the window');
-  for (const url of urls) assert.ok(url.startsWith('data:font/ttf;base64,'), url);
+  for (const url of urls) assert.ok(url.startsWith('data:font/woff2;base64,'), url);
 });
 
 test('what the shell hides exists in the page of the app', () => {

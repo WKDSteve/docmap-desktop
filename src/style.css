@@ -23,14 +23,14 @@
    milliseconds, for the web page opened from disk or a slow disk more. */
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("fonts/JetBrainsMono-Regular.ttf") format("truetype");
+  src: url("fonts/JetBrainsMono-Regular.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
   font-family: "JetBrains Mono";
-  src: url("fonts/JetBrainsMono-Bold.ttf") format("truetype");
+  src: url("fonts/JetBrainsMono-Bold.woff2") format("woff2");
   font-weight: 700;
   font-style: normal;
   font-display: swap;

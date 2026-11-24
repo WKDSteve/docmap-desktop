@@ -59,3 +59,15 @@ test("every @font-face swaps instead of hiding the text while the file loads", (
   assert.ok(faces.length >= 2, "expected the bundled faces");
   for (const face of faces) assert.match(face, /font-display:\s*swap\s*;/, face);
 });
+
+test("the bundled faces are WOFF2 subsets, not the full TrueType files", () => {
+  const faces = [...CSS.matchAll(/src:\s*url\("([^"]+)"\)\s*format\("([^"]+)"\)/g)];
+  assert.ok(faces.length >= 2, "expected the two bundled faces with a format() hint");
+  for (const [, src, format] of faces) {
+    assert.equal(format, "woff2", src);
+    assert.match(src, /\.woff2$/, src);
+    const size = statSync(new URL("../" + src, import.meta.url)).size;
+    // The full TTF is about 275 kB; the subset of the scripts the app shows is about a quarter of that.
+    assert.ok(size < 100_000, `${src} is ${size} bytes: subset it again`);
+  }
+});

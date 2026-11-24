@@ -68,7 +68,7 @@ const STUB = () => {
   document.addEventListener('securitypolicyviolation', (e) => window.__violations.push(`${e.violatedDirective}: ${e.sample ?? e.blockedURI}`));
 };
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.E2E_BROWSER_CHANNEL ? { channel: process.env.E2E_BROWSER_CHANNEL } : {});
 let code = 0;
 try {
   const page = await browser.newPage();

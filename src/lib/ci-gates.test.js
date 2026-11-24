@@ -182,3 +182,14 @@ test("ci.yml holds the window (src/) to a size budget with the shared tool", () 
   assert.ok(kb <= budget, `src/ is ${kb.toFixed(0)} kB, over its budget of ${budget} kB`);
   assert.ok(budget <= kb * 1.25, `the budget ${budget} kB is more than a quarter above the ${kb.toFixed(0)} kB measured`);
 });
+
+test("the web job runs the two Chromium checks of the window and does not read a skip as a pass", () => {
+  const all = steps(read(".github/workflows/ci.yml"));
+  for (const script of ["web-rules.mjs", "trusted-types.mjs"]) {
+    const step = all.find((s) => s.body.includes(`scripts/e2e/${script}`));
+    assert.ok(step, `no CI step runs scripts/e2e/${script}`);
+    assert.match(step.body, /E2E_BROWSER_CHANNEL: chrome/, `${script} needs the Chrome of the runner`);
+    // Exit 77 means "a prerequisite is missing": in CI that is a failure, not a green step.
+    assert.match(step.body, /\|\| *\{[^}]*exit 1/s, `${script}: a skip (77) must fail the step`);
+  }
+});

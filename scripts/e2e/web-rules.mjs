@@ -67,7 +67,7 @@ const STUB = () => {
 };
 
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(process.env.E2E_BROWSER_CHANNEL ? { channel: process.env.E2E_BROWSER_CHANNEL } : {});
 let code = 0;
 const problems = [];
 const check = (ok, what) => {

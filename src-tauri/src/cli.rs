@@ -132,14 +132,14 @@ fn help_of(word: &str) -> Option<String> {
   The Duplicates, Quicks and Findings tabs over many repositories at once, and what turns up in more than
   one of them: shapes of functions found in two or more repositories, the pairs that share the most, quicks
   and checks that are bad in several. Without <root> it reads the projects of the active workspace and
-  leaves private ones out (a folder name holding {private}); a <root> named on purpose is read with a
-  warning. It uses the engine and grammars of the window. Progress goes to stderr, the report to stdout
-  (Markdown, or one JSON object with --json); nothing is written into a repository.
+  leaves private ones out (a small built-in list of folder names, the engine's; stderr names each one it
+  leaves out); a <root> named on purpose is read with a warning. It uses the engine and grammars of the
+  window. Progress goes to stderr, the report to stdout (Markdown, or one JSON object with --json);
+  nothing is written into a repository.
   --top=<n>          rows per table (default 25)
   --with-generated   keep built output (dist-*, bundles, node_modules), left out by default
   Exit code 0 done, 1 a repository was not read (the report lists the others) or no report was made,
-  2 wrong arguments.",
-            private = report::PRIVATE.join(" or ")
+  2 wrong arguments."
         ),
         "version" | "--version" => format!("{COMMAND} version   (also --version, -V)\n  The version."),
         "help" | "--help" => format!(

@@ -416,5 +416,20 @@ fn report_joins_the_repositories_of_the_workspace_and_leaves_private_ones_out() 
     assert!(out(&o).contains("Not scanned:"), "{}", out(&o));
     assert!(out(&o).contains("| one |"), "{}", out(&o));
 
+    // Nobody reads stdout any more (`report | head` once head has its lines; here closed before the first one): the
+    // command ends quietly with exit code 0, it does not panic on the write.
+    let mut child = Command::new(PROGRAM)
+        .args(["report", &slash(&one), &slash(&two)])
+        .env("DOCMAP_DESKTOP_CONFIG_DIR", &config)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("the program starts");
+    drop(child.stdout.take());
+    let o = child.wait_with_output().expect("it ends");
+    assert!(!err(&o).contains("panicked"), "{}", err(&o));
+    assert_eq!(o.status.code(), Some(0), "{o:?}");
+
     let _ = std::fs::remove_dir_all(&base);
 }

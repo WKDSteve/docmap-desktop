@@ -672,8 +672,8 @@ a row is a question for a person, not a finding.
 | `--with-generated` | keep built output (`dist-*`, `build/`, `node_modules/`, bundles), left out by default |
 
 - **Private repositories** are never taken from the workspace: a project whose folder name holds one of the names of
-  a small built-in list (the same in the engine; `docmap-desktop help report` shows it) is left out, and stderr says
-  so. A repository named on the command line is read, with a warning.
+  a small built-in list (the same in the engine) is left out, and stderr names each one it leaves out. A repository
+  named on the command line is read, with a warning.
 - **The engine and grammars of the window** are used (Settings first, then the app's own engine), so the report finds
   what the Duplicates tab finds. An engine that cannot do this (older than the one with `fleet` in `--capabilities`) is
   named and nothing runs.

@@ -208,9 +208,22 @@ pub(crate) fn run(args: &ReportArgs) -> i32 {
     if let Some(g) = &grammars {
         cmd.env("DOCMAP_TS_DIR", g);
     }
-    let done = proc::run_lines(&cmd, REPORT_LIMIT, |stream, line| match stream {
-        proc::Stream::Stdout => println!("{line}"),
-        proc::Stream::Stderr => eprintln!("{line}"),
+    let done = proc::run_lines(&cmd, REPORT_LIMIT, |stream, line| {
+        use std::io::Write as _;
+        match stream {
+            proc::Stream::Stdout => {
+                // Nobody reads stdout any more (`report | head`, once head has its lines): the rest is wanted by
+                // nobody, so end here, quietly, instead of panicking on the write (`println!`) or letting the
+                // engine read on for minutes. The engine goes with this process (its job object, its group).
+                if writeln!(std::io::stdout().lock(), "{line}").is_err() {
+                    std::process::exit(0);
+                }
+            }
+            // progress only: a stderr nobody reads is no reason to stop the report
+            proc::Stream::Stderr => {
+                let _ = writeln!(std::io::stderr().lock(), "{line}");
+            }
+        }
     });
     match done {
         // The engine's own codes are this command's: 0, 1 a repository not read, 2 wrong arguments.

@@ -8,5 +8,5 @@
 # To move to another tag: change both lines and the `uses:` lines of rolling.yml and release.yml, then
 #
 #     python tools/check-release-kit-pin.py
-tag = v0.84.0
-commit = 6d1f998a13aa5fcb9b436a06d57c15958792b919
+tag = v0.84.1
+commit = d466187d4871497bae161a26f092b185487cb489

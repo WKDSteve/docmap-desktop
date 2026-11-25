@@ -75,7 +75,7 @@ behaviour and the workflow's own check; the anonymous download has not been trie
 ### The command in the terminal
 
 The setup (any of the routes above) also makes the command `docmap-desktop` for the terminal: a small starter in
-`%LOCALAPPDATA%ppkit-familyin`, the one folder all apps of the family share, which is added to the `PATH` of the
+`%LOCALAPPDATA%\appkit-family\bin`, the one folder all apps of the family share, which is added to the `PATH` of the
 user once (open a new terminal afterwards). The uninstall takes the starter away, and the folder with the last one.
 
 ```

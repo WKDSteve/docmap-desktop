@@ -26,6 +26,7 @@ The ways:
 | --- | --- | --- | --- |
 | the engine `docmap --capabilities` | what the engine file can do, once per engine file | the call, at most 20 seconds | child |
 | the engine `docmap` (generate, check) | **Generate**, **Check** and the Generate commands of the menu | the call, at most 30 minutes | child |
+| the engine `docmap --capabilities`, then `docmap --fleet <root>...` | the command `docmap-desktop report` in a terminal (no window) | at most 60 seconds, then at most 60 minutes; its lines are passed on as they come | child |
 | the engine `docmap` (the map page's panels, the rules agent) | the panels of a map, a rules run | the call, at most 2 minutes | child |
 | the engine `docmap` (the Rules tab) | the Rules tab of a project | the call, at most 2 minutes and a memory limit (`Start::memory`) | child |
 | `nvim --headless` | **Import from the Neovim config**, switching telemetry, **Ask Neovim** in the traffic settings | the call, at most 60 seconds (30 seconds for Ask Neovim) | child |

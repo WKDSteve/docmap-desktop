@@ -448,6 +448,7 @@ mod tests {
         ("open_at.rs", include_str!("open_at.rs")),
         ("paths.rs", include_str!("paths.rs")),
         ("proc.rs", include_str!("proc.rs")),
+        ("report.rs", include_str!("report.rs")),
         ("rules/mod.rs", include_str!("rules/mod.rs")),
         ("rules/commands.rs", include_str!("rules/commands.rs")),
         ("rules/engine.rs", include_str!("rules/engine.rs")),

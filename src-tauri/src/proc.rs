@@ -317,6 +317,33 @@ pub fn run_cancellable(
     })
 }
 
+/// Which stream a line of [`run_lines`] came from.
+pub use appkit_core::child::Stream;
+
+/// Run `cmd` to its end and hand every line of its stdout and stderr to `on_line` as it arrives, nothing collected;
+/// ended (with everything it started) after `limit`. For a long call whose output a person watches while it runs
+/// (`docmap-desktop report`: progress on stderr for minutes, the report on stdout). The exit code; `None` when a
+/// signal ended the child.
+pub fn run_lines(
+    cmd: &Cmd,
+    limit: Duration,
+    on_line: impl FnMut(Stream, &str),
+) -> Result<Option<i32>, ProcError> {
+    let start = cmd.start()?;
+    let call = child::run_lines(
+        child::Run {
+            start,
+            stdin: Vec::new(),
+            timeout: limit,
+            max_stdout: cmd.max_stdout,
+            max_stderr: cmd.max_stderr,
+            leftovers: Leftovers::End,
+        },
+        on_line,
+    );
+    block_on(async move { call.await.map_err(ProcError::from_child) })
+}
+
 /// A switch that ends a running call ([`run_cancellable`]) from elsewhere: the
 /// person cancels an import while `git clone` runs.
 #[derive(Debug, Clone)]

@@ -646,6 +646,42 @@ not know are refused with a message in the status line, and nothing is searched 
 the map opens the project and says so. The project must be in the workspace that is open; a map must exist (generate
 it first).
 
+## Report over many repositories
+
+The Duplicates, Quicks and Findings tabs look at one project. A function that two repositories grew separately is
+invisible to both, and it is the kind a shared library should hold. The command `report` joins them, in the terminal,
+without a window:
+
+```
+docmap-desktop report                                   # the projects of the workspace that is open
+docmap-desktop report E:/repos/lib.nvim E:/repos/ui.nvim
+docmap-desktop report --json > fleet.json               # the joined data as one object
+```
+
+It prints, as Markdown: the shapes of functions found in two or more repositories (most repositories first, then the
+biggest), the pairs of repositories that share the most shapes, the quicks that are bad and the checks (error or
+warning) that fire in several repositories, and one row per repository. A shape is the structure of a function with
+names and literals left out: one edited line breaks the match, and two functions can share a shape and nothing else, so
+a row is a question for a person, not a finding.
+
+| Option | Meaning |
+|---|---|
+| `<root>...` | the repositories to read; without one, the projects of the workspace that is open |
+| `--json` | the joined data instead of Markdown |
+| `--top=<n>` | rows per table (default 25) |
+| `--with-generated` | keep built output (`dist-*`, `build/`, `node_modules/`, bundles), left out by default |
+
+- **Private repositories** are never taken from the workspace: a project whose folder name holds one of the names of
+  a small built-in list (the same in the engine; `docmap-desktop help report` shows it) is left out, and stderr says
+  so. A repository named on the command line is read, with a warning.
+- **The engine and grammars of the window** are used (Settings first, then the app's own engine), so the report finds
+  what the Duplicates tab finds. An engine that cannot do this (older than the one with `fleet` in `--capabilities`) is
+  named and nothing runs.
+- **Progress** goes to stderr (`<repo>: N functions above the floor`, a few seconds per repository; about two minutes
+  for sixty), the report to stdout. Nothing is written into a repository or the settings.
+- **Exit codes**: 0 done, 1 a repository could not be read (the report lists the others) or no report was made (no
+  project, no engine), 2 wrong arguments.
+
 ## Generate, Generate all, Generate the out-of-date ones
 
 Four different guarantees, not four speeds of one thing:

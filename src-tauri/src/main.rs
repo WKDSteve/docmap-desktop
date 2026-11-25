@@ -30,6 +30,7 @@ mod nvim;
 mod open_at;
 mod paths;
 mod proc;
+mod report;
 mod rules;
 mod safe_read;
 mod search;

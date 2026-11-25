@@ -104,8 +104,28 @@ jobs:
         working-directory: src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
 
+      # `docmap-desktop report` (tests/cli.rs) runs a real engine with its grammars against two fixture repositories:
+      # the placeholder sidecar above cannot, so the rolling release is fetched for that test, outside src-tauri. With
+      # DOCMAP_TEST_ENGINE_REQUIRED a missing or older engine fails the test instead of skipping it.
+      - name: download the rolling engine for the report test
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          rm -rf engine-test
+          gh release download standalone-latest \
+            --repo WKDSteve/docmap.nvim \
+            --pattern "docmap-x86_64-pc-windows-msvc.exe" \
+            --pattern "grammars-x86_64-pc-windows-msvc.tar.gz" \
+            --dir engine-test
+          mkdir -p engine-test/grammars
+          tar -xzf engine-test/grammars-x86_64-pc-windows-msvc.tar.gz -C engine-test/grammars
+
       - name: cargo test
         working-directory: src-tauri
+        env:
+          DOCMAP_TEST_ENGINE: ${{ github.workspace }}/engine-test/docmap-x86_64-pc-windows-msvc.exe
+          DOCMAP_TEST_GRAMMARS: ${{ github.workspace }}/engine-test/grammars
+          DOCMAP_TEST_ENGINE_REQUIRED: "1"
         run: cargo test
 
       # Only on the self-hosted runner, which has both tools; a hosted runner of a pull request has neither.

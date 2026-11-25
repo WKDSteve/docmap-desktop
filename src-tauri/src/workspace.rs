@@ -397,6 +397,68 @@ pub(crate) fn config_dir_from(
     }
 }
 
+/// The `identifier` of `tauri.conf.json`: the folder of the app's own files below the configuration folder of the
+/// platform (what `app_config_dir` appends). A test holds the two together.
+pub(crate) const IDENTIFIER: &str = "dev.stefanbartl.docmap-desktop";
+
+/// [`config_dir`] for a caller that has no app (`docmap-desktop report` runs before any window): the same
+/// `DOCMAP_DESKTOP_CONFIG_DIR`, else the folder `app_config_dir` names (Tauri's rule: `%APPDATA%` on Windows,
+/// `~/Library/Application Support` on macOS, `$XDG_CONFIG_HOME` or `~/.config` elsewhere, then [`IDENTIFIER`]).
+pub(crate) fn config_dir_without_app() -> Result<PathBuf, AppError> {
+    config_dir_from(std::env::var_os(CONFIG_DIR_ENV), || {
+        platform_config_dir(|name| std::env::var_os(name))
+            .map(|dir| dir.join(IDENTIFIER))
+            .ok_or_else(|| {
+                AppError::new("err.config.noDir").detail("no configuration folder of the user")
+            })
+    })
+}
+
+/// The configuration folder of the platform, from the environment `var` reads; only an absolute path counts.
+pub(crate) fn platform_config_dir(
+    var: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    let absolute = |v: Option<std::ffi::OsString>| {
+        v.filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+    };
+    if cfg!(windows) {
+        return absolute(var("APPDATA"));
+    }
+    if cfg!(target_os = "macos") {
+        return absolute(var("HOME")).map(|home| home.join("Library/Application Support"));
+    }
+    absolute(var("XDG_CONFIG_HOME")).or_else(|| absolute(var("HOME")).map(|h| h.join(".config")))
+}
+
+/// The settings and the active workspace's projects below `dir` (a [`config_dir`]), read only: no folder is made and
+/// nothing is migrated (that is [`read_workspace`]'s, when the window runs). A settings file from before workspaces
+/// keeps its projects inline, and those are the answer then.
+pub(crate) fn read_workspace_in(dir: &Path) -> Result<Workspace, AppError> {
+    let path = dir.join("workspace.json");
+    let mut ws: Workspace = match fs::read_to_string(&path) {
+        Ok(body) => serde_json::from_str(&body)
+            .map_err(|e| path_err("err.workspace.unreadable", &path, e))?,
+        Err(ref e) if e.kind() == std::io::ErrorKind::NotFound => Workspace::default(),
+        Err(e) => return Err(path_err("err.path.read", &path, e)),
+    };
+    let name = ws
+        .active
+        .clone()
+        .unwrap_or_else(|| DEFAULT_WORKSPACE.to_string());
+    let list = dir
+        .join("workspaces")
+        .join(format!("{}.json", workspace_file_name(&name)));
+    if list.is_file() {
+        let body = fs::read_to_string(&list).map_err(|e| path_err("err.path.read", &list, e))?;
+        ws.projects = serde_json::from_str(&body)
+            .map_err(|e| path_err("err.workspace.listUnreadable", &list, e))?;
+    }
+    ws.active = Some(name);
+    Ok(ws)
+}
+
 pub(crate) fn workspaces_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     let dir = config_dir(app)?.join("workspaces");
     fs::create_dir_all(&dir).map_err(|e| path_err("err.path.create", &dir, e))?;

@@ -84,6 +84,9 @@ docmap-desktop --help         every command and the exit codes; `docmap-desktop 
 docmap-desktop status         is a window open? (exit 0 yes, 1 no)
 docmap-desktop stop           close the window like its close button (it may still ask something)
 docmap-desktop --open-at ...  open a path in the window (the request of the other family apps)
+docmap-desktop report [<root>...] [--json] [--top=<n>]
+                              duplicates, quicks and findings over many repositories (default: the projects of
+                              the workspace), see docs/USAGE.md "Report over many repositories"
 ```
 
 Exit codes: 0 done, 1 failed or nothing to report, 2 wrong words. `status` and `stop` look for other processes of this

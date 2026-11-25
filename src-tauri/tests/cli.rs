@@ -81,6 +81,7 @@ fn help_names_every_command_and_one_command_has_its_own_text() {
         for command in [
             "status",
             "stop",
+            "report",
             "version",
             "--open-at",
             "help",
@@ -91,6 +92,7 @@ fn help_names_every_command_and_one_command_has_its_own_text() {
     }
     assert!(out(&run(&["help", "stop"])).starts_with("docmap-desktop stop\n"));
     assert!(out(&run(&["status", "--help"])).starts_with("docmap-desktop status\n"));
+    assert!(out(&run(&["report", "--help"])).starts_with("docmap-desktop report"));
     // The flag of the request from outside has a help of its own, and asking for it opens no window.
     assert!(out(&run(&["--open-at", "--help"])).starts_with("docmap-desktop --open-at"));
 }
@@ -105,6 +107,8 @@ fn wrong_words_end_with_exit_code_2_and_the_usage() {
         &["--version", "x"],
         &["--install-command", "x"],
         &["help", "frobnicate"],
+        &["report", "--top=0"],
+        &["report", "--dir=E:/repos"],
     ] {
         let o = run(args);
         assert_eq!(o.status.code(), Some(2), "{args:?}: {o:?}");
@@ -217,4 +221,200 @@ fn the_setup_words_change_nothing_without_a_folder_of_their_own() {
         .output()
         .expect("the program starts");
     assert_eq!(o.status.code(), Some(0), "{o:?}");
+}
+
+/// A function big enough (above the duplicate floor of 40 tree nodes) whose shape two repositories share under other
+/// names: the report must find it in both.
+fn shared_function(name: &str, list: &str) -> String {
+    format!(
+        "local M = {{}}
+
+function M.{name}(items)
+  local {list} = {{}}
+  for index, item in ipairs(items) do
+    if item ~= '' and #item > 2 then
+      {list}[#{list} + 1] = {{ at = index, text = item:upper(), size = #item }}
+    elseif item == '-' then
+      {list}[#{list} + 1] = {{ at = index, text = item, size = 1 }}
+    end
+  end
+  table.sort({list}, function(a, b)
+    if a.size ~= b.size then
+      return a.size > b.size
+    end
+    return a.at < b.at
+  end)
+  return {list}
+end
+
+return M
+"
+    )
+}
+
+fn write(path: &Path, text: &str) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+fn slash(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// The engine for the report and its grammars: `DOCMAP_TEST_ENGINE` and `DOCMAP_TEST_GRAMMARS` (CI downloads the
+/// rolling release), else the app's own beside the test program (`target/<profile>/docmap.exe` and `grammars`). None
+/// when that engine cannot report over many repositories (an older one, or the placeholder of a build without one);
+/// with `DOCMAP_TEST_ENGINE_REQUIRED` set that is a failure, not a skip.
+fn fleet_engine() -> Option<(PathBuf, PathBuf)> {
+    let beside = Path::new(PROGRAM).parent().unwrap().to_path_buf();
+    let engine = std::env::var_os("DOCMAP_TEST_ENGINE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            beside.join(if cfg!(windows) {
+                "docmap.exe"
+            } else {
+                "docmap"
+            })
+        });
+    let grammars = std::env::var_os("DOCMAP_TEST_GRAMMARS")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| beside.join("grammars"));
+    let answer = Command::new(&engine).arg("--capabilities").output();
+    let fleet = answer
+        .as_ref()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).contains("\"fleet\""));
+    if fleet && grammars.is_dir() {
+        return Some((engine, grammars));
+    }
+    let why = format!(
+        "no engine with `fleet` and grammars ({} answered {:?}; grammars {})",
+        engine.display(),
+        answer.map(|o| String::from_utf8_lossy(&o.stdout)
+            .chars()
+            .take(120)
+            .collect::<String>()),
+        grammars.display()
+    );
+    assert!(
+        std::env::var_os("DOCMAP_TEST_ENGINE_REQUIRED").is_none(),
+        "{why}"
+    );
+    println!("n/a  {why}");
+    None
+}
+
+/// `docmap-desktop report` over two small repositories that share a function, and a private one in the workspace that
+/// is left out: the report on stdout, the progress and what was left out on stderr, the exit codes of the command.
+/// The repositories lie below the build folder, not the temp folder (the standalone engine does not come back from a
+/// project below AppData\Local\Temp on Windows, see scripts/e2e/map-history-fixture.mjs).
+#[test]
+fn report_joins_the_repositories_of_the_workspace_and_leaves_private_ones_out() {
+    let _one = serial();
+    let base =
+        PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("report-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let config = base.join("config");
+    // a folder name the app takes for a private repository, assembled (this public source names none)
+    let private_name = concat!("Notes-", "WK", "DBook");
+    let (one, two, private) = (base.join("one"), base.join("two"), base.join(private_name));
+    write(
+        &one.join("lua/one/a.lua"),
+        &shared_function("collect", "found"),
+    );
+    write(
+        &two.join("lua/two/b.lua"),
+        &shared_function("gather", "hits"),
+    );
+    write(
+        &private.join("lua/p/c.lua"),
+        &shared_function("secret", "kept"),
+    );
+    let report = |args: &[&str]| {
+        Command::new(PROGRAM)
+            .arg("report")
+            .args(args)
+            .env("DOCMAP_DESKTOP_CONFIG_DIR", &config)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("the program starts")
+    };
+
+    // An empty workspace and no repository named: nothing to report on, said so. No engine is asked.
+    std::fs::create_dir_all(&config).unwrap();
+    let nothing = report(&[]);
+    assert_eq!(nothing.status.code(), Some(1), "{nothing:?}");
+    assert!(
+        err(&nothing).contains("no project to report on"),
+        "{}",
+        err(&nothing)
+    );
+    assert_eq!(out(&nothing), "");
+
+    let Some((engine, grammars)) = fleet_engine() else {
+        let _ = std::fs::remove_dir_all(&base);
+        return;
+    };
+    let project = |p: &Path| serde_json::json!({ "id": slash(p), "name": p.file_name().unwrap().to_string_lossy(), "root": slash(p), "map_dir": "docs/map" });
+    write(
+        &config.join("workspace.json"),
+        &serde_json::json!({ "projects": [], "engine": slash(&engine), "grammars": slash(&grammars) }).to_string(),
+    );
+    write(
+        &config.join("workspaces/Default.json"),
+        &serde_json::json!([project(&one), project(&private), project(&two)]).to_string(),
+    );
+
+    // The projects of the workspace: the shared shape is found, the private repository is left out and said so.
+    let o = report(&["--top=5"]);
+    let (stdout, stderr) = (out(&o), err(&o));
+    assert_eq!(o.status.code(), Some(0), "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("# docmap across the repositories"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("2 repositories; 1 shapes appear in at least two"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("one + two"), "{stdout}");
+    assert!(
+        !stdout.contains(private_name),
+        "the private repository is in the report: {stdout}"
+    );
+    assert!(
+        stderr.contains("left out") && stderr.contains(private_name),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("one: 1 functions above the floor"),
+        "{stderr}"
+    );
+    assert!(
+        !stdout.contains("functions above the floor"),
+        "progress on stdout: {stdout}"
+    );
+
+    // Named repositories, as JSON.
+    let o = report(&[&slash(&one), &slash(&two), "--json"]);
+    assert_eq!(o.status.code(), Some(0), "{o:?}");
+    let joined: serde_json::Value = serde_json::from_str(&out(&o)).expect("one JSON object");
+    assert_eq!(
+        joined["shapes"].as_array().map(Vec::len),
+        Some(1),
+        "{joined}"
+    );
+    assert_eq!(
+        joined["failed"].as_array().map(Vec::len),
+        Some(0),
+        "{joined}"
+    );
+
+    // A repository that is not there: exit code 1, the others are still reported.
+    let missing = base.join("missing");
+    let o = report(&[&slash(&one), &slash(&missing)]);
+    assert_eq!(o.status.code(), Some(1), "{o:?}");
+    assert!(out(&o).contains("Not scanned:"), "{}", out(&o));
+    assert!(out(&o).contains("| one |"), "{}", out(&o));
+
+    let _ = std::fs::remove_dir_all(&base);
 }

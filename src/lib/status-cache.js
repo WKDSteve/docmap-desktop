@@ -8,6 +8,7 @@
 // "Eviction pragmatisch wählen") — one entry per project in the workspace,
 // realistically tens at most; a removed project just leaves an unused entry
 // that is never read again.
+
 const cache = new Map();
 
 /** The in-flight or resolved `map_status` result for `mapDir`, fetched once. */

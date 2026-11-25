@@ -20,7 +20,7 @@
 #
 # which copies the schema file, rewrites schema and routes from that commit, and stops for review.
 repo = https://github.com/WKDSteve/docmap.nvim
-commit = 13de5930e1d2adb0792431b5b31a08030564a3ca
+commit = aba045d4223869f2b842fc514db0bce911a3d1ee
 lib_commit = e3938841227aea6eceb74c9e1182fcfa86675906
 schema = 6
 routes = checklist commits loaded loaded/snapshots rules/accept rules/attach rules/catalog rules/judged rules/plan rules/run rules/validate rules/waive telemetry telemetry/snapshots traffic

@@ -55,12 +55,12 @@ export const CSP = [
 
 const MIME = { '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2' };
 
-/** The icon of the web variant, from the generator's folder (rule APP-11): the small drawing and the PNG of 192 px. */
+/** The icon of the web variant, from the folder the icon generator writes: the small drawing and the PNG of 192 px. */
 const ICON_DIR = join(repo, 'assets', 'icons', 'docmap-web');
 
 /**
  * The icon links of the page, for the shell to put into the head: the kit's `verify` lets no `href=` into the markup,
- * and a page from disk can load nothing beside it, so both are data: addresses (rule APP-12). The tab takes the SVG, a
+ * and a page from disk can load nothing beside it, so both are data: addresses, set from the script as in tasks-web. The tab takes the SVG, a
  * page installed from the browser the PNG.
  * @param {string} svg @param {Buffer} png
  */

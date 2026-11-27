@@ -90,3 +90,29 @@ test("without closedby support the property is never set", () => {
   d.fire("input");
   assert.equal(d.closedBy, undefined);
 });
+
+// The `close` event comes as a task of its own after close(). A dialog that was closed clean, opened again and typed
+// into before that event ran must still ask: the late event is not the end of this opening (flake of web-rules.mjs,
+// fbbox and prefsbox under load).
+test("a late close event of the earlier opening does not make the new opening clean", () => {
+  const d = fakeDialog();
+  d.open = true;
+  const g = guardDirty(d, { ask: () => false, closedBy: false });
+  d.open = false; // the earlier opening was closed, its close event is still queued
+  d.open = true; // opened again ...
+  d.fire("input"); // ... and typed into
+  d.fire("close"); // the queued event arrives only now
+  assert.equal(g.dirty(), true);
+  const e = d.fire("cancel");
+  assert.equal(e.defaultPrevented, true);
+});
+
+test("the close event of a dialog that stays closed makes it clean", () => {
+  const d = fakeDialog();
+  d.open = true;
+  const g = guardDirty(d, { ask: () => false, closedBy: false });
+  d.fire("input");
+  d.open = false;
+  d.fire("close");
+  assert.equal(g.dirty(), false);
+});

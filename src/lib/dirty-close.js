@@ -56,7 +56,12 @@ export function guardDirty(dialog, { ask, hasInput = () => true, closedBy = supp
   };
   dialog.addEventListener("input", onInput);
   dialog.addEventListener("change", onInput);
-  dialog.addEventListener("close", reset);
+  // `close` is fired as a task of its own, after the dialog is closed. When the dialog was opened again and typed
+  // into before that task ran (a slow machine), the late event belongs to the earlier opening: it must not wipe what
+  // was typed since, or Escape would close the dialog without the question.
+  dialog.addEventListener("close", () => {
+    if (!dialog.open) reset();
+  });
   dialog.addEventListener("cancel", (e) => {
     if (!dirty()) return;
     // Keep it open; `request` closes it when the answer is yes.

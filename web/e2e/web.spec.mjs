@@ -50,6 +50,36 @@ test('the file opens from disk without a request, starts its engine and says wha
   expect(await violations(page)).toEqual([]);
 });
 
+test('the page has its icon: the SVG for the tab, the PNG for a page installed from the browser, both drawn', async ({ page }) => {
+  const seen = await watchPage(page);
+  await page.goto(pageUrl());
+  const icons = page.locator('head link[rel="icon"]');
+  await expect(icons).toHaveCount(2);
+  await expect(icons.nth(0)).toHaveAttribute('href', /^data:image\/svg\+xml,/);
+  await expect(icons.nth(1)).toHaveAttribute('sizes', '192x192');
+  await expect(icons.nth(1)).toHaveAttribute('href', /^data:image\/png;base64,/);
+  // Both are pictures the browser draws under the policy of the page (img-src data:), not just text.
+  const widths = await icons.evaluateAll((links) =>
+    Promise.all(
+      links.map(
+        (l) =>
+          new Promise((resolve) => {
+            const img = new Image();
+            img.onload = () => resolve(img.naturalWidth);
+            img.onerror = () => resolve(0);
+            img.src = l.href;
+          }),
+      ),
+    ),
+  );
+  // The SVG has a viewBox and no width, so the browser gives it its default; the PNG is 192 px.
+  expect(widths[0]).toBeGreaterThan(0);
+  expect(widths[1]).toBe(192);
+  expect(seen.requests).toEqual([]);
+  expect(seen.errors).toEqual([]);
+  expect(await violations(page)).toEqual([]);
+});
+
 test('a folder is added, mapped in the page and shown; nothing leaves the page and only its own database is written', async ({ page }) => {
   const seen = await watchPage(page);
   await spyOnIndexedDb(page);

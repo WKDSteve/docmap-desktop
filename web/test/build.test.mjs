@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { policyProblems, verifyShell } from 'appkit-web/pack';
-import { CSP, PART_IDS, buildPage, pageParts, styles } from '../build.mjs';
+import { CSP, PART_IDS, buildPage, iconLinks, pageParts, styles } from '../build.mjs';
 import { PART_IDS as LOADED } from '../src/embedded.js';
 import { HIDDEN } from '../src/hidden.js';
 import { POLICY_NAME } from '../src/trusted-types.js';
@@ -86,4 +86,21 @@ test('the built page is one file whose shell loads nothing, with the parts the p
   assert.ok(html.length < 4 * 1024 * 1024, `the page weighs ${html.length} bytes`);
   // The same sources give the same file: what is published can be built again and compared.
   assert.equal((await buildPage({ build: 'test' })).html, html);
+});
+
+test('the icon of the page comes from the generator folder, as data: addresses the shell puts into the head', async () => {
+  const dir = join(web, '..', 'assets', 'icons', 'docmap-web');
+  const svg = readFileSync(join(dir, 'docmap-web-small.svg'), 'utf8');
+  const png = readFileSync(join(dir, 'png', 'docmap-web-192.png'));
+  const [tab, installed] = iconLinks(svg, png);
+  assert.equal(tab.type, 'image/svg+xml');
+  assert.equal(decodeURIComponent(tab.href.replace('data:image/svg+xml,', '')), svg.trim());
+  // Encoded: the namespace of the SVG is no address in the page.
+  assert.doesNotMatch(tab.href, /http:\/\//);
+  assert.deepEqual([installed.type, installed.sizes], ['image/png', '192x192']);
+  assert.deepEqual(Buffer.from(installed.href.replace('data:image/png;base64,', ''), 'base64'), png);
+  // The built script carries both; the markup still names no href.
+  const { html } = await buildPage({ build: 'test' });
+  assert.ok(html.includes(installed.href), 'the PNG is in the page');
+  assert.deepEqual(verifyShell(html, { partIds: PART_IDS }), []);
 });

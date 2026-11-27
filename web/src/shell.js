@@ -14,7 +14,7 @@ import { createTrust } from './trusted-types.js';
 import { createMenubar } from './menubar.js';
 import { text } from './texts.js';
 
-/* global __WEB_BODY__, __WEB_MENU__, __WEB_INFO__ */
+/* global __WEB_BODY__, __WEB_MENU__, __WEB_INFO__, __WEB_ICONS__ */
 
 /** The name of the page's own IndexedDB: every local HTML file shares the origin `file://`, so each app has its own. */
 export const DATABASE = 'docmap-web';
@@ -27,6 +27,8 @@ const INFO = __WEB_INFO__;
 
 const doc = document;
 doc.documentElement.classList.add('web');
+// The icon of the tab and of a page installed from the browser: the markup may name no href, so it comes from here.
+for (const icon of __WEB_ICONS__) doc.head.append(Object.assign(doc.createElement('link'), { rel: 'icon', ...icon }));
 const mount = /** @type {HTMLElement} */ (doc.getElementById('app'));
 // The markup is the page's own, fixed at build time; the one Trusted Types policy accepts that string and no other.
 const SHELL_MARKUP =

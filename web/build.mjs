@@ -55,6 +55,22 @@ export const CSP = [
 
 const MIME = { '.svg': 'image/svg+xml', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2' };
 
+/** The icon of the web variant, from the generator's folder (rule APP-11): the small drawing and the PNG of 192 px. */
+const ICON_DIR = join(repo, 'assets', 'icons', 'docmap-web');
+
+/**
+ * The icon links of the page, for the shell to put into the head: the kit's `verify` lets no `href=` into the markup,
+ * and a page from disk can load nothing beside it, so both are data: addresses (rule APP-12). The tab takes the SVG, a
+ * page installed from the browser the PNG.
+ * @param {string} svg @param {Buffer} png
+ */
+export function iconLinks(svg, png) {
+  return [
+    { type: 'image/svg+xml', href: `data:image/svg+xml,${encodeURIComponent(svg.trim())}` },
+    { type: 'image/png', sizes: '192x192', href: `data:image/png;base64,${png.toString('base64')}` },
+  ];
+}
+
 /** A file of src/ as a data: address. @param {string} rel */
 function dataUrl(rel) {
   const type = MIME[extname(rel).toLowerCase()];
@@ -141,6 +157,9 @@ export async function buildPage({ build = process.env.WEB_BUILD ?? commit() } = 
       __WEB_BODY__: JSON.stringify(page.markup),
       __WEB_MENU__: JSON.stringify(menuModel()),
       __WEB_INFO__: JSON.stringify(info),
+      __WEB_ICONS__: JSON.stringify(
+        iconLinks(readFileSync(join(ICON_DIR, 'docmap-web-small.svg'), 'utf8'), readFileSync(join(ICON_DIR, 'png', 'docmap-web-192.png'))),
+      ),
     },
   });
   // A classic script (no `import`): a module worker from a blob does not start on a page opened from disk.

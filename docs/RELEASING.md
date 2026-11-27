@@ -194,9 +194,10 @@ fixed name `docmap-desktop-windows-x86_64-setup.exe`, and replaces the files of 
 `SHA256SUMS`. It is for trying the newest state, not a release. Only the tip of `main` is built.
 
 **Tauri smoke.** Before the installer goes up, the rolling build opens the real window of exactly that build
-(`scripts/e2e/tauri_smoke.mjs`: title, rendered page, size, a screenshot as the artifact `tauri-smoke-windows`). It
-needs `tauri-driver` (`cargo install tauri-driver --locked`) and an `msedgedriver` of the installed WebView2 on the
-runner's PATH, installed once (the driver from `msedgedriver.microsoft.com/<version>/edgedriver_win64.zip`, its
+(`scripts/e2e/tauri_smoke.mjs`: title, rendered page, size, a screenshot as the artifact `tauri-smoke-windows`). On
+Windows it needs an `msedgedriver` of the installed WebView2 on the runner's PATH (`tauri-driver` only on Linux: on
+Windows the smoke talks to msedgedriver itself, so WebView2 starts without `--enable-logging`, which would give it a
+console window of its own; every program it starts is hidden), installed once (the driver from `msedgedriver.microsoft.com/<version>/edgedriver_win64.zip`, its
 Authenticode signature checked; the WebView2 version is `pv` under the EdgeUpdate client
 `{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}`). After a WebView2 update the driver has to follow, or the smoke fails at
 the session. A missing tool is a reported skip (exit 77), a warning on the run; a failed check stops the rolling

@@ -92,11 +92,11 @@ jobs:
       - name: Build the installer
         run: npx --yes @tauri-apps/cli@2.12.4 build --bundles nsis
 
-      # Tier 3: the real window of exactly this build, through tauri-driver and an msedgedriver of the installed
-      # WebView2 (both on the runner's PATH, installed once: docs/RELEASING.md "Tauri smoke"). A missing tool is a
-      # reported skip (exit 77), shown as a warning; a failed check stops the rolling build. Only here, on the push of
-      # main and the self-hosted runner: a hosted runner would need a release build of its own.
-      - name: Smoke the window (tauri-driver)
+      # Tier 3: the real window of exactly this build, through an msedgedriver of the installed WebView2 (on the
+      # runner's PATH, installed once: docs/RELEASING.md "Tauri smoke"; it opens no window but the app's). A missing
+      # tool is a reported skip (exit 77), shown as a warning; a failed check stops the rolling build. Only here, on the
+      # push of main and the self-hosted runner: a hosted runner would need a release build of its own.
+      - name: Smoke the window (msedgedriver)
         env:
           DOCMAP_E2E_OUT: ${{ runner.temp }}/e2e
         run: |

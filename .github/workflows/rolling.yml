@@ -50,12 +50,14 @@ defaults:
 
 jobs:
   prepare:
-    # Only a green run that came from a push to main (not a pull request).
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push') }}
+    # Every completed CI run of a push, red ones too: after a red descendant, prepare builds the older green commit
+    # it waited for (it builds nothing when there is nothing new; appkit release-kit/README.md).
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'push' }}
     runs-on: [self-hosted, windows]
     timeout-minutes: 10
     permissions:
       contents: write
+      actions: read        # the CI runs of main: which are green, which still run
     outputs:
       current: ${{ steps.prepare.outputs.current }}
       sha: ${{ steps.prepare.outputs.sha }}
